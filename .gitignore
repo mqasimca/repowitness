@@ -1,0 +1,25 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# RepoWitness local state
+.repowitness/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.db
+*.db-shm
+*.db-wal
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Team memory under .code-memory/ is intentionally version-controlled.
