@@ -15,6 +15,10 @@ GNU Make wrappers. `make ci` runs formatting, all-target/all-feature checking,
 Clippy with warnings denied, default and all-feature tests, doc tests,
 warning-free rustdoc, dependency policy, documentation, benchmark, and diff
 checks. `make test-all` adds no-default-feature and release all-feature tests.
+The GitHub Actions `ci` job runs both command sets on a fixed Ubuntu 24.04
+runner for pull requests and `main`, with read-only repository permissions and
+the checkout action pinned by full commit. Branch protection requires that job
+before merge.
 
 Implemented specialized coverage includes deterministic/property-style domain
 tests, hostile path and Git fixtures, clean-versus-incremental equivalence,

@@ -37,3 +37,8 @@ make test-all
 no-default-feature and release profiles. SQLite timing/resource probes are
 manual and opt-in through `make test-sqlite-benchmarks`; their results are not
 release budgets.
+
+Pull requests run the same two command sets in the GitHub Actions `ci` job.
+The workflow has read-only repository permissions, pins external actions by
+full commit, verifies the complete pull-request diff, and is required by
+`main` branch protection.

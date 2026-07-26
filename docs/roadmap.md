@@ -49,7 +49,7 @@ The output is a design-partner alpha, not a general public beta.
 
 | Phase 0 area | State | Verified result |
 |---|---|---|
-| Rust workspace and engineering baseline | Implemented | Six packages, enforced dependency policy, pinned Rust/MSRV and dependencies, formatting, Clippy, docs, lockfile, license/advisory/source checks, and Make targets |
+| Rust workspace and engineering baseline | Implemented | Six packages, enforced dependency policy, pinned Rust/MSRV and dependencies, formatting, Clippy, docs, lockfile, license/advisory/source checks, Make targets, and required Ubuntu PR CI |
 | Repository and source identity | Implemented | Sanitized bounded Git discovery, canonical Git/worktree receipts, exact byte paths, capability-contained no-follow reads, final stability fence, and fail-closed sparse/gitlink scope |
 | Rust analysis and incremental reuse | Implemented | Bounded Tree-sitter facts, canonical manifests/snapshots/artifact keys, independent payload digests, exact reuse validation, and clean-versus-incremental equivalence |
 | SQLite publication and recovery | Implemented | Versioned migrations, owned connections, immutable generations, atomic activation, FTS5 projection switching, startup recovery, checkpoints, online backup, mutation lease, and database file-identity guards |

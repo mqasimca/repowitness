@@ -88,6 +88,9 @@ make test-all
 `make ci` runs the required pull-request checks sequentially. `make test-all`
 adds the no-default-feature and release test profiles. Manual SQLite timing and
 resource probes remain opt-in through `make test-sqlite-benchmarks`.
+The read-only GitHub Actions `ci` job runs both required command sets on
+Ubuntu 24.04 for pull requests and pushes to `main`; branch protection requires
+that job before merge.
 
 Run the external Phase 0 preparation probe against a clean pinned mini-redis
 checkout with:
