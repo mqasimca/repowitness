@@ -1,0 +1,77 @@
+#!/usr/bin/env perl
+
+use strict;
+use warnings;
+
+use File::Basename qw(dirname);
+use File::Spec;
+
+my @markdown_files;
+
+open my $git_files, '-|',
+  'git', 'ls-files', '--cached', '--others', '--exclude-standard', '-z'
+  or die "cannot list repository files: $!\n";
+
+{
+    local $/ = "\0";
+    while (my $file = <$git_files>) {
+        chomp $file;
+        push @markdown_files, $file if $file =~ /[.]md\z/i;
+    }
+}
+
+close $git_files
+  or die "git ls-files failed\n";
+
+my @errors;
+
+for my $file (sort @markdown_files) {
+    open my $handle, '<:raw', $file
+      or do {
+        push @errors, "$file: cannot read: $!";
+        next;
+      };
+
+    local $/;
+    my $content = <$handle>;
+    close $handle;
+
+    my @lines = split /\n/, $content, -1;
+    for my $index (0 .. $#lines) {
+        my $line_number = $index + 1;
+        push @errors, "$file:$line_number: trailing whitespace"
+          if $lines[$index] =~ /[ \t]+\r?\z/;
+        push @errors, "$file:$line_number: CRLF line ending"
+          if $lines[$index] =~ /\r\z/;
+    }
+
+    while ($content =~ /!?\[[^\]]*\]\(([^)\n]+)\)/g) {
+        my $target = $1;
+        $target =~ s/^\s+|\s+$//g;
+
+        if ($target =~ /^<([^>]+)>/) {
+            $target = $1;
+        }
+        else {
+            ($target) = split /\s+/, $target, 2;
+        }
+
+        next if !defined $target || $target eq '' || $target =~ /^#/;
+        next if $target =~ /^[A-Za-z][A-Za-z0-9+.-]*:/;
+
+        my ($path) = split /#/, $target, 2;
+        $path =~ s/%([0-9A-Fa-f]{2})/pack('C', hex($1))/eg;
+
+        my $resolved = File::Spec->rel2abs($path, dirname($file));
+        push @errors, "$file: missing local link target: $target"
+          if !-e $resolved;
+    }
+}
+
+if (@errors) {
+    print STDERR join("\n", @errors), "\n";
+    exit 1;
+}
+
+print 'documentation checks passed for ', scalar(@markdown_files),
+  " tracked and untracked Markdown files\n";

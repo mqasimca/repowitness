@@ -1,0 +1,48 @@
+[graph]
+all-features = true
+
+[advisories]
+ignore = []
+
+[licenses]
+include-dev = true
+include-build = true
+unused-allowed-license = "allow"
+allow = [
+    "Apache-2.0",
+    "MIT",
+]
+confidence-threshold = 0.8
+# Keep non-baseline permissive licenses scoped to exact resolved packages.
+# Re-review or remove an exception whenever its dependency is upgraded,
+# promoted to a broader role, or removed.
+exceptions = [
+    { allow = ["BSD-3-Clause"], crate = "encoding_rs@0.8.35" },
+    { allow = ["Zlib"], crate = "foldhash@0.2.0" },
+    { allow = ["Unicode-3.0"], crate = "unicode-ident@1.0.24" },
+    { allow = ["Apache-2.0 WITH LLVM-exception"], crate = "winx@0.36.4" },
+    { allow = ["Zlib"], crate = "zlib-rs@0.6.6" },
+]
+
+[licenses.private]
+ignore = false
+
+[bans]
+multiple-versions = "warn"
+multiple-versions-include-dev = true
+wildcards = "deny"
+allow-wildcard-paths = true
+highlight = "all"
+workspace-default-features = "allow"
+external-default-features = "allow"
+allow = []
+allow-workspace = true
+deny = []
+skip = []
+skip-tree = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

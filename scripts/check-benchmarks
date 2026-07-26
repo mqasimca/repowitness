@@ -1,0 +1,403 @@
+#!/usr/bin/env perl
+
+use strict;
+use warnings;
+
+use File::Find qw(find);
+use JSON::PP qw(decode_json);
+
+my @manifests = sort glob 'benchmarks/*/manifest.json';
+die "no benchmark manifests found\n" if !@manifests;
+die "too many benchmark manifests; maximum is 32\n" if @manifests > 32;
+
+my @errors;
+my %benchmark_ids;
+my %resolution_statuses = map { $_ => 1 }
+  qw(confirmed inferred ambiguous unresolved indeterminate);
+my %evidence_relations = map { $_ => 1 } qw(supports contradicts);
+my %memory_transitions = map { $_ => 1 }
+  qw(revalidated stale needs-review superseded);
+my @required_environment_fields = qw(
+  repowitness_revision
+  corpus_revision
+  rust_toolchain
+  operating_system
+  cpu_model
+  logical_cpu_count
+  memory_mib
+  filesystem_type
+  resolved_configuration_digest
+);
+
+sub report {
+    my ($path, $message) = @_;
+    push @errors, "$path: $message";
+}
+
+sub is_object {
+    my ($value) = @_;
+    return ref $value eq 'HASH';
+}
+
+sub is_array {
+    my ($value) = @_;
+    return ref $value eq 'ARRAY';
+}
+
+sub is_non_empty_string {
+    my ($value) = @_;
+    return defined $value && !ref $value && $value ne '';
+}
+
+sub is_non_negative_integer {
+    my ($value) = @_;
+    return defined $value && !ref $value && $value =~ /\A(?:0|[1-9][0-9]*)\z/;
+}
+
+sub is_positive_integer {
+    my ($value) = @_;
+    return is_non_negative_integer($value) && $value > 0;
+}
+
+sub is_id {
+    my ($value) = @_;
+    return is_non_empty_string($value)
+      && $value =~ /\A[a-z0-9]+(?:-[a-z0-9]+)*\z/;
+}
+
+sub is_revision {
+    my ($value) = @_;
+    return is_non_empty_string($value) && $value =~ /\A[0-9a-f]{40}\z/;
+}
+
+sub is_non_empty_string_array {
+    my ($value) = @_;
+    return 0 if !is_array($value) || !@$value;
+    return !grep { !is_non_empty_string($_) } @$value;
+}
+
+for my $path (@manifests) {
+    if (-l $path) {
+        report($path, 'manifest must not be a symbolic link');
+        next;
+    }
+
+    my $size = -s $path;
+    if (!defined $size || $size > 1_048_576) {
+        report($path, 'manifest must not exceed 1 MiB');
+        next;
+    }
+
+    open my $handle, '<:raw', $path
+      or do {
+        report($path, "cannot read: $!");
+        next;
+      };
+
+    local $/;
+    my $content = <$handle>;
+    close $handle;
+
+    my $manifest = eval { decode_json($content) };
+    if (!$manifest || $@) {
+        report($path, "invalid JSON: $@");
+        next;
+    }
+    if (!is_object($manifest)) {
+        report($path, 'root must be an object');
+        next;
+    }
+
+    report($path, 'schema_version must equal integer 1')
+      if !is_non_negative_integer($manifest->{schema_version})
+      || $manifest->{schema_version} != 1;
+    report($path, 'benchmark_id must be a kebab-case identifier')
+      if !is_id($manifest->{benchmark_id});
+    report($path, "duplicate benchmark_id '$manifest->{benchmark_id}'")
+      if is_id($manifest->{benchmark_id})
+      && $benchmark_ids{$manifest->{benchmark_id}}++;
+    report($path, "status must be 'proposed' or 'ratified'")
+      if !defined $manifest->{status}
+      || $manifest->{status} !~ /\A(?:proposed|ratified)\z/;
+    report($path, 'reviewed_on must use YYYY-MM-DD')
+      if !defined $manifest->{reviewed_on}
+      || $manifest->{reviewed_on} !~ /\A[0-9]{4}-[0-9]{2}-[0-9]{2}\z/;
+
+    my $source_policy = $manifest->{source_policy};
+    report($path, 'source_policy must be an object')
+      if !is_object($source_policy);
+    if (is_object($source_policy)) {
+        report($path, "source_policy.mode must be 'external-reference-only'")
+          if !defined $source_policy->{mode}
+          || $source_policy->{mode} ne 'external-reference-only';
+        report($path, 'source_policy.vendored_content must be false')
+          if !exists $source_policy->{vendored_content}
+          || !JSON::PP::is_bool($source_policy->{vendored_content})
+          || $source_policy->{vendored_content};
+    }
+
+    my $corpora = $manifest->{corpora};
+    report($path, 'corpora must be a non-empty array')
+      if !is_array($corpora) || !@{$corpora // []};
+    my %corpora_by_id;
+    if (is_array($corpora)) {
+        for my $corpus (@$corpora) {
+            if (!is_object($corpus)) {
+                report($path, 'every corpus must be an object');
+                next;
+            }
+
+            my $id = $corpus->{id};
+            report($path, 'corpus id must be a kebab-case identifier')
+              if !is_id($id);
+            report($path, "duplicate corpus id '$id'")
+              if is_id($id) && $corpora_by_id{$id};
+            $corpora_by_id{$id} = $corpus if is_id($id);
+
+            report($path, "corpus '$id' repository must be an HTTPS Git URL")
+              if !defined $corpus->{repository}
+              || $corpus->{repository}
+              !~ m{\Ahttps://[A-Za-z0-9.-]+/(?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+[.]git\z};
+            report($path, "corpus '$id' revision must be a full lowercase SHA")
+              if !is_revision($corpus->{revision});
+            report($path, "corpus '$id' verified_ref must start with refs/")
+              if !defined $corpus->{verified_ref}
+              || $corpus->{verified_ref} !~ m{\Arefs/};
+            report($path, "corpus '$id' revision_verified_on must use YYYY-MM-DD")
+              if !defined $corpus->{revision_verified_on}
+              || $corpus->{revision_verified_on}
+              !~ /\A[0-9]{4}-[0-9]{2}-[0-9]{2}\z/;
+            report($path, "corpus '$id' license is required")
+              if !is_non_empty_string($corpus->{license});
+            report($path, "corpus '$id' language must be rust")
+              if !defined $corpus->{language} || $corpus->{language} ne 'rust';
+            report($path, "corpus '$id' observed_rust_files must be positive")
+              if !is_positive_integer($corpus->{observed_rust_files});
+            report($path, "corpus '$id' observed_rust_lines must be positive")
+              if !is_positive_integer($corpus->{observed_rust_lines});
+            report($path, "corpus '$id' include_paths must be non-empty")
+              if !is_non_empty_string_array($corpus->{include_paths});
+            report($path, "corpus '$id' exclude_paths must be an array")
+              if !is_array($corpus->{exclude_paths});
+            report($path, "corpus '$id' exclude_paths contains an empty value")
+              if is_array($corpus->{exclude_paths})
+              && grep { !is_non_empty_string($_) } @{$corpus->{exclude_paths}};
+        }
+    }
+
+    my $tasks = $manifest->{tasks};
+    report($path, 'tasks must be a non-empty array')
+      if !is_array($tasks) || !@{$tasks // []};
+    my %task_ids;
+    if (is_array($tasks)) {
+        for my $task (@$tasks) {
+            if (!is_object($task)) {
+                report($path, 'every task must be an object');
+                next;
+            }
+
+            my $id = $task->{id};
+            report($path, 'task id must be a kebab-case identifier')
+              if !is_id($id);
+            report($path, "duplicate task id '$id'")
+              if is_id($id) && $task_ids{$id}++;
+            report($path, "task '$id' references an unknown corpus")
+              if !defined $task->{corpus}
+              || !exists $corpora_by_id{$task->{corpus}};
+            if (defined $task->{corpus}
+                && exists $corpora_by_id{$task->{corpus}})
+            {
+                report($path, "task '$id' revision differs from its corpus")
+                  if !defined $task->{revision}
+                  || $task->{revision}
+                  ne $corpora_by_id{$task->{corpus}}->{revision};
+            }
+            report($path, "task '$id' kind is required")
+              if !is_id($task->{kind});
+            report($path, "task '$id' intent is required")
+              if !is_non_empty_string($task->{intent});
+            report($path, "task '$id' required_evidence must be non-empty")
+              if !is_non_empty_string_array($task->{required_evidence});
+            report($path, "task '$id' expected_resolution is invalid")
+              if !defined $task->{expected_resolution}
+              || !$resolution_statuses{$task->{expected_resolution}};
+            report($path, "task '$id' max_result_items must be positive")
+              if !is_positive_integer($task->{max_result_items});
+            report($path, "task '$id' max_output_bytes must be positive")
+              if !is_positive_integer($task->{max_output_bytes});
+        }
+    }
+
+    my $scenarios = $manifest->{change_scenarios};
+    report($path, 'change_scenarios must be a non-empty array')
+      if !is_array($scenarios) || !@{$scenarios // []};
+    my %scenario_ids;
+    if (is_array($scenarios)) {
+        for my $scenario (@$scenarios) {
+            if (!is_object($scenario)) {
+                report($path, 'every change scenario must be an object');
+                next;
+            }
+
+            my $id = $scenario->{id};
+            report($path, 'change scenario id must be a kebab-case identifier')
+              if !is_id($id);
+            report($path, "duplicate change scenario id '$id'")
+              if is_id($id) && $scenario_ids{$id}++;
+            report($path, "change scenario '$id' references an unknown corpus")
+              if !defined $scenario->{corpus}
+              || !exists $corpora_by_id{$scenario->{corpus}};
+            report($path, "change scenario '$id' base revision is invalid")
+              if !is_revision($scenario->{base_revision});
+            report($path, "change scenario '$id' changed revision is invalid")
+              if !is_revision($scenario->{changed_revision});
+            report($path, "change scenario '$id' revisions must differ")
+              if is_revision($scenario->{base_revision})
+              && is_revision($scenario->{changed_revision})
+              && $scenario->{base_revision} eq $scenario->{changed_revision};
+            report($path, "change scenario '$id' changed_paths must be non-empty")
+              if !is_non_empty_string_array($scenario->{changed_paths});
+            report($path, "change scenario '$id' memory_claim is required")
+              if !is_non_empty_string($scenario->{memory_claim});
+            report(
+                $path,
+                "change scenario '$id' required_changed_evidence must be non-empty"
+              )
+              if !is_non_empty_string_array(
+                $scenario->{required_changed_evidence}
+              );
+            for my $field (
+                qw(expected_before_resolution expected_after_resolution)
+              )
+            {
+                report($path, "change scenario '$id' $field is invalid")
+                  if !defined $scenario->{$field}
+                  || !$resolution_statuses{$scenario->{$field}};
+            }
+            for my $field (
+                qw(
+                expected_before_evidence_relation
+                expected_after_evidence_relation
+                )
+              )
+            {
+                report($path, "change scenario '$id' $field is invalid")
+                  if !defined $scenario->{$field}
+                  || !$evidence_relations{$scenario->{$field}};
+            }
+            report(
+                $path,
+                "change scenario '$id' expected_memory_transition is invalid"
+              )
+              if !defined $scenario->{expected_memory_transition}
+              || !$memory_transitions{$scenario->{expected_memory_transition}};
+        }
+    }
+
+    my $baselines = $manifest->{baselines};
+    report($path, 'at least two baselines are required')
+      if !is_array($baselines) || @{$baselines // []} < 2;
+    my %baseline_ids;
+    if (is_array($baselines)) {
+        for my $baseline (@$baselines) {
+            if (!is_object($baseline)) {
+                report($path, 'every baseline must be an object');
+                next;
+            }
+            my $id = $baseline->{id};
+            report($path, 'baseline id must be a kebab-case identifier')
+              if !is_id($id);
+            report($path, "duplicate baseline id '$id'")
+              if is_id($id) && $baseline_ids{$id}++;
+            report($path, "baseline '$id' description is required")
+              if !is_non_empty_string($baseline->{description});
+        }
+    }
+
+    my $budgets = $manifest->{budgets};
+    report($path, 'budgets must be an object') if !is_object($budgets);
+    if (is_object($budgets)) {
+        report($path, "budget status must be 'proposed' or 'ratified'")
+          if !defined $budgets->{status}
+          || $budgets->{status} !~ /\A(?:proposed|ratified)\z/;
+
+        my $correctness = $budgets->{correctness};
+        report($path, 'correctness budgets must be an object')
+          if !is_object($correctness);
+        if (is_object($correctness)) {
+            for my $field (
+                qw(
+                max_false_confirmed_claims
+                max_silent_truncations
+                max_mixed_generation_reads
+                max_false_automatic_relinks
+                )
+              )
+            {
+                report($path, "correctness budget $field must equal zero")
+                  if !defined $correctness->{$field}
+                  || $correctness->{$field} != 0;
+            }
+        }
+
+        my $resources = $budgets->{resources};
+        report($path, 'resource budgets must be an object')
+          if !is_object($resources);
+        if (is_object($resources)) {
+            for my $field (
+                qw(
+                max_full_index_wall_ms
+                max_peak_rss_mib
+                max_warm_query_p95_ms
+                max_material_result_bytes
+                )
+              )
+            {
+                report($path, "resource budget $field must be positive")
+                  if !is_positive_integer($resources->{$field});
+            }
+        }
+    }
+
+    my $environment = $manifest->{run_environment};
+    report($path, 'run_environment must be an object')
+      if !is_object($environment);
+    if (is_object($environment)) {
+        report($path, 'cold_and_warm_runs_required must be true')
+          if !JSON::PP::is_bool($environment->{cold_and_warm_runs_required})
+          || !$environment->{cold_and_warm_runs_required};
+        report($path, 'run_environment.capture must be non-empty')
+          if !is_non_empty_string_array($environment->{capture});
+        if (is_array($environment->{capture})) {
+            my %captured = map { $_ => 1 } @{$environment->{capture}};
+            for my $field (@required_environment_fields) {
+                report($path, "run_environment.capture omits '$field'")
+                  if !$captured{$field};
+            }
+        }
+    }
+}
+
+my @vendored_sources;
+find(
+    {
+        no_chdir => 1,
+        wanted   => sub {
+            return if -d $_;
+            push @vendored_sources, $File::Find::name
+              if $File::Find::name =~ /[.](?:c|cc|cpp|go|java|js|py|rs|ts)\z/;
+        },
+    },
+    'benchmarks'
+);
+
+push @errors,
+  map { "$_: source file is not allowed under external-reference-only benchmarks" }
+  sort @vendored_sources;
+
+if (@errors) {
+    print STDERR join("\n", @errors), "\n";
+    exit 1;
+}
+
+print 'benchmark checks passed for ', scalar(@manifests), " manifest(s)\n";

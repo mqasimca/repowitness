@@ -1,0 +1,157 @@
+{
+  "schema_version": 1,
+  "benchmark_id": "phase0-rust-evidence-memory-v1",
+  "status": "proposed",
+  "reviewed_on": "2026-07-23",
+  "source_policy": {
+    "mode": "external-reference-only",
+    "vendored_content": false
+  },
+  "corpora": [
+    {
+      "id": "mini-redis",
+      "repository": "https://github.com/tokio-rs/mini-redis.git",
+      "revision": "3d93b42bc363220f85af4fc9e1bebd35b588a4a3",
+      "verified_ref": "refs/heads/master",
+      "revision_verified_on": "2026-07-23",
+      "license": "MIT",
+      "language": "rust",
+      "observed_rust_files": 28,
+      "observed_rust_lines": 4354,
+      "include_paths": [
+        "src/**/*.rs",
+        "tests/**/*.rs",
+        "examples/**/*.rs"
+      ],
+      "exclude_paths": [
+        "target/**"
+      ]
+    }
+  ],
+  "tasks": [
+    {
+      "id": "frame-negative-bulk-validation",
+      "kind": "evidence-retrieval",
+      "corpus": "mini-redis",
+      "revision": "3d93b42bc363220f85af4fc9e1bebd35b588a4a3",
+      "intent": "Determine how invalid negative RESP bulk lengths are handled and identify the regression evidence.",
+      "required_evidence": [
+        "src/frame.rs::Frame::check",
+        "tests/frame_validation.rs::check_rejects_invalid_negative_bulk_length"
+      ],
+      "expected_resolution": "confirmed",
+      "max_result_items": 20,
+      "max_output_bytes": 32768
+    },
+    {
+      "id": "graceful-shutdown-trace",
+      "kind": "context-build",
+      "corpus": "mini-redis",
+      "revision": "3d93b42bc363220f85af4fc9e1bebd35b588a4a3",
+      "intent": "Explain how shutdown begins, reaches active connection handlers, and stops the database purge task.",
+      "required_evidence": [
+        "src/server.rs::run",
+        "src/server.rs::Listener",
+        "src/server.rs::Handler",
+        "src/shutdown.rs::Shutdown",
+        "src/db.rs::Db::shutdown_purge_task"
+      ],
+      "expected_resolution": "confirmed",
+      "max_result_items": 40,
+      "max_output_bytes": 49152
+    },
+    {
+      "id": "set-expiration-encoding",
+      "kind": "evidence-retrieval",
+      "corpus": "mini-redis",
+      "revision": "3d93b42bc363220f85af4fc9e1bebd35b588a4a3",
+      "intent": "Determine how the client encodes a SET PX expiration in the outgoing frame.",
+      "required_evidence": [
+        "src/cmd/set.rs::Set::into_frame",
+        "src/clients/client.rs::Client::set_expires"
+      ],
+      "expected_resolution": "confirmed",
+      "max_result_items": 20,
+      "max_output_bytes": 32768
+    }
+  ],
+  "change_scenarios": [
+    {
+      "id": "set-expiration-frame-fix",
+      "corpus": "mini-redis",
+      "base_revision": "5948f0760a181e8148082cdff8ea3914902c2049",
+      "changed_revision": "7295d727b82a0ef534b836b00807c15ef6c7f191",
+      "changed_paths": [
+        "src/cmd/set.rs"
+      ],
+      "memory_claim": "SET PX durations are encoded as bulk strings rather than RESP integer frames.",
+      "expected_before_resolution": "indeterminate",
+      "expected_before_evidence_relation": "contradicts",
+      "expected_after_resolution": "confirmed",
+      "expected_after_evidence_relation": "supports",
+      "expected_memory_transition": "revalidated",
+      "required_changed_evidence": [
+        "src/cmd/set.rs::Set::into_frame"
+      ]
+    },
+    {
+      "id": "negative-bulk-validation-fix",
+      "corpus": "mini-redis",
+      "base_revision": "7295d727b82a0ef534b836b00807c15ef6c7f191",
+      "changed_revision": "3d93b42bc363220f85af4fc9e1bebd35b588a4a3",
+      "changed_paths": [
+        "src/frame.rs",
+        "tests/frame_validation.rs"
+      ],
+      "memory_claim": "Only -1 is a valid RESP null bulk length; other negative lengths must be rejected.",
+      "expected_before_resolution": "indeterminate",
+      "expected_before_evidence_relation": "contradicts",
+      "expected_after_resolution": "confirmed",
+      "expected_after_evidence_relation": "supports",
+      "expected_memory_transition": "revalidated",
+      "required_changed_evidence": [
+        "src/frame.rs::Frame::check",
+        "tests/frame_validation.rs::check_rejects_invalid_negative_bulk_length"
+      ]
+    }
+  ],
+  "baselines": [
+    {
+      "id": "lexical-source-only",
+      "description": "Use bounded literal or regular-expression search over the pinned source without graph relationships or memory."
+    },
+    {
+      "id": "naive-memory-text",
+      "description": "Append the memory claim as unvalidated text without source evidence, temporal validity, or revalidation."
+    }
+  ],
+  "budgets": {
+    "status": "proposed",
+    "correctness": {
+      "max_false_confirmed_claims": 0,
+      "max_silent_truncations": 0,
+      "max_mixed_generation_reads": 0,
+      "max_false_automatic_relinks": 0
+    },
+    "resources": {
+      "max_full_index_wall_ms": 10000,
+      "max_peak_rss_mib": 256,
+      "max_warm_query_p95_ms": 250,
+      "max_material_result_bytes": 49152
+    }
+  },
+  "run_environment": {
+    "cold_and_warm_runs_required": true,
+    "capture": [
+      "repowitness_revision",
+      "corpus_revision",
+      "rust_toolchain",
+      "operating_system",
+      "cpu_model",
+      "logical_cpu_count",
+      "memory_mib",
+      "filesystem_type",
+      "resolved_configuration_digest"
+    ]
+  }
+}
