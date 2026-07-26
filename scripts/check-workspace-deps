@@ -1,0 +1,86 @@
+#!/usr/bin/env perl
+
+use strict;
+use warnings;
+
+use JSON::PP qw(decode_json);
+
+my @command = (
+    'cargo',
+    'metadata',
+    '--format-version',
+    '1',
+    '--no-deps',
+    '--locked',
+);
+
+open my $metadata, '-|', @command
+  or die "cannot run cargo metadata: $!\n";
+
+local $/;
+my $json = <$metadata>;
+
+close $metadata
+  or die "cargo metadata failed\n";
+
+my $document = decode_json($json);
+
+my %allowed = (
+    'repowitness-domain'      => [],
+    'repowitness-analysis'    => ['repowitness-domain'],
+    'repowitness-application' => [
+        'repowitness-analysis',
+        'repowitness-domain',
+    ],
+    'repowitness-local' => [
+        'repowitness-analysis',
+        'repowitness-application',
+        'repowitness-domain',
+    ],
+    'repowitness-mcp' => ['repowitness-application'],
+    'repowitness-cli' => [
+        'repowitness-local',
+        'repowitness-mcp',
+    ],
+);
+
+my %packages = map { $_->{name} => $_ } @{$document->{packages}};
+my @errors;
+
+for my $name (sort keys %allowed) {
+    if (!exists $packages{$name}) {
+        push @errors, "missing workspace package: $name";
+        next;
+    }
+
+    my %actual = map {
+        $_->{name} => 1
+    } grep {
+        exists $allowed{$_->{name}}
+    } @{$packages{$name}->{dependencies}};
+
+    my @actual = sort keys %actual;
+    my @expected = sort @{$allowed{$name}};
+
+    if (join("\0", @actual) ne join("\0", @expected)) {
+        push @errors,
+          "$name has first-party dependencies ["
+          . join(', ', @actual)
+          . "], expected ["
+          . join(', ', @expected)
+          . ']';
+    }
+}
+
+for my $name (sort keys %packages) {
+    next if $name !~ /^repowitness-/;
+    push @errors, "unexpected workspace package: $name"
+      if !exists $allowed{$name};
+}
+
+if (@errors) {
+    print STDERR join("\n", @errors), "\n";
+    exit 1;
+}
+
+print "workspace dependency policy passed\n";

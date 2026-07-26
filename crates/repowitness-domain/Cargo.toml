@@ -1,0 +1,12 @@
+[package]
+name = "repowitness-domain"
+description = "Pure domain identities, snapshots, artifact keys, evidence, bounded results, memory, and temporal invariants for RepoWitness."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

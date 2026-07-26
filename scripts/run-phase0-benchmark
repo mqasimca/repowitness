@@ -1,0 +1,46 @@
+#!/bin/sh
+set -eu
+
+EXPECTED_REVISION=3d93b42bc363220f85af4fc9e1bebd35b588a4a3
+
+if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
+    echo "usage: ./scripts/run-phase0-benchmark <mini-redis-repository> [runs]" >&2
+    exit 64
+fi
+
+CORPUS_ROOT=$1
+RUNS=${2:-5}
+
+ACTUAL_REVISION=$(git -C "$CORPUS_ROOT" rev-parse --verify HEAD)
+if [ "$ACTUAL_REVISION" != "$EXPECTED_REVISION" ]; then
+    echo "error: corpus revision does not match the Phase 0 manifest" >&2
+    exit 65
+fi
+
+if [ -n "$(git -C "$CORPUS_ROOT" status --porcelain --untracked-files=all)" ]; then
+    echo "error: corpus worktree must be clean" >&2
+    exit 65
+fi
+
+cargo build --release --locked -p repowitness-local --example phase0_index_probe
+
+echo "observed_at_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+echo "repowitness_revision=$(git rev-parse --verify HEAD 2>/dev/null || echo uncommitted-worktree)"
+if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
+    echo "repowitness_worktree_dirty=true"
+else
+    echo "repowitness_worktree_dirty=false"
+fi
+echo "corpus_revision=$ACTUAL_REVISION"
+echo "rust_toolchain=$(rustc --version)"
+echo "operating_system=$(uname -srvmo)"
+echo "logical_cpu_count=$(getconf _NPROCESSORS_ONLN)"
+if command -v lscpu >/dev/null 2>&1; then
+    lscpu | sed -n 's/^Model name:[[:space:]]*/cpu_model=/p'
+fi
+df -PT "$CORPUS_ROOT" | awk 'NR == 2 { print "filesystem_type=" $2 }'
+if [ -r /proc/meminfo ]; then
+    awk '/^MemTotal:/ { printf "memory_mib=%d\n", $2 / 1024 }' /proc/meminfo
+fi
+
+target/release/examples/phase0_index_probe "$CORPUS_ROOT" "$RUNS"

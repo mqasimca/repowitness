@@ -1,0 +1,17 @@
+[package]
+name = "repowitness-application"
+description = "RepoWitness use cases, request context, policy enforcement, and task supervision."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+repowitness-analysis.workspace = true
+repowitness-domain.workspace = true
+sha2.workspace = true
+
+[lints]
+workspace = true

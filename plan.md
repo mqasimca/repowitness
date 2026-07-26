@@ -1,9 +1,11 @@
 # RepoWitness — Rust Codebase Intelligence and Engineering Memory
 
-Status: research-backed product and implementation plan  
-Date: 2026-07-22  
-Product name: **RepoWitness**  
+Status: research-backed product and implementation plan
+Date: 2026-07-22
+Product name: **RepoWitness**
 Tagline: **Verified engineering memory for coding agents**
+
+Focused product, architecture, engineering, roadmap, glossary, and decision documents now live under [`docs/`](docs/README.md). The current primary-source architecture review and implementation spikes are in [`docs/research/architecture-2026-07-22.md`](docs/research/architecture-2026-07-22.md). Accepted ADRs and those focused documents take precedence over this research reference where they cover the same decision.
 
 ## 1. Executive decision
 
@@ -106,7 +108,7 @@ That loop creates the distinctive capabilities:
 - MCP provides a common delivery protocol rather than requiring integrations for every client.
 - SCIP provides an open path to compiler-grade intelligence without building every compiler frontend.
 - Local SQLite, tree-sitter, Git, and Rust make a private, single-binary product practical.
-- MCP Tasks and MCP Apps now support durable operations and optional evidence-review interfaces.
+- Experimental MCP Tasks offer a negotiated durable-operation projection, while MCP Apps can provide optional evidence-review interfaces; neither is required for core correctness.
 - Existing competitors validate demand, but the field remains fragmented across search, graph, memory, and observability products.
 
 ### Expected user outcome
@@ -235,7 +237,7 @@ Proceed with Rust only if it satisfies the correctness and resource budgets defi
 | [Probe](https://github.com/probelabs/probe) and [Aider repository maps](https://aider.chat/docs/repomap.html) | Deterministic, token-aware retrieval and graph ranking are valuable to agents | Treat context construction and token efficiency as first-class product behavior |
 | [Graphiti](https://github.com/getzep/graphiti) | Temporal facts, episodes, provenance, and invalidation are practical memory primitives | Borrow the temporal model while keeping deterministic, local extraction as the default |
 | [LangMem concepts](https://langchain-ai.github.io/langmem/concepts/conceptual_guide/) and [Letta context hierarchy](https://docs.letta.com/guides/core-concepts/memory/context-hierarchy) | Semantic, episodic, and procedural memories need different storage and retrieval policies | Define explicit memory kinds and compile a small active context from a larger archive |
-| [MCP Tasks](https://modelcontextprotocol.io/extensions/tasks/overview) | Long-running, recoverable operations have a standard task model | Model indexing, imports, and revalidation as negotiated durable tasks |
+| [MCP Tasks](https://modelcontextprotocol.io/extensions/tasks/overview) | An experimental extension defines durable handles for long-running operations when both peers opt in | Keep task semantics application-owned; optionally project indexing, imports, and revalidation through negotiated MCP Tasks |
 | [MCP Apps](https://github.com/modelcontextprotocol/ext-apps) | Tools can expose sandboxed interactive interfaces with text fallbacks | Add an optional Evidence Workbench after the text API is stable |
 | [OpenTelemetry code attributes](https://opentelemetry.io/docs/specs/semconv/registry/attributes/code/) and [profiles](https://opentelemetry.io/docs/specs/otel/profiles/) | Runtime observations can be correlated with functions, files, traces, and services | Add privacy-preserving runtime overlays without storing application payloads by default |
 
@@ -365,7 +367,7 @@ Every material result returns:
 
 Initially expose categorical precision, resolution status, evidence, warnings, and coverage rather than a probability-like confidence number. A numeric score may be added only after a documented labeled corpus demonstrates calibration by evidence class and language; it must not be an arbitrary decorative number or be used to hide unresolved data.
 
-An evidence identity contains repository ID, concrete revision or worktree snapshot, normalized path, blob/content digest, producer, and a byte span or symbol occurrence when available. Line/column fragments are display metadata, not durable identity. Evidence against dirty worktree content is valid only for the recorded content digest and becomes stale when that digest changes.
+An evidence record combines a source identity with separate producer attribution. The source identity contains repository ID, concrete revision or worktree snapshot, normalized path, blob/content digest, and an explicit whole-file, half-open byte-span, or symbol-occurrence location. Producer identity and version remain separate fields. Line/column fragments are display metadata, not durable identity. Evidence against dirty worktree content is valid only for the recorded content digest and becomes stale when that digest changes.
 
 ### P0: context compiler
 
@@ -407,8 +409,8 @@ content: "Ledger writes must remain append-only."
 source: human
 assurance: approved
 status: active
-record_revision: 1
-previous_revision_digest: null
+display_revision: 1
+parent_revision_digests: []
 project_validity:
   introduced_by: [git:8e42...]
   invalidated_by: []
@@ -442,14 +444,14 @@ active <-----------> contradicted
 RepoWitness uses two distinct time axes:
 
 - **Project-valid time:** whether a claim applies to a queried repository revision. Because Git is a DAG, `introduced_by` and `invalidated_by` are commit sets interpreted through ancestry, not a single linear interval. A claim is eligible at revision `R` when at least one introduction commit is an ancestor of `R`, no applicable invalidation commit is an ancestor of `R`, and repository/worktree/path/symbol scope also matches.
-- **System/recorded time:** what RepoWitness knew at a given time. Records are never updated destructively in the query model. An edit creates an immutable record revision with `recorded_at`, closes the preceding revision with `recorded_until`, links its previous digest, and emits an audit event.
+- **System/recorded time:** what RepoWitness knew at a given time. Records are never updated destructively in the query model. An edit creates an immutable record revision with a system-visibility interval, links zero or more parent digests in a version DAG, and emits an audit event; conflicts may leave several candidates visible until review.
 
 Branch names are user-facing selectors, not durable temporal identity because they move. Queries resolve a branch or worktree to a concrete revision before validity evaluation. Rebase, cherry-pick, shallow-history, missing-ancestor, and force-push behavior must return an explicit `indeterminate` validity state when ancestry cannot be proven. Supersession and contradiction are relationships between immutable record revisions; neither silently rewrites historical truth.
 
 ### P0 foundation / P1 expansion: Git-native team memory
 
 - Canonical shared records live under a configurable `.code-memory/` directory as one stable YAML file per record.
-- SQLite is a query projection, not the sole copy of team knowledge.
+- SQLite is a query projection, not the sole copy of current team knowledge; retained unreachable observations still require backup/export for durable audit continuity.
 - Pull requests can review memory changes alongside source changes.
 - Record-level files minimize merge conflicts.
 - Personal memories remain outside the repository in a local, optionally encrypted store.
@@ -459,12 +461,12 @@ Branch names are user-facing selectors, not durable temporal identity because th
 
 The first release stores team memory in the application repository. A separate policy repository is a later server/organization option and must not complicate the local alpha.
 
-- Each record has an immutable ID. Its current canonical representation is `.code-memory/records/<id>.yaml`; edits increment `record_revision` and link `previous_revision_digest`.
+- Each record has an immutable ID. Its current canonical representation is `.code-memory/records/<id>.yaml`; edits increment a display-only `display_revision` and link zero or more `parent_revision_digests` in a version DAG.
 - UTF-8, LF endings, schema versioning, normalized paths, deterministic key ordering, and canonical content hashing make generated changes reviewable and reproducible.
-- Git history is the durable transaction history for shared records. Import materializes every observed version into append-only SQLite `memory_versions` and `memory_audit` rows; personal records use the same append-only model locally.
-- Import is idempotent by record ID, canonical content digest, and source commit. SQLite is a disposable projection for team memory and must be rebuildable from Git plus the current files.
-- Updates use optimistic concurrency against the previous digest. Conflicting Git versions remain explicit conflicts requiring review; RepoWitness does not choose semantic last-write-wins.
-- Deletion is represented by a tombstone record. Missing files, rewritten history, and pruned commits are diagnosed rather than interpreted as authorization to erase audit history.
+- Reachable Git history is the portable transaction history for shared records. Import materializes every observed version into append-only SQLite `memory_versions` and `memory_audit` rows; personal records use the same append-only model locally.
+- Import is idempotent by record ID, canonical content digest, and source commit. Current state is reproducibly projected from a declared set of reachable Git refs plus current files, and rebuilds report the history coverage they actually inspected.
+- An ordinary update uses the expected current digest as its one parent; a reviewed merge references every chosen parent. Parent digests, not display revisions, enforce optimistic concurrency. Conflicting Git versions remain explicit conflicts requiring review; RepoWitness does not choose semantic last-write-wins.
+- Deletion is represented by a tombstone record. Missing files, rewritten history, and pruned commits are diagnosed rather than interpreted as authorization to erase audit history. Previously observed versions remain in the local append-only journal under retention policy, but surviving database loss requires reachable Git objects or a verified backup/export.
 - Symlinks are rejected inside the memory directory by default. Imported records pass schema, scope, secret, actor, and approval-policy validation before activation.
 
 ### P1: task and attempt memory
@@ -478,7 +480,7 @@ Persist resumable task checkpoints containing:
 - commands, diagnostics, and test evidence;
 - unresolved questions and next safe action.
 
-Use negotiated [MCP Tasks](https://modelcontextprotocol.io/extensions/tasks/overview) for indexing, SCIP imports, memory revalidation, and other long-running operations. Provide a synchronous/polling fallback for clients without the extension.
+Keep indexing, SCIP imports, memory revalidation, and other long-running operations application-owned. When both peers opt into the experimental [MCP Tasks](https://modelcontextprotocol.io/extensions/tasks/overview) extension, expose those operations through durable task handles; always provide a synchronous or application-level polling path without the extension.
 
 Only turn an attempt into procedural memory when its outcome is verified. Record failed approaches as failures with their environment and error evidence so an agent avoids repeating them only when the conditions still match.
 
@@ -517,40 +519,36 @@ This is an overlay, not an attempt to replace CodeQL, Semgrep, or dedicated secu
 
 ### Suggested Rust workspace
 
-| Crate | Responsibility |
-|---|---|
-| `repowitness-core` | IDs, domain types, claims, evidence, generations, errors |
-| `repowitness-protocol` | Versioned configuration, extension, task, and result DTOs |
-| `repowitness-ffi` *(optional)* | Narrow audited wrappers only if RepoWitness owns unsafe/native glue that warrants a separate boundary |
-| `repowitness-language` | tree-sitter adapters, language manifests, extraction contracts |
-| `repowitness-indexer` | filesystem/Git discovery, parsing pipeline, incremental invalidation |
-| `repowitness-resolver` | name resolution, cross-file edges, SCIP/LSP overlays |
-| `repowitness-store` | Domain repository APIs, SQLite implementation, migrations, transactions, projections |
-| `repowitness-retrieval` | lexical search, graph ranking, fusion, context budgeting |
-| `repowitness-memory` | lifecycle, validation, scopes, conflict and staleness rules |
-| `repowitness-telemetry` | optional OTLP/profile aggregation and symbol correlation |
-| `repowitness-mcp` | MCP tools, resources, tasks, authorization boundary |
-| `repowitness-cli` | `repowitness` binary: index, inspect, doctor, import/export, benchmark |
+The 2026-07-22 primary-source review recommends one layered modular monolith with six physical packages, now accepted in [ADR-0008](docs/adr/0008-layered-modular-monolith.md); the detailed rationale, alternatives, and spikes are in the [architecture research report](docs/research/architecture-2026-07-22.md).
 
-These are logical boundaries, not the Phase 0 filesystem. Start the walking skeleton with approximately `repowitness-core`, `repowitness-engine`, `repowitness-store`, `repowitness-mcp`, and `repowitness-cli`; keep language, indexing, resolution, retrieval, and memory as modules until a real dependency, safety, compilation, ownership, or public-API boundary justifies a split. Create `repowitness-ffi` only if the project itself owns unsafe glue that cannot remain a tiny private wrapper.
+| Package | Responsibility |
+|---|---|
+| `repowitness-domain` | Pure IDs, snapshots, evidence, coverage, generations, memory lifecycle, temporal states, and invariants |
+| `repowitness-analysis` | Content-to-facts analysis, resolution, correspondence, retrieval, and context selection |
+| `repowitness-application` | Use cases, request context, policy, task supervision, and narrow port traits |
+| `repowitness-local` | SQLite, Git, filesystem/VFS, watcher reconciliation, local configuration, and bounded scheduling |
+| `repowitness-mcp` | Released MCP SDK adapter, wire DTOs, capability negotiation, and stdio transport |
+| `repowitness-cli` | `repowitness` binary, commands, composition root, diagnostics, import/export, and benchmarks |
+
+Analysis consumes immutable content/snapshot inputs and does no direct I/O. Domain types do not depend on Tokio, SQL, Tree-sitter, Git, Serde wire schemas, or MCP. Add a language, FFI, server, or extension crate only when an actual dependency, safety, ownership, release, or distribution boundary justifies it.
 
 ### Technology choices
 
 - **MCP**: official [`rmcp`](https://github.com/modelcontextprotocol/rust-sdk) SDK with Tokio.
 - **Syntax**: tree-sitter adapters behind a narrow internal trait.
-- **Persistence**: SQLite through [`rusqlite`](https://github.com/rusqlite/rusqlite) is the zero-configuration default, with WAL mode, a dedicated writer, and a bounded read pool. Add PostgreSQL as an optional server backend only after the local product is proven.
+- **Persistence**: SQLite through [`rusqlite`](https://github.com/rusqlite/rusqlite) is the zero-configuration default, with a bundled/verified WAL-reset-fixed SQLite, one owned writer, bounded owned readers, exact source manifests, content-addressed artifacts, and immutable generation activation. Add PostgreSQL as a server composition only after centralized demand is proven.
 - **Text search**: SQLite [FTS5](https://www.sqlite.org/fts5.html) initially.
 - **Vector search**: optional, experimental [`sqlite-vec`](https://github.com/asg017/sqlite-vec) feature after lexical/graph baselines exist.
-- **CPU work**: bounded Rayon pool or explicit worker pool for parsing and analysis.
+- **CPU work**: one owned, fixed-size Rayon pool for parsing and analysis.
 - **Async work**: Tokio for transport, scheduling, cancellation, and I/O—not for blocking SQLite or CPU parsing.
 - **Incrementality**: explicit dependency graph first; evaluate [Salsa's red-green model](https://salsa-rs.github.io/salsa/reference/algorithm.html) for derived in-memory queries after profiling.
-- **Serialization**: stable versioned JSON/MessagePack for APIs; YAML for human-reviewed team memories.
+- **Serialization**: stable versioned boundary DTOs; YAML is presentation for human-reviewed team memory, while a strict validated semantic object is hashed through a versioned canonical JSON form.
 
 Do not add Tantivy, a vector database, or a graph database until benchmarks demonstrate that SQLite is the bottleneck. Multiple independent indexes create consistency and operational cost.
 
 ### 2026 Rust implementation standard
 
-These rules are part of the architecture and release criteria. Exceptions require an ADR with motivation, scope, owner, tests, and a removal or review date.
+> **Historical research snapshot.** The maintained [engineering standard](docs/engineering.md) controls implementation and release criteria. This section is retained for rationale and source history; its example commands and tool choices are not normative when the focused standard differs.
 
 #### Toolchain and workspace policy
 
@@ -581,24 +579,24 @@ unused_must_use = "deny"
 unexpected_cfgs = "warn"
 
 [workspace.lints.clippy]
-correctness = "deny"
-suspicious = "warn"
-complexity = "warn"
-perf = "warn"
+correctness = { level = "deny", priority = -1 }
+suspicious = { level = "warn", priority = -1 }
+complexity = { level = "warn", priority = -1 }
+perf = { level = "warn", priority = -1 }
 ```
 
 Enable selected `clippy::pedantic` and restriction lints where they improve this codebase, but do not enable the entire restriction group; [Clippy warns that those lints can conflict](https://doc.rust-lang.org/stable/clippy/index.html). All `allow` attributes require a short reason next to the exception.
 
 #### Crate boundaries and dependency direction
 
-- Keep `repowitness-core` synchronous, deterministic, and independent of MCP, Tokio, SQL, tree-sitter, and UI types.
-- Make CLI and MCP crates thin composition roots. Business rules live in library crates and are tested without a transport.
+- Keep `repowitness-domain` synchronous, deterministic, and independent of MCP, Tokio, SQL, tree-sitter, Git, Serde wire schemas, and UI types.
+- Keep `repowitness-analysis` independent of filesystem/database I/O. The CLI is the composition root; MCP is a thin adapter over the same application use cases.
 - Dependency direction flows inward: transports and adapters depend on domain contracts; domain crates never depend on transports or concrete backends.
 - Do not expose `rusqlite`, Tokio, tree-sitter, MCP SDK, or PostgreSQL types in stable public APIs. Convert them to owned RepoWitness domain types at boundaries.
 - Use newtypes for repository, workspace, generation, symbol, evidence, memory, and task IDs. Never interchange plain strings or integers for distinct identities.
 - Do not persist `usize`, platform paths as lossy UTF-8, randomized `HashMap` hashes, or enum discriminants. Use explicit fixed-width fields, stable encodings, and versioned conversion code.
 - Prefer borrowing and iterators when ownership is clear, but do not contort code to eliminate clones without profiling evidence.
-- Keep modules cohesive and APIs narrow. Start with fewer physical crates; split a crate only for a real dependency, safety, compilation, ownership, or public-API boundary.
+- Keep modules cohesive and APIs narrow. Start with ADR-0008's six packages; split further only for a real dependency, safety, compilation, ownership, release, or public-API boundary.
 - Follow the [Rust API Guidelines](https://rust-lang.github.io/api-guidelines/) for naming, common traits, conversions, documentation, and future-proof public types.
 - Public extension/protocol crates follow SemVer and use [`cargo-semver-checks`](https://github.com/obi1kenobi/cargo-semver-checks) before release. Internal crates remain unpublished until a third-party consumer exists.
 
@@ -615,7 +613,7 @@ Enable selected `clippy::pedantic` and restriction lints where they improve this
 #### Async, threading, and cancellation
 
 - Tokio owns MCP/HTTP I/O, timers, signals, and task orchestration. It does not perform parser CPU work, bulk filesystem traversal, or blocking SQLite calls.
-- A bounded Rayon pool handles finite CPU-parallel parsing and analysis. A dedicated thread owns the long-lived SQLite writer. Short blocking operations may use `spawn_blocking`, but Tokio documents that running blocking tasks [cannot be aborted after they start](https://docs.rs/tokio/latest/tokio/task/fn.spawn_blocking.html).
+- An owned fixed-size Rayon pool handles finite CPU-parallel parsing and analysis. A dedicated discovery worker handles bulk filesystem work, one OS thread owns the long-lived SQLite writer, and bounded read workers each own a connection. Short blocking operations may use `spawn_blocking`, but Tokio documents that running blocking tasks [cannot be aborted after they start](https://docs.rs/tokio/latest/tokio/task/fn.spawn_blocking.html).
 - Bound every queue, semaphore, result set, recursion depth, and worker count. Backpressure is an API behavior and must appear in task progress and diagnostics.
 - Use structured task ownership: every spawned task has an owner, join handle, cancellation path, deadline, and observed result. Detached fire-and-forget tasks are prohibited.
 - Cancellation is cooperative and idempotent. Check cancellation between files/batches, never activate an incomplete generation, and make cleanup safe at every `.await`; the [Async Rust guidance](https://rust-lang.github.io/async-book/part-guide/more-async-await.html) notes that a future may stop at any await point.
@@ -640,6 +638,7 @@ Enable selected `clippy::pedantic` and restriction lints where they improve this
 - Version every persisted, Git-tracked, MCP, and extension schema. Decode into wire DTOs, validate, then convert into domain types.
 - Configuration rejects unknown fields. Durable formats preserve unknown optional fields only when explicit forward-round-tripping is part of the schema contract.
 - Canonicalize ordering before hashing or serializing sets/maps. Golden outputs must not depend on filesystem enumeration, thread completion, locale, randomized hash seeds, or wall-clock time.
+- Git-memory digests are computed from a strict validated, domain-separated, versioned canonical semantic form, not YAML bytes. Reject duplicate keys, tags, aliases/anchors, merge keys, unsupported floats, and over-budget input.
 - Use a documented stable digest such as BLAKE3 or SHA-256 for content identity; never use `DefaultHasher` for persistent IDs.
 - Preserve native `Path`/`OsStr` values internally and support non-UTF-8 Unix paths. Convert to display strings lossily only at a UI boundary and indicate that conversion.
 - Store timestamps in UTC with explicit semantics; use monotonic clocks for durations and deadlines. Tests inject clock and ID providers.
@@ -695,7 +694,7 @@ cargo check --workspace --all-targets
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace
 cargo test --workspace --doc
-cargo deny check
+cargo deny --locked check
 configuration/schema validation
 SQLite migration, transaction, generation, and recovery behavior tests
 incremental-versus-clean golden tests
@@ -727,14 +726,15 @@ CI actions and external tools are pinned by immutable revision or verified relea
 
 ### Indexing concurrency and consistency
 
-- Discover files into a bounded queue.
-- Parse and extract in parallel.
+- Discover and hash files through a blocking reconciliation worker into an exact, canonical source manifest.
+- Treat watcher events only as debounced dirty-path hints; native watchers, polling, and explicit reconciliation feed the same manifest builder.
+- Parse and extract immutable source blobs in the owned Rayon pool, reusing content-addressed artifacts when source and every semantics-affecting producer input match.
 - Resolve local facts before cross-file/project facts.
-- Write into a staging generation through one transactional writer.
+- Write staging artifacts and generation-scoped facts in bounded batches through one owned SQLite writer.
 - Run validation and coverage accounting.
-- Atomically mark the generation active.
+- Atomically change the active-generation pointer only after validation.
 - Cancel cooperatively and leave the previous generation readable.
-- Deduplicate filesystem events and apply backpressure.
+- Keep read transactions short and never across `.await`; apply explicit backpressure at every queue.
 - Never protect the whole graph with one `Arc<Mutex<_>>`.
 
 ### Stable identity
@@ -755,7 +755,8 @@ Memories attach primarily to logical IDs and secondarily to cited occurrences. R
 
 ```text
 repositories       workspaces          revisions
-worktrees          packages            files
+worktrees          source_snapshots    source_blobs
+analysis_artifacts generation_files    packages
 logical_symbols    occurrences         edges
 correspondences    correspondence_audit
 evidence           index_generations   coverage_events
@@ -764,7 +765,7 @@ tasks              attempts            verifications
 runtime_windows    runtime_edges        embeddings(optional)
 ```
 
-Every derived row includes its generation, producer, evidence class, and categorical resolution/assurance or deterministic status.
+Per-file local facts belong to an immutable analysis artifact keyed by source digest plus analyzer/configuration versions. Generation manifests map repository paths to artifacts; cross-file facts can remain generation-scoped initially. Every material derived fact exposes its generation/snapshot, producer, evidence class, and categorical resolution/assurance or deterministic status.
 
 ### Customization and extension architecture
 
@@ -968,7 +969,7 @@ MCP deprecated Roots, Sampling, and Logging through [SEP-2577](https://modelcont
 - Record actor, origin, timestamp, evidence, and operation in an append-only audit log.
 - Support optional SQLCipher-backed personal stores; keep keys outside the database.
 - Sign releases, publish checksums, SBOMs, and [SLSA](https://slsa.dev/spec/v1.1-rc1/requirements) provenance.
-- Preserve attribution and license notices if code or tests are ported from the incumbent [MIT-licensed repository](https://github.com/DeusData/codebase-memory-mcp/blob/main/LICENSE).
+- Do not copy or port code or tests from the incumbent merely because it is [MIT-licensed](https://github.com/DeusData/codebase-memory-mcp/blob/main/LICENSE). Any maintainer-approved reuse records exact provenance and preserves all required attribution and license notices.
 
 ## 13. Delivery roadmap
 
@@ -1058,7 +1059,7 @@ Deliver:
 Exit criteria:
 
 - stale memories are detected after controlled refactors without false automatic relinks in the release fixture corpus;
-- conflicting memories are surfaced rather than overwritten, and projection rebuild reproduces the same active/conflicted state;
+- conflicting memories are surfaced rather than overwritten, and projection rebuild from the same declared reachable history and current files reproduces the same active/conflicted state and coverage receipt;
 - procedure promotion requires verification evidence;
 - branch, revision, worktree, repository, user, and team scopes do not leak across boundaries;
 - longitudinal agent tests show lower repeated-failure and stale-memory usage rates than source-only and naive text-memory baselines.
@@ -1164,12 +1165,12 @@ Adapt the five ability areas in [LongMemEval](https://github.com/xiaowu0162/long
 
 1. Recruit the first design partner or select a representative public Rust repository; capture real exploration/resume tasks and a lexical/source-only baseline.
 2. Create the Phase 0 benchmark manifest with named corpus revisions, hardware, metrics, and ratified pass/fail budgets.
-3. Decide the project license and contribution/clean-room policy before accepting implementation; preserve all required third-party notices for any ported code or fixtures.
-4. Bootstrap a compact Rust 2024/resolver 3 workspace with a pinned stable toolchain, explicit MSRV, workspace inheritance, Rust 2024 rustfmt style, and only the crates needed by the walking skeleton.
-5. Split this planning source at bootstrap into maintained product, architecture, engineering-standard, and roadmap documents; keep decisions in versioned ADRs so implementation rules do not disappear inside strategy text.
-6. Write the blocking ADRs: logical identity/correspondence, Git-DAG and recorded-time semantics, immutable generation activation/recovery, and Git-memory version/import behavior.
-7. Define the versioned result/evidence envelope, categorical resolution states, coverage receipt, canonical memory schema, and content-digest rules.
-8. Create the SQLite schema for repositories, revisions, generations, symbols, evidence, immutable memory versions, and audits, with forward migrations plus backup/interruption/recovery tests.
+3. Preserve the accepted MIT license and clean-room contribution policy; require explicit provenance and notices for any maintainer-approved third-party reuse.
+4. Maintain the focused product, architecture, engineering-standard, roadmap, glossary, and ADR documents under `docs/`; update them with implementation so rules do not disappear inside this research reference.
+5. Implement the accepted ADR contracts for package boundaries, logical identity/correspondence, Git-DAG and recorded-time semantics, content-addressed immutable generation activation/recovery, and Git-memory version/import behavior.
+6. Bootstrap the resulting Rust 2024/resolver 3 modular monolith with a pinned stable toolchain, explicit MSRV, workspace inheritance, Rust 2024 rustfmt style, and automated dependency-direction checks.
+7. Define the versioned result/evidence envelope, categorical resolution states, coverage receipt, source snapshot/artifact keys, strict canonical memory schema, and semantic content-digest rules.
+8. Create the SQLite schema for source manifests/artifacts, repositories, revisions, generations, symbols, evidence, immutable memory versions, and audits, with forward migrations plus WAL/checkpoint, online-backup, interruption, and recovery tests.
 9. Implement single-repository/worktree discovery and the bounded discovery/parse/write/activate pipeline.
 10. Add the tree-sitter Rust adapter and golden extraction/identity fixtures. Keep unsafe inside the upstream binding or the smallest audited wrapper actually required.
 11. Implement FTS5 code/symbol search, definition lookup, minimal deterministic traversal, and generation-equivalence tests.
@@ -1212,7 +1213,7 @@ Adapt the five ability areas in [LongMemEval](https://github.com/xiaowu0162/long
 - Indexing and memory revalidation are durable tasks where supported.
 - Runtime ingestion and interactive UI wait until the core evidence loop is proven.
 - Rust is the first indexed language for dogfooding unless design-partner evidence changes the choice; every additional language must pass the same identity and coverage gates.
-- Choose and publish the project license and clean-room/ported-code policy before implementation. A common Rust-friendly starting point is dual MIT/Apache-2.0 for original work, subject to project-owner and legal review, while preserving the incumbent's MIT notice for any reused material.
+- Apply the accepted MIT license and clean-room/provenance policy from [ADR-0009](docs/adr/0009-mit-license-and-clean-room-contributions.md). Do not copy or port upstream material without explicit maintainer approval, recorded provenance, compatibility review, and required notices.
 
 ### Open questions requiring prototypes or user research
 
