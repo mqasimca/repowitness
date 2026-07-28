@@ -11,10 +11,8 @@ publish.workspace = true
 [dependencies]
 repowitness-local.workspace = true
 repowitness-mcp.workspace = true
-tokio.workspace = true
-
-[dev-dependencies]
 serde_json.workspace = true
+tokio.workspace = true
 
 [lints]
 workspace = true

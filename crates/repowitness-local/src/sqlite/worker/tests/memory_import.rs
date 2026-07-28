@@ -1,3 +1,95 @@
+struct MemoryImportFailureCase {
+    name: &'static str,
+    yaml: &'static [u8],
+    approval: MemoryImportApproval,
+    trigger: &'static str,
+}
+
+const MEMORY_IMPORT_FAILURE_CASES: [MemoryImportFailureCase; 8] = [
+    MemoryImportFailureCase {
+        name: "parent revision",
+        yaml: WORKTREE_RELATIONSHIP_MEMORY_YAML,
+        approval: MemoryImportApproval::LocallyApproved,
+        trigger: "CREATE TRIGGER fail_fixture_memory_parent
+            BEFORE INSERT ON memory_version_parents BEGIN
+                SELECT RAISE(ABORT, 'fixture parent failure');
+            END;",
+    },
+    MemoryImportFailureCase {
+        name: "commit validity",
+        yaml: COMMIT_MEMORY_YAML,
+        approval: MemoryImportApproval::LocallyApproved,
+        trigger: "CREATE TRIGGER fail_fixture_memory_validity
+            BEFORE INSERT ON memory_validity_commits BEGIN
+                SELECT RAISE(ABORT, 'fixture validity failure');
+            END;",
+    },
+    MemoryImportFailureCase {
+        name: "evidence",
+        yaml: COMMIT_MEMORY_YAML,
+        approval: MemoryImportApproval::LocallyApproved,
+        trigger: "CREATE TRIGGER fail_fixture_memory_evidence
+            BEFORE INSERT ON memory_evidence BEGIN
+                SELECT RAISE(ABORT, 'fixture evidence failure');
+            END;",
+    },
+    MemoryImportFailureCase {
+        name: "relationship",
+        yaml: WORKTREE_RELATIONSHIP_MEMORY_YAML,
+        approval: MemoryImportApproval::LocallyApproved,
+        trigger: "CREATE TRIGGER fail_fixture_memory_relationship
+            BEFORE INSERT ON memory_relationships BEGIN
+                SELECT RAISE(ABORT, 'fixture relationship failure');
+            END;",
+    },
+    MemoryImportFailureCase {
+        name: "canonical version",
+        yaml: COMMIT_MEMORY_YAML,
+        approval: MemoryImportApproval::LocallyApproved,
+        trigger: "CREATE TRIGGER fail_fixture_memory_version
+            BEFORE INSERT ON memory_versions BEGIN
+                SELECT RAISE(ABORT, 'fixture version failure');
+            END;",
+    },
+    MemoryImportFailureCase {
+        name: "observation audit",
+        yaml: COMMIT_MEMORY_YAML,
+        approval: MemoryImportApproval::ObservedOnly,
+        trigger: "CREATE TRIGGER fail_fixture_memory_observation
+            BEFORE INSERT ON memory_audit
+            WHEN NEW.operation = 'observed' BEGIN
+                SELECT RAISE(ABORT, 'fixture observation failure');
+            END;",
+    },
+    MemoryImportFailureCase {
+        name: "approval audit",
+        yaml: COMMIT_MEMORY_YAML,
+        approval: MemoryImportApproval::LocallyApproved,
+        trigger: "CREATE TRIGGER fail_fixture_memory_approval
+            BEFORE INSERT ON memory_audit
+            WHEN NEW.operation = 'locally_approved' BEGIN
+                SELECT RAISE(ABORT, 'fixture approval failure');
+            END;",
+    },
+    MemoryImportFailureCase {
+        name: "transaction commit",
+        yaml: COMMIT_MEMORY_YAML,
+        approval: MemoryImportApproval::LocallyApproved,
+        trigger: "CREATE TABLE fixture_memory_commit_failure(
+                marker INTEGER PRIMARY KEY,
+                workspace_id INTEGER NOT NULL,
+                FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+                    DEFERRABLE INITIALLY DEFERRED
+            );
+            CREATE TRIGGER fail_fixture_memory_commit
+            AFTER INSERT ON memory_audit
+            WHEN NEW.operation = 'locally_approved' BEGIN
+                INSERT INTO fixture_memory_commit_failure(marker, workspace_id)
+                VALUES (1, -1);
+            END;",
+    },
+];
+
 #[test]
 fn saturated_drop_detaches_instead_of_waiting_without_shutdown() {
     let (commands, _receiver) = mpsc::sync_channel(1);
@@ -215,7 +307,7 @@ fn observed_only_import_cannot_activate_repository_authored_memory() {
 }
 
 #[test]
-fn memory_import_control_and_transaction_failure_leave_no_partial_rows() {
+fn memory_import_control_failure_leaves_no_partial_rows() {
     let directory = TempDirectory::new();
     let database = directory.database();
     let (record, _, presentation) = memory_input(COMMIT_MEMORY_YAML);
@@ -259,21 +351,31 @@ fn memory_import_control_and_transaction_failure_leave_no_partial_rows() {
     );
     store.shutdown(deadline()).expect("writer should stop");
 
-    let raw = Connection::open(&database).expect("fixture database should open");
-    raw.execute_batch(
-        "CREATE TRIGGER fail_fixture_memory_approval
-             BEFORE INSERT ON memory_audit
-             WHEN NEW.operation = 'locally_approved'
-             BEGIN
-                 SELECT RAISE(ABORT, 'fixture approval failure');
-             END;",
-    )
-    .expect("fixture failure trigger should install");
-    drop(raw);
+    assert_eq!(memory_row_count(&database), 0);
+}
 
-    let (store, _) =
-        OwnedSqliteIndex::start(&database, 456, deadline()).expect("store should reopen");
-    assert_eq!(
+#[test]
+fn every_memory_import_stage_failure_rolls_back_the_whole_journal_transaction() {
+    for case in MEMORY_IMPORT_FAILURE_CASES {
+        let directory = TempDirectory::new();
+        let database = directory.database();
+        let (record, _, presentation) = memory_input(case.yaml);
+        let repository = record.scope().repository();
+        let (store, _) =
+            OwnedSqliteIndex::start(&database, 123, deadline()).expect("store should start");
+        store
+            .register_workspace(repository, 0, deadline())
+            .expect("workspace should register");
+        store.shutdown(deadline()).expect("writer should stop");
+
+        let raw = Connection::open(&database).expect("fixture database should open");
+        raw.execute_batch(case.trigger)
+            .expect("fixture failure trigger should install");
+        drop(raw);
+
+        let (store, _) =
+            OwnedSqliteIndex::start(&database, 456, deadline()).expect("store should reopen");
+        let error =
         store
             .import_memory_version(
                 repository,
@@ -282,18 +384,31 @@ fn memory_import_control_and_transaction_failure_leave_no_partial_rows() {
                 memory_source(),
                 memory_actor(),
                 memory_recorded_at(),
-                MemoryImportApproval::LocallyApproved,
+                case.approval,
                 Arc::new(AtomicBool::new(false)),
                 deadline(),
             )
-            .expect_err("audit failure should roll back the whole import"),
-        SqliteStoreError::DatabaseOperationFailed
-    );
-    store.shutdown(deadline()).expect("writer should stop");
+            .expect_err("injected stage failure should fail the import");
+        assert_eq!(
+            error,
+            SqliteStoreError::DatabaseOperationFailed,
+            "{} stage returned an unexpected error",
+            case.name
+        );
+        store.shutdown(deadline()).expect("writer should stop");
 
-    let raw = Connection::open(&database).expect("database should reopen");
-    let partial_rows: i64 = raw
-        .query_row(
+        assert_eq!(
+            memory_row_count(&database),
+            0,
+            "{} stage left partial journal rows",
+            case.name
+        );
+    }
+}
+
+fn memory_row_count(database: &Path) -> i64 {
+    let raw = Connection::open(database).expect("database should reopen");
+    raw.query_row(
             "SELECT
                     (SELECT count(*) FROM memory_versions) +
                     (SELECT count(*) FROM memory_version_parents) +
@@ -304,8 +419,7 @@ fn memory_import_control_and_transaction_failure_leave_no_partial_rows() {
             [],
             |row| row.get(0),
         )
-        .expect("memory row count should be readable");
-    assert_eq!(partial_rows, 0);
+        .expect("memory row count should be readable")
 }
 
 #[test]

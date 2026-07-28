@@ -1,4 +1,7 @@
 fn emit_diagnostics_report(writer: &mut impl Write, report: &DiagnosticsOutput) -> u8 {
+    if report.known_parser_limitation_nodes > report.syntax_error_nodes {
+        return EXIT_SOFTWARE;
+    }
     let mut encoded = Vec::new();
     if write_diagnostics_report(&mut encoded, report).is_err()
         || encoded.len() > MAX_CLI_DIAGNOSTICS_OUTPUT_BYTES
@@ -19,11 +22,7 @@ fn write_diagnostics_report(
     writeln!(writer, "status=ok")?;
     writeln!(writer, "operation=diagnostics")?;
     writeln!(writer, "schema_version={}", report.schema_version)?;
-    writeln!(
-        writer,
-        "diagnostics_profile={}",
-        report.diagnostics_profile
-    )?;
+    writeln!(writer, "diagnostics_profile={}", report.diagnostics_profile)?;
     writeln!(writer, "snapshot_sha256={}", report.snapshot_sha256)?;
     writeln!(writer, "generation={}", report.generation)?;
     writeln!(writer, "source_epoch={}", report.source_epoch)?;
@@ -33,6 +32,12 @@ fn write_diagnostics_report(
         report.producer_manifest_sha256
     )?;
     write_diagnostics_index_coverage(writer, report.index_coverage)?;
+    writeln!(writer, "syntax_error_nodes={}", report.syntax_error_nodes)?;
+    writeln!(
+        writer,
+        "known_parser_limitation_nodes={}",
+        report.known_parser_limitation_nodes
+    )?;
     write_diagnostics_memory(writer, report.memory_projection.as_ref())?;
     write_diagnostics_labels(
         writer,
@@ -40,12 +45,7 @@ fn write_diagnostics_report(
         "supported_language",
         &report.supported_languages,
     )?;
-    write_diagnostics_labels(
-        writer,
-        "capabilities",
-        "capability",
-        &report.capabilities,
-    )?;
+    write_diagnostics_labels(writer, "capabilities", "capability", &report.capabilities)?;
     write_diagnostics_labels(writer, "limitations", "limitation", &report.limitations)
 }
 
@@ -69,11 +69,7 @@ fn write_diagnostics_memory(
     };
     writeln!(writer, "memory_projection={}", memory.projection)?;
     writeln!(writer, "memory_source_epoch={}", memory.source_epoch)?;
-    writeln!(
-        writer,
-        "memory_snapshot_sha256={}",
-        memory.snapshot_sha256
-    )?;
+    writeln!(writer, "memory_snapshot_sha256={}", memory.snapshot_sha256)?;
     let coverage = memory.coverage;
     writeln!(writer, "memory_searched={}", coverage.searched)?;
     writeln!(writer, "memory_skipped={}", coverage.skipped)?;
@@ -81,18 +77,10 @@ fn write_diagnostics_memory(
     writeln!(writer, "memory_truncated={}", coverage.truncated)?;
     writeln!(writer, "memory_total={}", coverage.total)?;
     writeln!(writer, "memory_current={}", coverage.current)?;
-    writeln!(
-        writer,
-        "memory_not_applicable={}",
-        coverage.not_applicable
-    )?;
+    writeln!(writer, "memory_not_applicable={}", coverage.not_applicable)?;
     writeln!(writer, "memory_stale={}", coverage.stale)?;
     writeln!(writer, "memory_needs_review={}", coverage.needs_review)?;
-    writeln!(
-        writer,
-        "memory_indeterminate={}",
-        coverage.indeterminate
-    )?;
+    writeln!(writer, "memory_indeterminate={}", coverage.indeterminate)?;
     writeln!(writer, "memory_conflicted={}", coverage.conflicted)?;
     writeln!(writer, "memory_contradicted={}", coverage.contradicted)?;
     writeln!(writer, "memory_superseded={}", coverage.superseded)?;

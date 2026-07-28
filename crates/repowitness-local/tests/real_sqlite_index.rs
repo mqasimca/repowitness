@@ -318,13 +318,61 @@ fn configured_repository_reuses_every_unchanged_production_artifact() {
 
     let first = index_local_rust_repository(request, Arc::new(AtomicBool::new(false)))
         .expect("clean real generation should activate");
-    assert_eq!(first.reused_rust_files(), 0);
-    assert_eq!(first.analyzed_rust_files(), first.indexed_rust_files());
+    assert_eq!(
+        [
+            first.reused_rust_files(),
+            first.reused_go_files(),
+            first.reused_typescript_files(),
+            first.reused_tsx_files(),
+            first.reused_python_files(),
+        ],
+        [0; 5]
+    );
+    assert_eq!(
+        [
+            first.analyzed_rust_files(),
+            first.analyzed_go_files(),
+            first.analyzed_typescript_files(),
+            first.analyzed_tsx_files(),
+            first.analyzed_python_files(),
+        ],
+        [
+            first.indexed_rust_files(),
+            first.indexed_go_files(),
+            first.indexed_typescript_files(),
+            first.indexed_tsx_files(),
+            first.indexed_python_files(),
+        ]
+    );
 
     let second = index_local_rust_repository(request, Arc::new(AtomicBool::new(false)))
         .expect("unchanged real generation should activate");
-    assert_eq!(second.reused_rust_files(), second.indexed_rust_files());
-    assert_eq!(second.analyzed_rust_files(), 0);
+    assert_eq!(
+        [
+            second.reused_rust_files(),
+            second.reused_go_files(),
+            second.reused_typescript_files(),
+            second.reused_tsx_files(),
+            second.reused_python_files(),
+        ],
+        [
+            second.indexed_rust_files(),
+            second.indexed_go_files(),
+            second.indexed_typescript_files(),
+            second.indexed_tsx_files(),
+            second.indexed_python_files(),
+        ]
+    );
+    assert_eq!(
+        [
+            second.analyzed_rust_files(),
+            second.analyzed_go_files(),
+            second.analyzed_typescript_files(),
+            second.analyzed_tsx_files(),
+            second.analyzed_python_files(),
+        ],
+        [0; 5]
+    );
     assert_eq!(second.total_facts(), first.total_facts());
     assert_eq!(second.total_source_bytes(), first.total_source_bytes());
 }

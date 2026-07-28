@@ -29,7 +29,11 @@ path/content revalidation. The complete pinned mini-redis product-loop
 benchmark produces stable cold/warm results and now
 covers persistence, exact reuse, retrieval, default-read-only MCP, canonical
 memory write and approval, source-change revalidation, recall, and stale-memory
-context exclusion. One clean Phase 0 SQLite baseline-version-1 migration
+context exclusion. A separate pinned historical comparison checks bounded
+lexical search and naive memory against the same before/after evidence. An
+opt-in isolated Codex evaluation makes the correct decision at both revisions,
+uses current memory, ignores stale memory, and rates the packet useful. One
+immutable Phase 0 SQLite baseline and compatible version-2 migration
 contains the five-language artifact format, append-only memory journal,
 memory-revalidation projection, reviewed correspondence, and exact review-event
 idempotency. It persists each artifact's exact language and prepared Rust, Go,
@@ -76,8 +80,9 @@ The accepted memory-record domain model, strict byte parser, canonicalizer, and
 deterministic writer are implemented. A capability-contained boundary admits
 or atomically writes only the exact canonical record path, rejects links,
 aliases, special files, stale parents, and high-confidence secrets, and hashes
-the exact presentation bytes. The shared import use case scope-checks every
-record; the owned SQLite writer atomically appends or verifies immutable
+the exact presentation bytes. Publication revalidates the final file identity
+and link count before reporting success. The shared import use case scope-checks
+every record; the owned SQLite writer atomically appends or verifies immutable
 versions, normalized child rows, observation-only Git history, separately
 authorized local approvals, and exact manual review events. Re-import and
 review retries are idempotent, cancellation and failure leave no partial
@@ -90,7 +95,12 @@ conflict, and meaning-change staleness before one atomic projection activation.
 Recall returns the pinned projection with categorical freshness and coverage.
 Context compilation deterministically fuses exact declaration bytes and
 eligible current memory under a conservative byte budget, while diagnostics
-reports the matching source/projection state, capabilities, and limitations.
+reports the matching source/projection state, raw parser-error coverage, its
+non-subtractive recognized-limitation subset, capabilities, and limitations.
+Exact declarations are directly readable UTF-8 when valid and display-safe,
+and use an explicitly labeled lowercase-hexadecimal fallback otherwise. CLI
+output JSON-escapes the untrusted declaration in one report field; MCP carries
+separate encoding and declaration fields.
 The CLI exposes explicit write, approve, review, and observation-only history
 operations. Local MCP remains read-only by default and exposes the same
 `memory_manage` use case only under explicit fixed-actor startup authorization.
@@ -99,6 +109,11 @@ TypeScript and TSX support is syntax-only and uses separate grammar and
 artifact identities. JavaScript and MJS, TypeScript compiler semantics,
 references, module resolution, and active `tsconfig.json` interpretation remain
 unsupported.
+The current parser is a checksum-pinned, MIT-licensed local grammar patch with
+recorded [provenance](third_party/tree-sitter-typescript/REPOWITNESS-PROVENANCE.md).
+It fixes a bounded set of valid TypeScript and TSX forms without suppressing
+raw parser-error coverage; [ADR-0023](docs/adr/0023-vendor-typescript-grammar-fix.md)
+records the clean-room review and upstream replacement conditions.
 
 Python support is likewise syntax-only and uses an independent grammar and
 artifact identity for case-sensitive `.py` and `.pyi` paths. RepoWitness does
@@ -116,12 +131,12 @@ mixed-language fixtures and explicitly public pinned benchmark corpora.
 
 The remaining Phase 0 milestone is deliberately narrow. The complete local
 product loop and pinned correctness scenario are implemented and pass every
-proposed numeric budget in a development run. Maintainers must still ratify or
-revise the proposed memory ADRs and benchmark budgets, finish the residual
-rewritten-history/review/publication fault matrix, rerun from a clean exact
+proposed numeric budget in a development run. The rewritten-history, review,
+split/merge, canonical-file/SQLite publication-fault matrix, and controlled
+public baseline comparison also pass. Maintainers must still ratify or revise
+the proposed memory ADRs and benchmark budgets, rerun from a clean exact
 RepoWitness revision, and demonstrate on a real design-partner task that the
-evidence-backed memory changes a useful engineering decision relative to the
-declared baselines.
+evidence-backed memory changes a useful engineering decision.
 
 ## Local verification
 
@@ -151,10 +166,25 @@ mini-redis checkout with:
 ./scripts/run-phase0-benchmark /path/to/mini-redis 10
 ```
 
-The runner clones the corpus into a disposable worktree before creating memory
-or changing source. See the
+The runner creates separate disposable product and comparison worktrees before
+creating memory or changing source. See the
 [provisional product benchmark](docs/research/phase0-product-benchmark-2026-07-28.md)
+and
+[controlled comparative evaluation](docs/research/phase0-comparative-evaluation-2026-07-28.md)
 for the latest environment, results, and remaining ratification limits.
+
+Run the opt-in Codex usefulness evaluation against the same clean public
+checkout with:
+
+```text
+./scripts/run-phase0-codex-evaluation /path/to/mini-redis 1
+```
+
+It supplies the structured MCP context packet to an ephemeral read-only Codex
+process with shell, web, app, MCP, and collaboration tools disabled. The
+runner rejects any tool event and verifies every cited evidence identifier
+against the supplied packet. See the
+[Codex utility evaluation](docs/research/phase0-codex-utility-evaluation-2026-07-28.md).
 
 ## CLI
 
@@ -222,10 +252,13 @@ target/debug/repowitness symbol-get \
   --fact <match_0_fact_ordinal>
 ```
 
-`symbol-get` returns one definition declaration as lowercase hexadecimal so
-untrusted source bytes cannot inject terminal controls. It fails visibly if
-the selector is no longer in the active generation or the current source bytes
-no longer match the indexed content digest. Phase 0 does not return references.
+`symbol-get` report schema 2 returns one definition declaration as labeled
+display-safe UTF-8 or exact lowercase hexadecimal. The data remains one
+JSON-escaped field, so untrusted source bytes cannot forge terminal report
+lines. This presentation schema is independent of symbol profile 3. Retrieval
+fails visibly if the selector is no longer in the active generation or the
+current source bytes no longer match the indexed content digest. Phase 0 does
+not return references.
 
 Rebuild the immutable current-memory projection after indexing or changing
 source:
@@ -302,10 +335,14 @@ target/debug/repowitness context-build \
 
 The `utf8_bytes_upper_bound_v1` budget is deterministic and conservative; it is
 not an exact model-token count. If no memory projection exists, context
-compilation remains source-only and reports that omission.
+compilation remains source-only and reports that omission. Exact declarations
+use labeled display-safe `utf8` or exact `lowercase_hex` representations; the
+CLI puts their data in one JSON-escaped field so source text cannot forge
+report lines.
 
-Inspect the exact active generation, optional matching memory projection,
-coverage, capabilities, and limitations without mutation:
+Inspect the exact active generation, optional matching memory projection, raw
+and recognized parser diagnostics, coverage, capabilities, and limitations
+without mutation:
 
 ```text
 target/debug/repowitness diagnostics \
@@ -393,6 +430,8 @@ command surface.
 - [Architecture decisions](docs/adr/README.md)
 - [Versioned schemas](docs/schemas/README.md)
 - [Benchmark manifests](benchmarks/README.md)
+- [Phase 0 Codex utility evaluation](docs/research/phase0-codex-utility-evaluation-2026-07-28.md)
+- [Phase 0 ratification review](docs/research/phase0-ratification-review-2026-07-28.md)
 - [Full research and implementation plan](plan.md)
 
 Accepted architecture decisions take precedence for the areas they cover. The

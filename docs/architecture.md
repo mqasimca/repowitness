@@ -74,9 +74,14 @@ writes.
 The implemented read path provides bounded literal `code_search`, exact
 `symbol_get`, current-projection `memory_recall`, deterministic
 `context_build`, and transactionally pinned `diagnostics`. These return
-evidence-bearing application results rather than storage rows. The CLI and MCP
-adapters share the same use cases, and the MCP server fixes the repository,
-source root, and database at startup.
+evidence-bearing application results rather than storage rows. Diagnostics
+retains the raw Tree-sitter error/missing-node total and reports recognized
+parser limitations only as a non-subtractive subset. The CLI and MCP adapters
+share the same use cases, and the MCP server fixes the repository, source root,
+and database at startup. Exact source declarations use labeled UTF-8 when valid
+and display-safe, and lowercase hexadecimal otherwise. CLI report data is
+JSON-escaped into one field, while MCP keeps the representation label and
+declaration separate.
 
 Memory ingestion now reaches an append-only local journal: the domain model,
 strict YAML parser, canonical digest, and deterministic writer implement
@@ -85,8 +90,8 @@ capability-contained worktree admission feeds a scope-checked application use
 case; and the owned SQLite writer atomically appends immutable versions,
 normalized children, observations, and trusted local approvals under the
 implemented
-[baseline schema](schemas/phase0-sqlite-baseline-v1.md). The same one-migration
-baseline contains immutable Rust occurrence fingerprints, Git-validity and
+[current schema](schemas/phase0-sqlite-current-v2.md). The immutable baseline
+and compatible migration chain contain Rust occurrence fingerprints, Git-validity and
 correspondence results, conflicts, categorical effective state, an atomically
 activated current-memory projection, Python as an exact fifth persisted
 language, reviewed correspondence, and exact review-event idempotency.
@@ -174,7 +179,7 @@ source digest, adapter/grammar/producer identity, semantics-affecting
 configuration, extraction schema, and canonicalization version as distinct
 logical inputs. Equality and persisted digest identity change when any key
 input changes. See the
-[Phase 0 SQLite baseline](schemas/phase0-sqlite-baseline-v1.md).
+[Phase 0 SQLite schema](schemas/phase0-sqlite-current-v2.md).
 
 The pure analysis layer plans immutable artifact reuse from a canonical
 manifest and a verified logical-key inventory. Planning preserves manifest
@@ -219,11 +224,13 @@ revalidation.
 
 The production Rust, Go, TypeScript, TSX, and Python profiles hash versioned
 configuration and extraction schema manifests independently. Each producer
-identity includes its pinned Tree-sitter package version, grammar node schema,
-and exact first-party analysis, preparation, canonicalization, and local
-source-adapter implementation bytes. The combined snapshot profile commits to
-all five identities without allowing cross-language or cross-dialect artifact
-reuse. The CLI
+identity includes its pinned Tree-sitter package version, semantics-complete
+grammar fingerprint, and exact first-party analysis, preparation,
+canonicalization, and local source-adapter implementation bytes. The patched
+TypeScript and TSX grammar fingerprints use exact generated parser and scanner
+checksums because their node schemas do not change. The combined snapshot
+profile commits to all five identities without allowing cross-language or
+cross-dialect artifact reuse. The CLI
 `index` composition accepts only an explicit repository ID and SQLite path,
 shares one deadline and cancellation flag across preparation and publication,
 checkpoints after activation, and reports non-sensitive aggregates. Generation

@@ -19,14 +19,14 @@ build-constraints=not-evaluated";
 const PHASE0_GO_ANALYSIS_SCHEMA: &[u8] = b"language=go\0path-bytes\0\
 content-digest-sha256\0artifact-digest-sha256\0symbol-kind\0name-utf8\0\
 qualified-name-utf8\0name-span-u64\0declaration-span-u64\0visited-nodes-u32\0\
-syntax-error-nodes-u32";
+syntax-error-nodes-u32\0known-parser-limitation-nodes-u32";
 
 /// Version of the canonical Phase 0 Go producer-manifest encoding.
-pub const PHASE0_GO_PRODUCER_MANIFEST_VERSION: u32 = 2;
+pub const PHASE0_GO_PRODUCER_MANIFEST_VERSION: u32 = 3;
 /// Version of the resolved, non-configurable Phase 0 Go policy.
 pub const PHASE0_GO_CONFIGURATION_VERSION: u32 = 1;
 /// Version of the persisted Phase 0 Go extraction schema.
-pub const PHASE0_GO_ANALYSIS_SCHEMA_VERSION: u32 = 1;
+pub const PHASE0_GO_ANALYSIS_SCHEMA_VERSION: u32 = 2;
 /// Version of canonical persisted Go fact encodings.
 pub const PHASE0_GO_CANONICALIZATION_VERSION: u32 = 1;
 
@@ -107,8 +107,8 @@ mod tests {
             first.canonicalization_version(),
             PHASE0_GO_CANONICALIZATION_VERSION
         );
-        assert_eq!(PHASE0_GO_PRODUCER_MANIFEST_VERSION, 2);
+        assert_eq!(PHASE0_GO_PRODUCER_MANIFEST_VERSION, 3);
         assert_eq!(PHASE0_GO_CONFIGURATION_VERSION, 1);
-        assert_eq!(PHASE0_GO_ANALYSIS_SCHEMA_VERSION, 1);
+        assert_eq!(PHASE0_GO_ANALYSIS_SCHEMA_VERSION, 2);
     }
 }

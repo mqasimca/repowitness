@@ -18,8 +18,8 @@ use crate::{OwnedSqliteReader, SearchLimits};
 
 use super::{
     LocalIndexError, LocalIndexRequest, index_local_rust_repository,
-    index_local_rust_repository_with_hook, phase0_local_rust_artifact_identity,
-    phase0_local_source_artifact_identities,
+    index_local_rust_repository_with_hook, local_producer_implementation_fingerprint_inputs,
+    phase0_local_rust_artifact_identity, phase0_local_source_artifact_identities,
 };
 
 const REPOSITORY_ID: &str = concat!(
@@ -76,6 +76,15 @@ fn local_producer_identity_is_stable_and_extends_the_analysis_profile() {
         first.canonicalization_version(),
         base.canonicalization_version()
     );
+}
+
+#[test]
+fn local_producer_fingerprint_covers_exact_read_session_implementation() {
+    let exact_session = include_bytes!("../contained_source/exact_session.rs").as_slice();
+    let inputs = local_producer_implementation_fingerprint_inputs();
+
+    assert!(inputs.iter().all(|input| !input.is_empty()));
+    assert!(inputs.contains(&exact_session));
 }
 
 fn fixture_repository(directory: &TempDirectory) -> PathBuf {
@@ -623,3 +632,4 @@ fn dangling_database_symlink_cannot_bypass_worktree_isolation() {
 }
 
 include!("tests/python.rs");
+include!("tests/parser_diagnostics.rs");

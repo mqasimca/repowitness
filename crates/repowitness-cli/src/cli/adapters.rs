@@ -218,7 +218,8 @@ struct CliSymbolData {
     name_end: u64,
     declaration_start: u64,
     declaration_end: u64,
-    declaration_hex: String,
+    declaration_encoding: &'static str,
+    declaration: String,
 }
 
 struct CliSymbolReport {
@@ -274,6 +275,7 @@ fn symbol_report_data(
         return Err("resolved symbol-get evidence count is invalid".to_owned());
     }
     let occurrence = symbol.occurrence();
+    let declaration = encoded_source_bytes(symbol.declaration());
     Ok(CliSymbolData {
         producer_manifest: hex(evidence[0].producer().version().as_bytes()),
         language: occurrence.language().as_str(),
@@ -284,7 +286,8 @@ fn symbol_report_data(
         name_end: occurrence.name_span().end().get(),
         declaration_start: occurrence.declaration_span().start().get(),
         declaration_end: occurrence.declaration_span().end().get(),
-        declaration_hex: hex(symbol.declaration()),
+        declaration_encoding: declaration.encoding,
+        declaration: declaration.data,
     })
 }
 
@@ -306,6 +309,64 @@ fn hex(bytes: &[u8]) -> String {
         encoded.push(char::from(DIGITS[usize::from(byte & 0x0f)]));
     }
     encoded
+}
+
+struct EncodedSourceBytes {
+    encoding: &'static str,
+    data: String,
+}
+
+fn encoded_source_bytes(bytes: &[u8]) -> EncodedSourceBytes {
+    match std::str::from_utf8(bytes) {
+        Ok(text) if source_text_is_display_safe(text) => EncodedSourceBytes {
+            encoding: "utf8",
+            data: text.to_owned(),
+        },
+        Ok(_) | Err(_) => EncodedSourceBytes {
+            encoding: "lowercase_hex",
+            data: hex(bytes),
+        },
+    }
+}
+
+fn source_text_is_display_safe(text: &str) -> bool {
+    text.chars().all(|character| {
+        matches!(character, ' ' | '\n' | '\r' | '\t')
+            || (!character.is_control()
+                && !character.is_whitespace()
+                && !is_unicode_display_control(character))
+    })
+}
+
+fn is_unicode_display_control(character: char) -> bool {
+    matches!(
+        character,
+        '\u{00ad}'
+            | '\u{034f}'
+            | '\u{0600}'..='\u{0605}'
+            | '\u{061c}'
+            | '\u{06dd}'
+            | '\u{070f}'
+            | '\u{0890}'..='\u{0891}'
+            | '\u{08e2}'
+            | '\u{115f}'..='\u{1160}'
+            | '\u{17b4}'..='\u{17b5}'
+            | '\u{180b}'..='\u{180f}'
+            | '\u{200b}'..='\u{200f}'
+            | '\u{202a}'..='\u{202e}'
+            | '\u{2060}'..='\u{206f}'
+            | '\u{3164}'
+            | '\u{fe00}'..='\u{fe0f}'
+            | '\u{feff}'
+            | '\u{ffa0}'
+            | '\u{fff0}'..='\u{fffb}'
+            | '\u{110bd}'
+            | '\u{110cd}'
+            | '\u{13430}'..='\u{1343f}'
+            | '\u{1bca0}'..='\u{1bca3}'
+            | '\u{1d173}'..='\u{1d17a}'
+            | '\u{e0000}'..='\u{e0fff}'
+    )
 }
 
 struct LocalMcpRepositoryService {
@@ -499,7 +560,7 @@ fn mcp_symbol_output(result: LocalSymbolGetResult) -> Result<SymbolGetOutput, St
         .transpose()?;
     let coverage = result.coverage();
     Ok(SymbolGetOutput {
-        schema_version: 3,
+        schema_version: 4,
         symbol_profile: SYMBOL_GET_PROFILE_VERSION,
         snapshot_sha256: hex(result.snapshot().as_bytes()),
         generation: result.generation().get(),
@@ -525,6 +586,7 @@ fn mcp_symbol_data(
         return Err("resolved symbol-get evidence count is invalid".to_owned());
     }
     let occurrence = symbol.occurrence();
+    let declaration = encoded_source_bytes(symbol.declaration());
     Ok(McpSymbol {
         producer_manifest_sha256: hex(evidence[0].producer().version().as_bytes()),
         evidence_tier: "syntax".to_owned(),
@@ -540,8 +602,8 @@ fn mcp_symbol_data(
             start: occurrence.declaration_span().start().get(),
             end: occurrence.declaration_span().end().get(),
         },
-        declaration_encoding: "lowercase_hex".to_owned(),
-        declaration_hex: hex(symbol.declaration()),
+        declaration_encoding: declaration.encoding.to_owned(),
+        declaration: declaration.data,
     })
 }
 
@@ -560,6 +622,7 @@ struct CliIndexReport {
     total_source_bytes: u64,
     total_facts: u64,
     syntax_error_nodes: u64,
+    known_parser_limitation_nodes: u64,
     reused_rust_files: u64,
     analyzed_rust_files: u64,
     reused_go_files: u64,
@@ -588,6 +651,7 @@ impl From<LocalIndexReport> for CliIndexReport {
             total_source_bytes: report.total_source_bytes(),
             total_facts: report.total_facts(),
             syntax_error_nodes: report.syntax_error_nodes(),
+            known_parser_limitation_nodes: report.known_parser_limitation_nodes(),
             reused_rust_files: report.reused_rust_files(),
             analyzed_rust_files: report.analyzed_rust_files(),
             reused_go_files: report.reused_go_files(),

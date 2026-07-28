@@ -394,6 +394,7 @@ pub struct RustSourceAnalysis {
     facts: Vec<RustSymbolFact>,
     visited_nodes: u32,
     syntax_error_nodes: u32,
+    known_parser_limitation_nodes: u32,
 }
 
 /// Language-neutral name for complete bounded source analysis.
@@ -405,6 +406,7 @@ impl RustSourceAnalysis {
         facts: Vec<RustSymbolFact>,
         visited_nodes: u32,
         syntax_error_nodes: u32,
+        known_parser_limitation_nodes: u32,
         limits: RustAnalysisLimits,
     ) -> Result<Self, RustAnalysisError> {
         let fact_count =
@@ -412,6 +414,7 @@ impl RustSourceAnalysis {
         if visited_nodes == 0
             || visited_nodes > limits.max_syntax_nodes()
             || syntax_error_nodes > visited_nodes
+            || known_parser_limitation_nodes > syntax_error_nodes
             || fact_count > limits.max_symbol_facts()
         {
             return Err(RustAnalysisError::InvalidAnalysisArtifact);
@@ -423,6 +426,7 @@ impl RustSourceAnalysis {
             facts,
             visited_nodes,
             syntax_error_nodes,
+            known_parser_limitation_nodes,
         })
     }
 
@@ -438,6 +442,7 @@ impl RustSourceAnalysis {
             || self.visited_nodes == 0
             || self.visited_nodes > limits.max_syntax_nodes()
             || self.syntax_error_nodes > self.visited_nodes
+            || self.known_parser_limitation_nodes > self.syntax_error_nodes
             || self.facts.len()
                 > usize::try_from(limits.max_symbol_facts())
                     .map_err(|_| RustAnalysisError::InvalidAnalysisArtifact)?
@@ -466,6 +471,12 @@ impl RustSourceAnalysis {
     #[must_use]
     pub const fn syntax_error_nodes(&self) -> u32 {
         self.syntax_error_nodes
+    }
+
+    /// Returns the conservative subset attributed to recognized parser limitations.
+    #[must_use]
+    pub const fn known_parser_limitation_nodes(&self) -> u32 {
+        self.known_parser_limitation_nodes
     }
 
     /// Reports whether Tree-sitter produced incomplete or erroneous syntax.

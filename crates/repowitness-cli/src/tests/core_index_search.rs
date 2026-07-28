@@ -167,7 +167,8 @@ fn index_success_reports_aggregates_and_passes_explicit_inputs() {
             "skipped_unsupported_paths=2\n",
             "total_source_bytes=101\n",
             "symbol_facts=7\n",
-            "syntax_error_nodes=0\n",
+            "syntax_error_nodes=3\n",
+            "known_parser_limitation_nodes=2\n",
         )
     );
     assert!(stderr.is_empty());
@@ -187,6 +188,16 @@ fn index_success_reports_aggregates_and_passes_explicit_inputs() {
     );
     assert!(!stdout.contains("private"));
     assert!(!stdout.contains(identity));
+}
+
+#[test]
+fn index_output_rejects_known_parser_counts_above_raw_syntax_errors() {
+    let mut report = index_report();
+    report.syntax_error_nodes = 1;
+    report.known_parser_limitation_nodes = 2;
+    let mut output = Vec::new();
+    assert_eq!(emit_index_report(&mut output, report), EXIT_SOFTWARE);
+    assert!(output.is_empty());
 }
 
 #[test]

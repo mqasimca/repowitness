@@ -6,19 +6,20 @@
 - RepoWitness is in Phase 0 design-partner-alpha implementation with tested
   local Rust, Go, TypeScript, TSX, and Python indexing, evidence retrieval, and
   memory revalidation. The workspace includes a usable CLI, local stdio MCP
-  server, and one clean SQLite baseline-version-1 migration. Retired
-  development schema versions 1 through 8 are rejected without mutation. The
+  server, an immutable SQLite baseline-version-1 migration, and a compatible
+  version-2 parser-diagnostic migration. Retired development schema versions 1
+  through 8 are rejected without mutation. The
   accepted version-1 engineering-memory format, contained
   canonical writer, observation-only Git-history import, separately trusted
   local approval, append-only journal, manual correspondence review, immutable
   projection, precision-first Rust revalidation, recall, context compilation,
   and diagnostics exist. The MCP server remains read-only by default and adds
   `memory_manage` only under an explicit fixed-actor startup capability. The
-  pinned product-loop benchmark passes the proposed budgets in development;
-  explicit ADR/budget ratification, residual release-matrix cases, a real
-  design-partner outcome, and a stable public API remain. Verify the current
-  command surface in `README.md` and the implementation boundary in
-  `docs/roadmap.md`.
+  pinned product-loop benchmark and adversarial release matrix pass in
+  development; explicit ADR/budget ratification, a clean exact-revision
+  benchmark attestation, a real design-partner outcome, and a stable public API
+  remain. Verify the current command surface in `README.md` and the
+  implementation boundary in `docs/roadmap.md`.
 - Preserve the user's working tree. Do not commit, push, tag, publish, open a pull request, or rewrite Git history unless the user explicitly asks.
 - RepoWitness uses the MIT License and the clean-room/provenance policy in [`CONTRIBUTING.md`](CONTRIBUTING.md). Do not copy or port upstream source, tests, fixtures, generated code, or substantial documentation without prior maintainer approval and recorded provenance, version, license compatibility, notices, and rationale. Independent research and behavioral comparison are allowed.
 
@@ -59,7 +60,7 @@ Accepted ADRs control the decisions they cover. Focused product, architecture, e
   add another language, PostgreSQL, remote MCP, vectors, general graph queries,
   plugin execution, runtime telemetry, or a UI unless the task explicitly
   changes scope and the roadmap/ADR is updated.
-- ADR-0004 through ADR-0008, ADR-0010 through ADR-0016, ADR-0020, and ADR-0022 are accepted implementation contracts. Do not silently weaken or bypass their identity, temporal-validity, generation-publication, Git-memory, path, source-state, SQLite-generation, memory-format, or dependency-direction decisions; supersede a decision through a new ADR when necessary.
+- ADR-0004 through ADR-0008, ADR-0010 through ADR-0016, ADR-0020, ADR-0022, and ADR-0024 are accepted implementation contracts. Do not silently weaken or bypass their identity, temporal-validity, generation-publication, Git-memory, path, source-state, SQLite-generation, memory-format, or dependency-direction decisions; supersede a decision through a new ADR when necessary.
 - Enforce ADR-0008's dependency direction:
 
   ```text

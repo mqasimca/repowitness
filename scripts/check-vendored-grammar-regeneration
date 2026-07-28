@@ -1,0 +1,347 @@
+#!/usr/bin/env perl
+
+use strict;
+use warnings;
+
+use Cwd qw(abs_path);
+use Digest::SHA;
+use Errno qw(EAGAIN EWOULDBLOCK);
+use Fcntl qw(F_GETFL F_SETFL O_NONBLOCK);
+use File::Basename qw(dirname);
+use File::Copy qw(copy);
+use File::Find qw(find);
+use File::Path qw(make_path);
+use File::Spec;
+use File::Temp qw(tempdir);
+use IO::Select;
+use IO::Uncompress::Gunzip qw(gunzip $GunzipError);
+use POSIX qw(WNOHANG _exit setpgid uname);
+use Time::HiRes qw(sleep time);
+
+my $GENERATOR_VERSION = '0.24.4';
+my $NODE_VERSION      = 'v26.5.0';
+my $DOWNLOAD_LIMIT    = 20_000_000;
+my $EXPANDED_LIMIT    = 50_000_000;
+my $OUTPUT_LIMIT      = 1_048_576;
+
+my %asset_sha256 = (
+    'linux-arm64' => '79552ad4943a8ccdc2285f8be807b27629c45da6998c707e8fe0219f441666d1',
+    'linux-x64'   => '60578f6e563e046d311d7cac4bf27207eb6982b97ddec6b78022a4afdf736a9b',
+    'macos-arm64' => '7bee5649df5ae3965e132493c597f9e51772c3812c7751ba862fed5662bd106c',
+    'macos-x64'   => 'deb56b34878161d25008b52d9215ea45475dc7611dbdae0118fed26c70cfc232',
+);
+
+@ARGV == 0
+  or die "usage: scripts/check-vendored-grammar-regeneration\n";
+
+my $script_path = abs_path(__FILE__)
+  or die "cannot resolve regeneration-check path\n";
+my $repository_root = abs_path(File::Spec->catdir(dirname($script_path), '..'))
+  or die "cannot resolve repository root\n";
+my $vendor_root = File::Spec->catdir(
+    $repository_root, 'third_party', 'tree-sitter-typescript'
+);
+
+my ($platform, $architecture) = supported_host();
+my $asset_name = "tree-sitter-$platform-$architecture.gz";
+my $asset_key  = "$platform-$architecture";
+my $expected_sha256 = $asset_sha256{$asset_key}
+  or die "unsupported generator host $asset_key\n";
+
+my $temporary_root = tempdir('repowitness-grammar-XXXXXX', TMPDIR => 1, CLEANUP => 1);
+my $archive_path   = File::Spec->catfile($temporary_root, $asset_name);
+my $generator_path = File::Spec->catfile($temporary_root, 'tree-sitter');
+my $source_copy    = File::Spec->catdir($temporary_root, 'source');
+my $npm_cache      = File::Spec->catdir($temporary_root, 'npm-cache');
+
+local %ENV = %ENV;
+delete @ENV{qw(NODE_OPTIONS NODE_PATH TREE_SITTER_JS_RUNTIME)};
+$ENV{LC_ALL}                = 'C';
+$ENV{NPM_CONFIG_CACHE}      = $npm_cache;
+$ENV{NPM_CONFIG_REGISTRY}   = 'https://registry.npmjs.org/';
+$ENV{NPM_CONFIG_USERCONFIG} = File::Spec->devnull();
+$ENV{NO_UPDATE_NOTIFIER}    = '1';
+
+my $node_version = run_bounded(
+    label      => 'Node version check',
+    directory  => $repository_root,
+    timeout    => 10,
+    max_output => 4096,
+    command    => [ 'node', '--version' ],
+);
+chomp $node_version;
+$node_version eq $NODE_VERSION
+  or die "vendored grammar regeneration requires Node.js $NODE_VERSION\n";
+
+my $release_url =
+    "https://github.com/tree-sitter/tree-sitter/releases/download/"
+  . "v$GENERATOR_VERSION/$asset_name";
+run_bounded(
+    label      => 'generator download',
+    directory  => $repository_root,
+    timeout    => 150,
+    max_output => 65_536,
+    command    => [
+        'curl',
+        '--fail',
+        '--location',
+        '--silent',
+        '--show-error',
+        '--proto',
+        '=https',
+        '--tlsv1.2',
+        '--connect-timeout',
+        '15',
+        '--max-time',
+        '120',
+        '--retry',
+        '2',
+        '--max-filesize',
+        "$DOWNLOAD_LIMIT",
+        '--output',
+        $archive_path,
+        $release_url,
+    ],
+);
+
+my $archive_size = -s $archive_path;
+defined $archive_size && $archive_size > 0 && $archive_size <= $DOWNLOAD_LIMIT
+  or die "downloaded generator archive has an invalid size\n";
+file_sha256($archive_path) eq $expected_sha256
+  or die "downloaded generator archive failed SHA-256 verification\n";
+
+gunzip $archive_path => $generator_path
+  or die "cannot decompress verified generator: $GunzipError\n";
+my $generator_size = -s $generator_path;
+defined $generator_size
+  && $generator_size > 0
+  && $generator_size <= $EXPANDED_LIMIT
+  or die "decompressed generator has an invalid size\n";
+chmod 0700, $generator_path
+  or die "cannot make verified generator executable: $!\n";
+
+copy_tree($vendor_root, $source_copy);
+run_bounded(
+    label      => 'locked JavaScript dependency installation',
+    directory  => $source_copy,
+    timeout    => 180,
+    max_output => $OUTPUT_LIMIT,
+    command    => [
+        'npm',       'ci',          '--ignore-scripts',
+        '--no-audit', '--no-fund',  '--loglevel=error',
+    ],
+);
+
+my @generated_relative_paths = (
+    'src/grammar.json',
+    'src/node-types.json',
+    'src/parser.c',
+    'src/tree_sitter/parser.h',
+);
+
+for my $dialect ('typescript', 'tsx') {
+    my $dialect_directory = File::Spec->catdir($source_copy, $dialect);
+    for my $relative_path (@generated_relative_paths) {
+        my $generated_path =
+          File::Spec->catfile($dialect_directory, $relative_path);
+        unlink $generated_path
+          or die "cannot remove stale $dialect/$relative_path: $!\n";
+    }
+    run_bounded(
+        label      => "$dialect parser generation",
+        directory  => $dialect_directory,
+        timeout    => 180,
+        max_output => $OUTPUT_LIMIT,
+        command    => [
+            $generator_path,
+            'generate',
+            'grammar.js',
+            '--js-runtime=node',
+        ],
+    );
+}
+
+for my $dialect ('typescript', 'tsx') {
+    for my $relative_path (@generated_relative_paths) {
+        my $dialect_path = File::Spec->catfile($dialect, $relative_path);
+        my $expected = File::Spec->catfile($vendor_root, $dialect_path);
+        my $actual   = File::Spec->catfile($source_copy, $dialect_path);
+        -f $actual
+          or die "regeneration did not produce $dialect_path\n";
+        file_sha256($actual) eq file_sha256($expected)
+          or die "regeneration changed $dialect_path\n";
+    }
+}
+
+print "vendored grammar clean regeneration is byte-identical\n";
+
+sub supported_host {
+    my $platform =
+        $^O eq 'darwin' ? 'macos'
+      : $^O eq 'linux'  ? 'linux'
+      : die "vendored grammar regeneration supports only macOS and Linux\n";
+
+    my (undef, undef, undef, undef, $host) = uname();
+    $host //= '';
+    my $architecture =
+        $host =~ /(?:aarch64|arm64)/ ? 'arm64'
+      : $host =~ /(?:x86_64|amd64)/  ? 'x64'
+      : die "unsupported generator architecture\n";
+
+    return ($platform, $architecture);
+}
+
+sub file_sha256 {
+    my ($path) = @_;
+    open my $file, '<:raw', $path
+      or die "cannot open $path: $!\n";
+    my $digest = Digest::SHA->new(256)->addfile($file)->hexdigest;
+    close $file
+      or die "cannot close $path: $!\n";
+    return $digest;
+}
+
+sub copy_tree {
+    my ($source_root, $target_root) = @_;
+    make_path($target_root);
+
+    find(
+        {
+            no_chdir => 1,
+            wanted   => sub {
+                my $source = $File::Find::name;
+                my $relative = File::Spec->abs2rel($source, $source_root);
+                return if $relative eq File::Spec->curdir();
+
+                if ($relative eq 'node_modules') {
+                    $File::Find::prune = 1;
+                    return;
+                }
+                -l $source
+                  and die "vendored grammar contains a symlink: $relative\n";
+
+                my $target = File::Spec->catfile($target_root, $relative);
+                if (-d $source) {
+                    make_path($target);
+                    return;
+                }
+                return if !-f $source;
+
+                make_path(dirname($target));
+                copy($source, $target)
+                  or die "cannot copy $relative: $!\n";
+            },
+        },
+        $source_root,
+    );
+}
+
+sub run_bounded {
+    my (%arguments) = @_;
+    my $label       = $arguments{label};
+    my $directory   = $arguments{directory};
+    my $timeout     = $arguments{timeout};
+    my $max_output  = $arguments{max_output};
+    my @command     = @{ $arguments{command} };
+
+    pipe my $reader, my $writer
+      or die "$label could not create an output pipe\n";
+    my $pid = fork();
+    defined $pid
+      or die "$label could not start\n";
+
+    if ($pid == 0) {
+        close $reader;
+        setpgid(0, 0)
+          or _exit(126);
+        chdir $directory
+          or _exit(126);
+        open STDOUT, '>&', $writer
+          or _exit(126);
+        open STDERR, '>&', $writer
+          or _exit(126);
+        close $writer;
+        exec { $command[0] } @command
+          or _exit(127);
+    }
+
+    close $writer;
+    my $flags = fcntl($reader, F_GETFL, 0);
+    defined $flags
+      or die "$label could not configure output capture\n";
+    fcntl($reader, F_SETFL, $flags | O_NONBLOCK)
+      or die "$label could not configure bounded output capture\n";
+
+    my $selector = IO::Select->new($reader);
+    my $deadline = time() + $timeout;
+    my $output   = '';
+    my $status;
+
+    while (1) {
+        read_available($selector, \$output, $max_output, $label, $pid);
+        my $waited = waitpid($pid, WNOHANG);
+        if ($waited == $pid) {
+            $status = $?;
+            last;
+        }
+        if (time() >= $deadline) {
+            terminate_process_group($pid);
+            die "$label exceeded its deadline\n";
+        }
+        sleep 0.02;
+    }
+
+    for (1 .. 20) {
+        last if !$selector->count();
+        read_available($selector, \$output, $max_output, $label, $pid);
+        sleep 0.005;
+    }
+    close $reader;
+
+    if ($status != 0) {
+        my $exit_code = $status >> 8;
+        my $signal    = $status & 127;
+        my $outcome =
+            $signal != 0 ? "signal $signal"
+          :               "exit code $exit_code";
+        die "$label failed with $outcome\n$output";
+    }
+
+    return $output;
+}
+
+sub read_available {
+    my ($selector, $output, $max_output, $label, $pid) = @_;
+    for my $handle ($selector->can_read(0)) {
+        my $chunk = '';
+        my $read  = sysread($handle, $chunk, 65_536);
+        if (!defined $read) {
+            next if $! == EAGAIN || $! == EWOULDBLOCK;
+            terminate_process_group($pid);
+            die "$label output capture failed\n";
+        }
+        if ($read == 0) {
+            $selector->remove($handle);
+            next;
+        }
+        $$output .= $chunk;
+        if (length($$output) > $max_output) {
+            terminate_process_group($pid);
+            die "$label exceeded its output limit\n";
+        }
+    }
+}
+
+sub terminate_process_group {
+    my ($pid) = @_;
+    kill 'TERM', -$pid
+      or kill 'TERM', $pid;
+    my $deadline = time() + 1;
+    while (time() < $deadline) {
+        return if waitpid($pid, WNOHANG) == $pid;
+        sleep 0.02;
+    }
+    kill 'KILL', -$pid
+      or kill 'KILL', $pid;
+    waitpid($pid, 0);
+}

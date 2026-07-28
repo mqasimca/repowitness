@@ -63,7 +63,7 @@ fn mcp_context_output(result: LocalContextBuildResult) -> Result<ContextBuildOut
         items.push(mcp_context_item(item)?);
     }
     Ok(ContextBuildOutput {
-        schema_version: 1,
+        schema_version: 2,
         context_profile: result.profile_version(),
         reciprocal_rank_k: CONTEXT_BUILD_RRF_K,
         budget_estimator: result.budget_estimator().label().to_owned(),
@@ -153,6 +153,7 @@ fn mcp_context_item(item: &ContextItem) -> Result<McpContextItem, String> {
             let candidate = item.candidate();
             let selector = candidate.selector();
             let occurrence = candidate.occurrence();
+            let declaration = encoded_source_bytes(candidate.declaration());
             Ok(McpContextItem::Source(McpContextSourceItem {
                 provider_rank: rank.provider_rank(),
                 fused_rank: rank.fused_rank(),
@@ -177,8 +178,8 @@ fn mcp_context_item(item: &ContextItem) -> Result<McpContextItem, String> {
                     start: occurrence.declaration_span().start().get(),
                     end: occurrence.declaration_span().end().get(),
                 },
-                declaration_encoding: "lowercase_hex".to_owned(),
-                declaration_hex: hex(candidate.declaration()),
+                declaration_encoding: declaration.encoding.to_owned(),
+                declaration: declaration.data,
             }))
         }
     }

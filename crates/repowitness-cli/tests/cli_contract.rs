@@ -156,15 +156,18 @@ fn assert_symbol_get_success(
     assert!(output.stderr.is_empty());
     let report = String::from_utf8(output.stdout).expect("symbol report must be UTF-8");
     assert!(report.contains("status=ok\noperation=symbol-get\n"));
+    assert!(report.contains("schema_version=2\n"));
     assert!(report.contains("symbol_profile=3\n"));
     assert!(report.contains("resolution=confirmed\n"));
     assert!(report.contains("symbol_found=true\n"));
     assert!(report.contains("evidence_tier=syntax\n"));
     assert_eq!(report_value(&report, "language"), expected_language);
     assert_eq!(report_value(&report, "name"), expected_name);
+    assert_eq!(report_value(&report, "declaration_encoding"), "utf8");
     assert_eq!(
-        report_value(&report, "declaration_hex"),
-        hex_bytes(expected_source.as_bytes())
+        serde_json::from_str::<String>(report_value(&report, "declaration_data_json"))
+            .expect("declaration must be one JSON string"),
+        expected_source
     );
 }
 
@@ -206,15 +209,6 @@ fn assert_changed_symbol_contract(repository: &Path, database: &Path) {
         "changed",
         "pub fn changed() {}",
     );
-}
-
-fn hex_bytes(bytes: &[u8]) -> String {
-    let mut output = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        use std::fmt::Write;
-        write!(output, "{byte:02x}").expect("writing to a string cannot fail");
-    }
-    output
 }
 
 fn assert_widget_search_contract(database: &Path) -> String {

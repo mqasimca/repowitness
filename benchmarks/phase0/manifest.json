@@ -1,8 +1,8 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "benchmark_id": "phase0-rust-evidence-memory-v1",
   "status": "proposed",
-  "reviewed_on": "2026-07-23",
+  "reviewed_on": "2026-07-28",
   "source_policy": {
     "mode": "external-reference-only",
     "vendored_content": false
@@ -125,6 +125,55 @@
       "description": "Append the memory claim as unvalidated text without source evidence, temporal validity, or revalidation."
     }
   ],
+  "comparative_evaluations": [
+    {
+      "id": "negative-bulk-temporal-decision",
+      "task": "frame-negative-bulk-validation",
+      "change_scenario": "negative-bulk-validation-fix",
+      "memory_claim": "Frame::check accepts negative bulk lengths other than -1.",
+      "base_claim_relation": "supports",
+      "changed_claim_relation": "contradicts",
+      "expected_memory_transition": "stale",
+      "lexical_signals": {
+        "base_support": "skip(src, 4)",
+        "changed_contradiction": "check_rejects_invalid_negative_bulk_length"
+      },
+      "lexical_limits": {
+        "max_paths": 4096,
+        "max_file_bytes": 1048576,
+        "max_total_source_bytes": 16777216,
+        "deadline_ms": 10000
+      },
+      "baseline_ids": [
+        "lexical-source-only",
+        "naive-memory-text"
+      ],
+      "required_observations": [
+        "source_evidence_relation",
+        "memory_effective_state",
+        "memory_context_inclusion",
+        "stale_claims_exposed"
+      ],
+      "expected_decision_change": true
+    }
+  ],
+  "agent_evaluations": [
+    {
+      "id": "codex-negative-bulk-temporal-decision",
+      "comparison": "negative-bulk-temporal-decision",
+      "consumer": "codex",
+      "execution": "opt-in",
+      "question": "At the current source snapshot, does Frame::check accept RESP bulk lengths below -1?",
+      "response_contract": "codex-decision-v2",
+      "minimum_complete_runs": 1,
+      "base_expected_decision": "bug-present",
+      "changed_expected_decision": "bug-fixed",
+      "require_source_grounding": true,
+      "require_current_memory_use_at_base": true,
+      "max_stale_memory_uses": 0,
+      "required_usefulness": "useful"
+    }
+  ],
   "budgets": {
     "status": "proposed",
     "correctness": {
@@ -137,7 +186,9 @@
       "max_full_index_wall_ms": 10000,
       "max_peak_rss_mib": 256,
       "max_warm_query_p95_ms": 250,
-      "max_material_result_bytes": 49152
+      "max_material_result_bytes": 49152,
+      "max_database_bytes": 4194304,
+      "max_wal_bytes_after_completion": 0
     }
   },
   "run_environment": {

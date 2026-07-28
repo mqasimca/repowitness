@@ -156,6 +156,15 @@ fn mcp_stdio_indexes_searches_retrieves_and_rejects_a_stale_selector() {
     assert_mcp_tools(&mut input, &mut output);
     let exact_arguments = mcp_search_selector(&mut input, &mut output);
     assert_mcp_symbol(&mut input, &mut output, &exact_arguments);
+    assert_mcp_context(
+        &mut input,
+        &mut output,
+        14,
+        "Widget",
+        "rust",
+        "utf8",
+        "pub struct Widget;",
+    );
     assert_mcp_go_round_trip(&mut input, &mut output);
     assert_mcp_supported_language_round_trip(
         &mut input,
@@ -184,6 +193,7 @@ fn mcp_stdio_indexes_searches_retrieves_and_rejects_a_stale_selector() {
         "python",
         b"def send(self): pass",
     );
+    assert_mcp_diagnostics_and_absent_memory(&mut input, &mut output, 15, 16);
 
     assert!(
         index(&repository, &database, REPOSITORY_ID)
@@ -233,8 +243,12 @@ fn mcp_stdio_discovers_and_retrieves_a_python_only_index() {
     let symbol = &symbol["result"]["structuredContent"];
     assert_eq!(symbol["resolution"], serde_json::json!("confirmed"));
     assert_eq!(symbol["symbol"]["language"], serde_json::json!("python"));
+    assert_eq!(
+        symbol["symbol"]["declaration_encoding"],
+        serde_json::json!("utf8")
+    );
     assert!(
-        symbol["symbol"]["declaration_hex"]
+        symbol["symbol"]["declaration"]
             .as_str()
             .is_some_and(|declaration| !declaration.is_empty())
     );
@@ -264,11 +278,31 @@ fn mcp_stdio_round_trips_an_exact_symbol_from_a_real_repository() {
     let symbol = &symbol["result"]["structuredContent"];
     assert_eq!(symbol["resolution"], serde_json::json!("confirmed"));
     assert!(
-        symbol["symbol"]["declaration_hex"]
+        symbol["symbol"]["declaration"]
             .as_str()
             .is_some_and(|declaration| !declaration.is_empty()),
         "exact retrieval must return a non-empty declaration"
     );
+    assert!(
+        matches!(
+            symbol["symbol"]["declaration_encoding"].as_str(),
+            Some("utf8" | "lowercase_hex")
+        ),
+        "exact retrieval must label its declaration representation"
+    );
+    let source = &symbol["symbol"];
+    assert_mcp_context(
+        &mut input,
+        &mut output,
+        41,
+        source["name"].as_str().expect("symbol name"),
+        source["language"].as_str().expect("symbol language"),
+        source["declaration_encoding"]
+            .as_str()
+            .expect("declaration encoding"),
+        source["declaration"].as_str().expect("declaration data"),
+    );
+    assert_mcp_diagnostics_and_absent_memory(&mut input, &mut output, 42, 43);
     stop_mcp(child, input, output);
 }
 
@@ -359,226 +393,7 @@ fn initialize_mcp(input: &mut ChildStdin, output: &mut BufReader<ChildStdout>) {
     );
 }
 
-fn assert_mcp_tools(input: &mut ChildStdin, output: &mut BufReader<ChildStdout>) {
-    let listed = mcp_request(
-        input,
-        output,
-        serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": 2,
-            "method": "tools/list",
-            "params": {}
-        }),
-    );
-    assert_eq!(
-        listed["result"]["tools"]
-            .as_array()
-            .expect("tool list")
-            .iter()
-            .map(|tool| tool["name"].as_str().expect("tool name"))
-            .collect::<Vec<_>>(),
-        [
-            "code_search",
-            "context_build",
-            "diagnostics",
-            "memory_recall",
-            "symbol_get"
-        ]
-    );
-}
-
-fn mcp_search_selector(
-    input: &mut ChildStdin,
-    output: &mut BufReader<ChildStdout>,
-) -> serde_json::Value {
-    let search = mcp_call_search(input, output, 3, "struct Widget");
-    let search = &search["result"]["structuredContent"];
-    assert_eq!(search["schema_version"], serde_json::json!(3));
-    assert_eq!(search["query_profile"], serde_json::json!(3));
-    assert_eq!(search["generation"], serde_json::json!(1));
-    assert_eq!(search["resolution"], serde_json::json!("confirmed"));
-    assert_eq!(search["matches_returned"], serde_json::json!(1));
-    let candidate = &search["matches"][0];
-    assert_eq!(candidate["language"], serde_json::json!("rust"));
-    serde_json::json!({
-        "snapshot_sha256": search["snapshot_sha256"],
-        "generation": search["generation"],
-        "path": candidate["path"],
-        "content_sha256": candidate["content_sha256"],
-        "artifact_sha256": candidate["artifact_sha256"],
-        "fact_ordinal": candidate["fact_ordinal"]
-    })
-}
-
-fn mcp_first_search_selector(
-    input: &mut ChildStdin,
-    output: &mut BufReader<ChildStdout>,
-    request_id: usize,
-    query: &str,
-) -> Option<serde_json::Value> {
-    let search = mcp_call_search(input, output, request_id, query);
-    let search = &search["result"]["structuredContent"];
-    let candidate = search["matches"].as_array()?.first()?;
-    Some(serde_json::json!({
-        "snapshot_sha256": search["snapshot_sha256"],
-        "generation": search["generation"],
-        "path": candidate["path"],
-        "content_sha256": candidate["content_sha256"],
-        "artifact_sha256": candidate["artifact_sha256"],
-        "fact_ordinal": candidate["fact_ordinal"]
-    }))
-}
-
-fn mcp_first_supported_symbol_selector(
-    input: &mut ChildStdin,
-    output: &mut BufReader<ChildStdout>,
-    first_request_id: usize,
-) -> Option<serde_json::Value> {
-    SUPPORTED_SYMBOL_KIND_QUERIES
-        .into_iter()
-        .enumerate()
-        .find_map(|(ordinal, query)| {
-            mcp_first_search_selector(input, output, first_request_id + ordinal, query)
-        })
-}
-
-fn mcp_call_search(
-    input: &mut ChildStdin,
-    output: &mut BufReader<ChildStdout>,
-    request_id: usize,
-    query: &str,
-) -> serde_json::Value {
-    mcp_request(
-        input,
-        output,
-        serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": request_id,
-            "method": "tools/call",
-            "params": {
-                "name": "code_search",
-                "arguments": {"query": query, "max_results": 5}
-            }
-        }),
-    )
-}
-
-fn assert_mcp_symbol(
-    input: &mut ChildStdin,
-    output: &mut BufReader<ChildStdout>,
-    exact_arguments: &serde_json::Value,
-) {
-    let symbol = mcp_call_symbol(input, output, 4, exact_arguments);
-    let symbol = &symbol["result"]["structuredContent"];
-    assert_eq!(symbol["resolution"], serde_json::json!("confirmed"));
-    assert_eq!(symbol["schema_version"], serde_json::json!(3));
-    assert_eq!(symbol["symbol_profile"], serde_json::json!(3));
-    assert_eq!(symbol["symbol"]["language"], serde_json::json!("rust"));
-    assert_eq!(
-        symbol["symbol"]["declaration_hex"],
-        serde_json::json!(hex_bytes(b"pub struct Widget;"))
-    );
-}
-
-fn assert_mcp_go_round_trip(input: &mut ChildStdin, output: &mut BufReader<ChildStdout>) {
-    let search = mcp_call_search(input, output, 6, "Launch");
-    let search = &search["result"]["structuredContent"];
-    assert_eq!(search["schema_version"], serde_json::json!(3));
-    assert_eq!(search["query_profile"], serde_json::json!(3));
-    assert_eq!(search["matches_returned"], serde_json::json!(1));
-    let candidate = &search["matches"][0];
-    assert_eq!(candidate["language"], serde_json::json!("go"));
-    let selector = serde_json::json!({
-        "snapshot_sha256": search["snapshot_sha256"],
-        "generation": search["generation"],
-        "path": candidate["path"],
-        "content_sha256": candidate["content_sha256"],
-        "artifact_sha256": candidate["artifact_sha256"],
-        "fact_ordinal": candidate["fact_ordinal"]
-    });
-    let symbol = mcp_call_symbol(input, output, 7, &selector);
-    let symbol = &symbol["result"]["structuredContent"];
-    assert_eq!(symbol["symbol"]["language"], serde_json::json!("go"));
-    assert_eq!(symbol["symbol"]["name"], serde_json::json!("Launch"));
-    assert_eq!(
-        symbol["symbol"]["declaration_hex"],
-        serde_json::json!(hex_bytes(b"func (Gadget) Launch() {}"))
-    );
-}
-
-fn assert_mcp_supported_language_round_trip(
-    input: &mut ChildStdin,
-    output: &mut BufReader<ChildStdout>,
-    search_request_id: usize,
-    symbol_request_id: usize,
-    query: &str,
-    language: &str,
-    declaration: &[u8],
-) {
-    let search = mcp_call_search(input, output, search_request_id, query);
-    let search = &search["result"]["structuredContent"];
-    assert_eq!(search["schema_version"], serde_json::json!(3));
-    assert_eq!(search["query_profile"], serde_json::json!(3));
-    assert_eq!(search["matches_returned"], serde_json::json!(1));
-    let candidate = &search["matches"][0];
-    assert_eq!(candidate["language"], serde_json::json!(language));
-    let selector = serde_json::json!({
-        "snapshot_sha256": search["snapshot_sha256"],
-        "generation": search["generation"],
-        "path": candidate["path"],
-        "content_sha256": candidate["content_sha256"],
-        "artifact_sha256": candidate["artifact_sha256"],
-        "fact_ordinal": candidate["fact_ordinal"]
-    });
-    let symbol = mcp_call_symbol(input, output, symbol_request_id, &selector);
-    let symbol = &symbol["result"]["structuredContent"];
-    assert_eq!(symbol["symbol"]["language"], serde_json::json!(language));
-    assert_eq!(symbol["symbol"]["name"], serde_json::json!(query));
-    assert_eq!(
-        symbol["symbol"]["declaration_hex"],
-        serde_json::json!(hex_bytes(declaration))
-    );
-}
-
-fn mcp_call_symbol(
-    input: &mut ChildStdin,
-    output: &mut BufReader<ChildStdout>,
-    request_id: usize,
-    exact_arguments: &serde_json::Value,
-) -> serde_json::Value {
-    mcp_request(
-        input,
-        output,
-        serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": request_id,
-            "method": "tools/call",
-            "params": {"name": "symbol_get", "arguments": exact_arguments}
-        }),
-    )
-}
-
-fn assert_mcp_stale(
-    input: &mut ChildStdin,
-    output: &mut BufReader<ChildStdout>,
-    exact_arguments: &serde_json::Value,
-) {
-    let stale = mcp_request(
-        input,
-        output,
-        serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": 5,
-            "method": "tools/call",
-            "params": {"name": "symbol_get", "arguments": exact_arguments}
-        }),
-    );
-    assert_eq!(stale["result"]["isError"], serde_json::json!(true));
-    assert_eq!(
-        stale["result"]["content"][0]["text"],
-        serde_json::json!("symbol retrieval failed")
-    );
-}
+include!("mcp_contract/read_tools.rs");
 
 fn stop_mcp(child: std::process::Child, input: ChildStdin, output: BufReader<ChildStdout>) {
     drop(input);

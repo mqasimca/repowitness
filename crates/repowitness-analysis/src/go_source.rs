@@ -134,6 +134,7 @@ fn traverse_tree(
                     facts,
                     visited_nodes,
                     syntax_error_nodes,
+                    0,
                     limits,
                 );
             }

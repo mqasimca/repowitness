@@ -14,7 +14,9 @@ unsafe code, exact production dependency versions, a committed lockfile,
 GNU Make wrappers. `make ci` runs formatting, all-target/all-feature checking,
 Clippy with warnings denied, default and all-feature tests, doc tests,
 warning-free rustdoc, dependency policy, documentation, benchmark, and diff
-checks. `make test-all` adds no-default-feature and release all-feature tests.
+checks. Vendored grammar sources and generated parsers have an independent
+closed-inventory, checksum, symlink, and handwritten-capability gate.
+`make test-all` adds no-default-feature and release all-feature tests.
 The GitHub Actions `ci` job runs both command sets on a fixed Ubuntu 24.04
 runner for pull requests and `main`, with read-only repository permissions and
 the checkout action pinned by full commit. Branch protection requires that job
@@ -133,10 +135,12 @@ Enforce the six-package dependency direction accepted in [ADR-0008](adr/0008-lay
   require a pre-existing database to carry the RepoWitness application ID and
   an exact supported migration ledger. Never adopt an existing unmarked SQLite
   file as a new RepoWitness database.
-- The pre-release local format has one clean baseline-version-1 migration and
-  one ledger row. Reject retired development versions 1 through 8 without
-  modifying them or creating journal sidecars; never reset them automatically
-  because local approvals and review events may not be reconstructable.
+- The local format has an immutable baseline-version-1 migration and
+  compatible, monotonically numbered forward migrations. Accept only exact
+  supported ledgers, and reject retired development versions 1 through 8
+  without modifying them or creating journal sidecars; never reset them
+  automatically because local approvals and review events may not be
+  reconstructable.
 - Startup recovery admits at most 4,096 incomplete generations, selects at
   most one extra identity to detect overflow before mutation, and runs under
   the caller's cancellation flag and absolute deadline through SQLite's
@@ -294,19 +298,24 @@ cancellation, and encoded-output tests; and an installed-binary stdio
 round-trip. The black-box test indexes a temporary five-language worktree,
 negotiates MCP `2025-11-25`, lists exactly `context_build`, `code_search`,
 `diagnostics`, `memory_recall`, and `symbol_get`, retrieves exact declarations
-from every language, reindexes, and proves the old generation selector fails.
+from every language, builds one exact UTF-8 source context, reindexes, and
+proves the old generation selector fails.
 Focused protocol tests cover the context, memory, and diagnostic schemas,
 read-only annotations, cancellation, backpressure, and encoded-output bounds.
 Stdout is parsed only as JSON-RPC and shutdown must leave stderr empty. A
-durable ignored variant exercises the same index-to-exact-retrieval path
-against a configured real supported-language worktree:
+durable ignored variant exercises the same index-to-exact-retrieval-and-context
+path against a configured real supported-language worktree:
 
 ```text
 REPOWITNESS_REAL_REPOSITORY=../repository \
-  cargo test -p repowitness-cli --test cli_contract \
+  cargo test --release -p repowitness-cli --test cli_contract \
   mcp_stdio_round_trips_an_exact_symbol_from_a_real_repository --locked \
   -- --ignored --exact
 ```
+
+Use the release test binary for this corpus-sized contract. Debug-mode parser
+and SQLite overhead can consume the production index deadline before the MCP
+assertions begin.
 
 The complete opt-in local Rust preparation probe uses the same environment
 variable and adds capability-contained source reads, content hashing,
@@ -338,6 +347,23 @@ context eligibility, default-read-only stdio MCP, database/WAL size, result
 size, and peak RSS. A dirty development run is provisional evidence; release
 attestation requires an exact clean RepoWitness revision and explicit
 ratification of the manifest budgets.
+
+The opt-in downstream-agent evaluation obtains the actual structured
+`context_build` result through stdio MCP and supplies it to an ephemeral
+read-only Codex process under a versioned response schema:
+
+```text
+./scripts/run-phase0-codex-evaluation /path/to/mini-redis 1
+```
+
+It disables shell, web, app, MCP, and collaboration tools; captures the JSONL
+event stream; rejects every tool or unsupported event; and validates cited
+source and memory identifiers against exact packet items. It also has fixed
+per-run time and output limits and checks the before/after decision, source
+grounding, current-memory use, stale-memory non-use, and packet usefulness.
+The gate prevents runtime retrieval outside the packet but cannot remove
+knowledge already present in model weights. Model token totals remain
+observations rather than release budgets.
 
 The production SQLite end-to-end probe adds schema migration, bounded staging,
 atomic activation, an owned read connection, one evidence-bearing lexical
@@ -374,6 +400,7 @@ cargo test --workspace --doc --all-features --locked
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps --locked
 cargo deny --locked check
 ./scripts/check-workspace-deps
+./scripts/check-vendored-grammars
 ./scripts/check-benchmarks
 ```
 

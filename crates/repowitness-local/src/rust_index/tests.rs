@@ -58,6 +58,31 @@ impl TempRepository {
         assert!(status.success(), "fixture Git command failed: {status}");
     }
 
+    fn git_text(&self, arguments: &[&str]) -> String {
+        let output = Command::new("git")
+            .arg("--no-pager")
+            .arg("-C")
+            .arg(&self.root)
+            .args(arguments)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", null_device())
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .env("GCM_INTERACTIVE", "never")
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output()
+            .expect("fixture Git command must start");
+        assert!(
+            output.status.success(),
+            "fixture Git command failed: {}",
+            output.status
+        );
+        String::from_utf8(output.stdout)
+            .expect("fixture Git output must be UTF-8")
+            .trim()
+            .to_owned()
+    }
+
     fn commit_all(&self, message: &str) {
         self.git(&["add", "--all"]);
         self.git(&[
@@ -373,6 +398,73 @@ fn index_status_and_head_mutations_are_rejected_by_the_source_state_fence() {
         head_error,
         LocalRustIndexError::SourceState {
             source: SourceStateError::ConcurrentSourceChange
+        }
+    ));
+}
+
+#[test]
+fn concurrent_unsupported_index_modes_are_reported_as_source_changes() {
+    let cancelled = AtomicBool::new(false);
+
+    let sparse_repository = TempRepository::new();
+    sparse_repository.write("stable.rs", b"fn stable() {}\n");
+    sparse_repository.commit_all("initial");
+    let sparse_error = prepare_local_rust_index_with_hook(
+        sparse_repository.root(),
+        identity(),
+        LocalRustIndexLimits::default(),
+        &cancelled,
+        || sparse_repository.git(&["update-index", "--skip-worktree", "stable.rs"]),
+    )
+    .expect_err("a concurrent sparse-mode change must fail closed");
+    assert!(matches!(
+        sparse_error,
+        LocalRustIndexError::SourceState {
+            source: SourceStateError::ConcurrentSourceChange
+        }
+    ));
+
+    let gitlink_repository = TempRepository::new();
+    gitlink_repository.write("stable.rs", b"fn stable() {}\n");
+    gitlink_repository.commit_all("initial");
+    let head = gitlink_repository.git_text(&["rev-parse", "HEAD"]);
+    let cache_info = format!("160000,{head},stable.rs");
+    let gitlink_error = prepare_local_rust_index_with_hook(
+        gitlink_repository.root(),
+        identity(),
+        LocalRustIndexLimits::default(),
+        &cancelled,
+        || gitlink_repository.git(&["update-index", "--cacheinfo", &cache_info]),
+    )
+    .expect_err("a concurrent gitlink mode change must fail closed");
+    assert!(matches!(
+        gitlink_error,
+        LocalRustIndexError::SourceState {
+            source: SourceStateError::ConcurrentSourceChange
+        }
+    ));
+}
+
+#[test]
+fn initial_unsupported_index_mode_retains_its_scope_diagnostic() {
+    let repository = TempRepository::new();
+    repository.write("stable.rs", b"fn stable() {}\n");
+    repository.commit_all("initial");
+    repository.git(&["update-index", "--skip-worktree", "stable.rs"]);
+    let cancelled = AtomicBool::new(false);
+
+    let error = prepare_local_rust_index(
+        repository.root(),
+        identity(),
+        LocalRustIndexLimits::default(),
+        &cancelled,
+    )
+    .expect_err("an initially sparse worktree must remain unsupported");
+
+    assert!(matches!(
+        error,
+        LocalRustIndexError::SourceState {
+            source: SourceStateError::SparseWorktreeUnsupported
         }
     ));
 }

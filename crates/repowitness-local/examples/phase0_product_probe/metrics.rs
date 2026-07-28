@@ -1,6 +1,7 @@
 use std::{
     fmt::Write as _,
     fs,
+    io::ErrorKind,
     path::{Path, PathBuf},
 };
 
@@ -39,18 +40,22 @@ pub fn hex_digest(digest: &[u8; 32]) -> String {
     output
 }
 
-pub fn file_size(path: &Path) -> u64 {
-    fs::metadata(path).map_or(0, |metadata| metadata.len())
+pub fn required_file_size(path: &Path) -> ProbeResult<u64> {
+    Ok(fs::metadata(path)?.len())
 }
 
-pub fn wal_file_size(database: &Path) -> u64 {
+pub fn wal_file_size(database: &Path) -> ProbeResult<u64> {
     let mut path = PathBuf::from(database);
     let mut name = path
         .file_name()
         .map_or_else(Default::default, std::ffi::OsString::from);
     name.push("-wal");
     path.set_file_name(name);
-    file_size(&path)
+    match fs::metadata(path) {
+        Ok(metadata) => Ok(metadata.len()),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(0),
+        Err(error) => Err(error.into()),
+    }
 }
 
 #[cfg(test)]

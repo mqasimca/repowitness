@@ -445,6 +445,52 @@ fn real_capture_supports_sha256_and_fails_closed_on_sparse_and_gitlinks() {
 }
 
 #[test]
+fn real_capture_rejects_each_nested_submodule_boundary() {
+    let leaf = TempRepository::new("sha1");
+    leaf.write("leaf.rs", b"pub fn leaf() {}\n");
+    leaf.commit_all("leaf");
+
+    let child = TempRepository::new("sha1");
+    child.write("child.rs", b"pub fn child() {}\n");
+    child.commit_all("child");
+    child.git(&[
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "add",
+        "--quiet",
+        leaf.path().to_str().expect("fixture path should be UTF-8"),
+        "vendor/leaf",
+    ]);
+    child.commit_all("nested submodule");
+
+    let parent = TempRepository::new("sha1");
+    parent.write("parent.rs", b"pub fn parent() {}\n");
+    parent.commit_all("parent");
+    parent.git(&[
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "add",
+        "--quiet",
+        child.path().to_str().expect("fixture path should be UTF-8"),
+        "vendor/child",
+    ]);
+    parent.commit_all("top-level submodule");
+
+    capture_source_state(leaf.path(), limits(10))
+        .expect("a repository without gitlinks should remain supported");
+    assert!(matches!(
+        capture_source_state(child.path(), limits(10)),
+        Err(SourceStateError::SubmoduleUnsupported)
+    ));
+    assert!(matches!(
+        capture_source_state(parent.path(), limits(10)),
+        Err(SourceStateError::SubmoduleUnsupported)
+    ));
+}
+
+#[test]
 fn real_capture_distinguishes_shallow_history_at_the_same_head() {
     let origin = TempRepository::new("sha1");
     origin.write("lib.rs", b"pub fn first() {}\n");

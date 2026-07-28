@@ -43,18 +43,27 @@ fn artifact_transaction(
     Ok(artifacts)
 }
 
-type PersistedArtifactMetadata = (
-    Vec<u8>,
-    Vec<u8>,
-    Vec<u8>,
-    Vec<u8>,
-    i64,
-    i64,
-    i64,
-    i64,
-    String,
-    Vec<u8>,
-);
+struct PersistedArtifactMetadata {
+    source_content_digest: Vec<u8>,
+    producer_manifest_digest: Vec<u8>,
+    configuration_digest: Vec<u8>,
+    analysis_schema_digest: Vec<u8>,
+    canonicalization_version: i64,
+    fact_count: i64,
+    visited_nodes: i64,
+    syntax_error_nodes: i64,
+    known_parser_limitation_nodes: i64,
+    language: String,
+    payload_digest: Vec<u8>,
+}
+
+struct ValidatedArtifactMetadata {
+    fact_count: u32,
+    visited_nodes: u32,
+    syntax_error_nodes: u32,
+    known_parser_limitation_nodes: u32,
+    payload_digest: AnalysisArtifactPayloadDigest,
+}
 
 #[derive(Clone, Copy)]
 struct ArtifactReadContext<'a> {
@@ -82,7 +91,8 @@ fn read_reusable_artifact(
             "SELECT source_content_digest, producer_manifest_digest,
                     configuration_digest, analysis_schema_digest,
                     canonicalization_version, fact_count, visited_nodes,
-                    syntax_error_nodes, language, payload_digest
+                    syntax_error_nodes, known_parser_limitation_nodes,
+                    language, payload_digest
              FROM analysis_artifacts
              WHERE artifact_digest = ?1
                AND lifecycle_state = 'complete'
@@ -94,18 +104,19 @@ fn read_reusable_artifact(
                AND length(payload_digest) = 32",
             [requested_digest.as_bytes().as_slice()],
             |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                    row.get(5)?,
-                    row.get(6)?,
-                    row.get(7)?,
-                    row.get(8)?,
-                    row.get(9)?,
-                ))
+                Ok(PersistedArtifactMetadata {
+                    source_content_digest: row.get(0)?,
+                    producer_manifest_digest: row.get(1)?,
+                    configuration_digest: row.get(2)?,
+                    analysis_schema_digest: row.get(3)?,
+                    canonicalization_version: row.get(4)?,
+                    fact_count: row.get(5)?,
+                    visited_nodes: row.get(6)?,
+                    syntax_error_nodes: row.get(7)?,
+                    known_parser_limitation_nodes: row.get(8)?,
+                    language: row.get(9)?,
+                    payload_digest: row.get(10)?,
+                })
             },
         )
         .optional()?;
@@ -126,13 +137,42 @@ fn read_reusable_artifact(
             Err(SearchFailure::Store(SqliteStoreError::IntegrityCheckFailed))
         };
     };
-    let content_digest = SourceContentDigest::try_from_slice(&persisted.0)
+    let metadata = validate_artifact_metadata(persisted, requested_digest, context)?;
+    let facts = read_reusable_facts(
+        transaction,
+        requested_digest,
+        metadata.fact_count,
+        context,
+        budget,
+    )?;
+    let analysis = RustSourceAnalysis::try_from_parts(
+        facts,
+        metadata.visited_nodes,
+        metadata.syntax_error_nodes,
+        metadata.known_parser_limitation_nodes,
+        context.limits.per_file(),
+    )
+    .map_err(|_| SearchFailure::Store(SqliteStoreError::IntegrityCheckFailed))?;
+    if hash_analysis_artifact_payload(&analysis) != metadata.payload_digest {
+        return Err(SearchFailure::Store(SqliteStoreError::IntegrityCheckFailed));
+    }
+    Ok(Some(analysis))
+}
+
+fn validate_artifact_metadata(
+    persisted: PersistedArtifactMetadata,
+    requested_digest: AnalysisArtifactDigest,
+    context: ArtifactReadContext<'_>,
+) -> Result<ValidatedArtifactMetadata, SearchFailure> {
+    let content_digest = SourceContentDigest::try_from_slice(&persisted.source_content_digest)
         .map_err(|_| SearchFailure::Store(SqliteStoreError::IntegrityCheckFailed))?;
-    if persisted.1.as_slice() != context.identity.producer_manifest().as_bytes()
-        || persisted.2.as_slice() != context.identity.configuration().as_bytes()
-        || persisted.3.as_slice() != context.identity.schema().as_bytes()
-        || u32::try_from(persisted.4).ok() != Some(context.identity.canonicalization_version())
-        || SourceLanguage::from_stable_str(&persisted.8) != Some(context.language)
+    if persisted.producer_manifest_digest.as_slice()
+        != context.identity.producer_manifest().as_bytes()
+        || persisted.configuration_digest.as_slice() != context.identity.configuration().as_bytes()
+        || persisted.analysis_schema_digest.as_slice() != context.identity.schema().as_bytes()
+        || u32::try_from(persisted.canonicalization_version).ok()
+            != Some(context.identity.canonicalization_version())
+        || SourceLanguage::from_stable_str(&persisted.language) != Some(context.language)
     {
         return Err(SearchFailure::Store(SqliteStoreError::IntegrityCheckFailed));
     }
@@ -146,36 +186,29 @@ fn read_reusable_artifact(
     if hash_analysis_artifact_key(&artifact_key) != requested_digest {
         return Err(SearchFailure::Store(SqliteStoreError::IntegrityCheckFailed));
     }
-    let expected_fact_count = persisted_nonnegative_u32(persisted.5)?;
-    let visited_nodes = persisted_nonnegative_u32(persisted.6)?;
-    let syntax_error_nodes = persisted_nonnegative_u32(persisted.7)?;
-    if expected_fact_count > context.limits.per_file().max_symbol_facts()
+    let fact_count = persisted_nonnegative_u32(persisted.fact_count)?;
+    let visited_nodes = persisted_nonnegative_u32(persisted.visited_nodes)?;
+    let syntax_error_nodes = persisted_nonnegative_u32(persisted.syntax_error_nodes)?;
+    let known_parser_limitation_nodes =
+        persisted_nonnegative_u32(persisted.known_parser_limitation_nodes)?;
+    if fact_count > context.limits.per_file().max_symbol_facts()
         || visited_nodes == 0
         || visited_nodes > context.limits.per_file().max_syntax_nodes()
         || syntax_error_nodes > visited_nodes
+        || known_parser_limitation_nodes > syntax_error_nodes
     {
         return Err(SearchFailure::Store(SqliteStoreError::IntegrityCheckFailed));
     }
-    let payload_digest = AnalysisArtifactPayloadDigest::try_from_slice(&persisted.9)
-        .map_err(|_| SearchFailure::Store(SqliteStoreError::IntegrityCheckFailed))?;
-    let facts = read_reusable_facts(
-        transaction,
-        requested_digest,
-        expected_fact_count,
-        context,
-        budget,
-    )?;
-    let analysis = RustSourceAnalysis::try_from_parts(
-        facts,
+    let payload_digest =
+        AnalysisArtifactPayloadDigest::try_from_slice(&persisted.payload_digest)
+            .map_err(|_| SearchFailure::Store(SqliteStoreError::IntegrityCheckFailed))?;
+    Ok(ValidatedArtifactMetadata {
+        fact_count,
         visited_nodes,
         syntax_error_nodes,
-        context.limits.per_file(),
-    )
-    .map_err(|_| SearchFailure::Store(SqliteStoreError::IntegrityCheckFailed))?;
-    if hash_analysis_artifact_payload(&analysis) != payload_digest {
-        return Err(SearchFailure::Store(SqliteStoreError::IntegrityCheckFailed));
-    }
-    Ok(Some(analysis))
+        known_parser_limitation_nodes,
+        payload_digest,
+    })
 }
 
 fn read_reusable_facts(

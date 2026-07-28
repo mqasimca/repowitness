@@ -24,14 +24,15 @@ sparse-worktree=reject\0gitlinks=reject\0syntax-errors=retain";
 const PHASE0_RUST_ANALYSIS_SCHEMA: &[u8] = b"path-bytes\0content-digest-sha256\0\
 artifact-digest-sha256\0symbol-kind\0name-utf8\0qualified-name-utf8\0\
 name-span-u64\0declaration-span-u64\0declaration-digest-sha256\0\
-rust-name-elided-v1-sha256\0visited-nodes-u32\0syntax-error-nodes-u32";
+rust-name-elided-v1-sha256\0visited-nodes-u32\0syntax-error-nodes-u32\0\
+known-parser-limitation-nodes-u32";
 
 /// Version of the canonical Phase 0 Rust producer-manifest encoding.
-pub const PHASE0_RUST_PRODUCER_MANIFEST_VERSION: u32 = 3;
+pub const PHASE0_RUST_PRODUCER_MANIFEST_VERSION: u32 = 4;
 /// Version of the resolved, non-configurable Phase 0 Rust policy.
 pub const PHASE0_RUST_CONFIGURATION_VERSION: u32 = 1;
 /// Version of the persisted Phase 0 Rust extraction schema.
-pub const PHASE0_RUST_ANALYSIS_SCHEMA_VERSION: u32 = 2;
+pub const PHASE0_RUST_ANALYSIS_SCHEMA_VERSION: u32 = 3;
 /// Version of canonical persisted Rust fact encodings.
 pub const PHASE0_RUST_CANONICALIZATION_VERSION: u32 = 2;
 
@@ -140,9 +141,9 @@ mod tests {
             first.canonicalization_version(),
             PHASE0_RUST_CANONICALIZATION_VERSION
         );
-        assert_eq!(PHASE0_RUST_PRODUCER_MANIFEST_VERSION, 3);
+        assert_eq!(PHASE0_RUST_PRODUCER_MANIFEST_VERSION, 4);
         assert_eq!(PHASE0_RUST_CONFIGURATION_VERSION, 1);
-        assert_eq!(PHASE0_RUST_ANALYSIS_SCHEMA_VERSION, 2);
+        assert_eq!(PHASE0_RUST_ANALYSIS_SCHEMA_VERSION, 3);
         assert_eq!(PHASE0_RUST_CANONICALIZATION_VERSION, 2);
         assert_ne!(
             phase0_rust_correspondence_profile_digest().as_bytes(),

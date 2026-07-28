@@ -58,15 +58,26 @@ Phase 0 adds a versioned `context_build` use case with these invariants:
    memory-projection identity and source epoch, versioned fusion and estimator
    identities, component ranks, coverage, omissions, and exact evidence
    selectors or memory identities.
-9. CLI and local stdio MCP are thin boundaries over the same local composition
+9. Exact declaration bytes use the labeled `utf8` representation only when
+   they are valid UTF-8 and display-safe. LF, CR, and tab remain readable
+   content because JSON escapes them. Other control characters, non-ASCII
+   whitespace, bidirectional controls, format controls, and default-ignorable
+   code points use exact `lowercase_hex`. This keeps serialized declaration
+   growth at no more than twice the source byte length. MCP keeps encoding and
+   data separate. CLI places the data in one JSON-escaped field so untrusted
+   source cannot forge report fields.
+10. CLI and local stdio MCP are thin boundaries over the same local composition
    and application compiler. MCP output retains an independent encoded-output
    ceiling.
 
 Phase 0 also adds a bounded read-only `diagnostics` operation. It reports the
 active source snapshot, generation, source epoch, index coverage, active memory
 projection and projection coverage when present, implemented provider
-capabilities, and explicit Phase 0 limitations. Absence of a memory projection
-is a healthy, inspectable state rather than fabricated memory coverage.
+capabilities, raw Tree-sitter error/missing-node coverage, a non-subtractive
+recognized-parser-limitation subset, and explicit Phase 0 limitations. The
+subset must be nonnegative and no greater than the raw total. Absence of a
+memory projection is a healthy, inspectable state rather than fabricated
+memory coverage.
 
 This decision does not add vector retrieval, graph traversal, reference
 indexing, history search, model-specific tokenizers, background compilation,
@@ -133,10 +144,12 @@ into an agent context. Phase 0 instead excludes it and reports why.
   budget admission, non-current-memory exclusion, explicit omissions,
   cancellation, deadline handling, and source/memory context mismatch.
 - Local integration tests cover source-only databases, active projections,
-  source mutation, concurrent generation activation, and exact declaration
-  verification.
+  source mutation, concurrent generation activation, exact declaration
+  verification, parser-diagnostic aggregation, and hostile persisted counts.
 - CLI and MCP contract tests cover schema validation, redaction, output bounds,
-  read-only annotations, and deterministic structured output.
+  read-only annotations, deterministic structured output, display-safe UTF-8
+  declarations, and exact hexadecimal fallback for invalid or display-unsafe
+  UTF-8.
 - Real-repository smoke tests index and build context from mixed Go/Rust,
   Rust-only, and TypeScript/TSX repositories.
 
@@ -146,6 +159,11 @@ into an agent context. Phase 0 instead excludes it and reports why.
   generation-pinned local composition, transactionally pinned diagnostics, CLI
   commands, and read-only local MCP tools with focused unit and contract
   coverage.
+- Completed 2026-07-28: run one controlled public Codex before/after utility
+  evaluation. It closed hexadecimal-only presentation for display-safe UTF-8,
+  preserved the exact fallback, and passed correct-decision,
+  source-grounding, current-memory-use, stale-memory-exclusion, and usefulness
+  checks.
 - Measure retrieval quality and pack utilization before changing the fusion or
   estimator profiles.
 - Add structural, reference, and history providers only with explicit coverage

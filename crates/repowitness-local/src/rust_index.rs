@@ -585,7 +585,7 @@ fn prepare_local_index_with_exclusion_reuse_and_hook(
     revalidate_content(&root, &prepared, limits.source_read(), cancelled, deadline)?;
     check_control(cancelled, deadline)?;
     let source_state_after =
-        capture_source_state_for_index(&worktree_root, limits.discovery(), cancelled, deadline)?;
+        recapture_source_state_for_index(&worktree_root, limits.discovery(), cancelled, deadline)?;
     if source_state_after != source_state_before {
         return Err(LocalRustIndexError::SourceState {
             source: SourceStateError::ConcurrentSourceChange,

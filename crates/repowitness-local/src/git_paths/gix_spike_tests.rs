@@ -154,11 +154,19 @@ struct GixIndexSnapshot {
 }
 
 fn gix_index_snapshot(root: &Path) -> GixIndexSnapshot {
-    let repository = gix::open_opts(
+    let repository = open_gix_repository(root);
+    gix_index_snapshot_from_repository(&repository)
+}
+
+fn open_gix_repository(root: &Path) -> gix::Repository {
+    gix::open_opts(
         root.to_owned(),
         gix::open::Options::isolated().bail_if_untrusted(true),
     )
-    .expect("gix must open the fixture through isolated permissions");
+    .expect("gix must open the fixture through isolated permissions")
+}
+
+fn gix_index_snapshot_from_repository(repository: &gix::Repository) -> GixIndexSnapshot {
     let index = repository
         .index_or_empty()
         .expect("gix must read the fixture index");
@@ -582,3 +590,5 @@ fn isolated_gix_and_sanitized_git_do_not_execute_hostile_repository_config() {
         "repository configuration must never execute the fixture script"
     );
 }
+
+mod performance;

@@ -33,6 +33,9 @@ fn emit_inspection_report(writer: &mut impl Write, stats: GitPathDiscoveryStats)
 }
 
 fn emit_index_report(writer: &mut impl Write, report: CliIndexReport) -> u8 {
+    if report.known_parser_limitation_nodes > report.syntax_error_nodes {
+        return EXIT_SOFTWARE;
+    }
     let result = writeln!(writer, "status=ok")
         .and_then(|()| writeln!(writer, "operation=index"))
         .and_then(|()| writeln!(writer, "generation_activated=true"))
@@ -83,13 +86,7 @@ fn emit_index_report(writer: &mut impl Write, report: CliIndexReport) -> u8 {
                 report.indexed_python_files
             )
         })
-        .and_then(|()| {
-            writeln!(
-                writer,
-                "reused_python_files={}",
-                report.reused_python_files
-            )
-        })
+        .and_then(|()| writeln!(writer, "reused_python_files={}", report.reused_python_files))
         .and_then(|()| {
             writeln!(
                 writer,
@@ -106,7 +103,14 @@ fn emit_index_report(writer: &mut impl Write, report: CliIndexReport) -> u8 {
         })
         .and_then(|()| writeln!(writer, "total_source_bytes={}", report.total_source_bytes))
         .and_then(|()| writeln!(writer, "symbol_facts={}", report.total_facts))
-        .and_then(|()| writeln!(writer, "syntax_error_nodes={}", report.syntax_error_nodes));
+        .and_then(|()| writeln!(writer, "syntax_error_nodes={}", report.syntax_error_nodes))
+        .and_then(|()| {
+            writeln!(
+                writer,
+                "known_parser_limitation_nodes={}",
+                report.known_parser_limitation_nodes
+            )
+        });
     if result.is_ok() {
         EXIT_SUCCESS
     } else {
@@ -213,6 +217,10 @@ fn emit_symbol_report(writer: &mut impl Write, report: &CliSymbolReport) -> u8 {
 fn write_symbol_report(writer: &mut impl Write, report: &CliSymbolReport) -> std::io::Result<()> {
     writeln!(writer, "status=ok")?;
     writeln!(writer, "operation=symbol-get")?;
+    writeln!(
+        writer,
+        "schema_version={CLI_SYMBOL_REPORT_SCHEMA_VERSION}"
+    )?;
     writeln!(writer, "symbol_profile={SYMBOL_GET_PROFILE_VERSION}")?;
     writeln!(writer, "snapshot_sha256={}", report.snapshot)?;
     writeln!(writer, "generation={}", report.generation)?;
@@ -254,8 +262,14 @@ fn write_symbol_data(writer: &mut impl Write, symbol: &CliSymbolData) -> std::io
         "declaration_span={}:{}",
         symbol.declaration_start, symbol.declaration_end
     )?;
-    writeln!(writer, "declaration_encoding=lowercase_hex")?;
-    writeln!(writer, "declaration_hex={}", symbol.declaration_hex)
+    writeln!(
+        writer,
+        "declaration_encoding={}",
+        symbol.declaration_encoding
+    )?;
+    let declaration =
+        serde_json::to_string(&symbol.declaration).map_err(std::io::Error::other)?;
+    writeln!(writer, "declaration_data_json={declaration}")
 }
 
 fn emit_version(writer: &mut impl Write) -> u8 {

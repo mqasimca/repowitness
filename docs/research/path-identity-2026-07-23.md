@@ -2,7 +2,7 @@
 
 - Status: Implemented and promoted
 - Research date: 2026-07-23
-- Last updated: 2026-07-26
+- Last updated: 2026-07-28
 - Reviewed baselines: Rust 1.97.1, Git 2.55.0, and `gix` 0.86.0 documentation
 - Scope: repository-relative identity, host-path conversion, deterministic ordering,
   and filesystem authorization
@@ -299,17 +299,68 @@ MIT-or-Apache-2.0 licensing, so it fits the pinned workspace toolchain and
 project license policy. Because it is dev-only, it has no shipped binary-size
 impact; it does increase test-build and supply-chain surface.
 
-The dependency remains an exact-pinned dev-only differential oracle, not a
-production-adapter selection. `cargo-deny` checks development/build dependency
-licenses and development duplicate versions. Exact exceptions cover the Zlib
-license in `foldhash` 0.2.0 and `zlib-rs` 0.6.6 and the Unicode-3.0 term in
-`unicode-ident` 1.0.24. Those exceptions must be reviewed or removed whenever
-`gix` is upgraded, promoted to production, or removed.
+The dependency remains an exact-pinned dev-only differential oracle.
+`cargo-deny` checks development/build dependency licenses and development
+duplicate versions. Exact exceptions cover the Zlib license in `foldhash`
+0.2.0 and `zlib-rs` 0.6.6 and the Unicode-3.0 term in `unicode-ident` 1.0.24.
+Those exceptions must be reviewed or removed whenever `gix` is upgraded,
+promoted to production, or removed.
 
-Before selecting the production discovery path, retain fixtures for recursive
-submodule policy, concurrent index/worktree mutation, Windows conversion,
-contained opens, cancellation during active `gix` work, and comparative
-cold/warm performance.
+### Active cancellation and performance follow-up
+
+The Phase 0 production-adapter comparison completed on 2026-07-28. The pinned
+`gix` 0.86.0 index path opens the repository and calls
+`Repository::index_or_empty`, which reaches `gix_index::File::at`. These index
+open and decode calls do not accept a caller-owned cancellation flag or
+deadline. A regression sentinel sets `gix`'s process-global interrupt before
+index loading and confirms that this path still completes. The global flag is
+therefore not an active-work cancellation boundary for index discovery.
+
+Running the operation on an abandonable thread would let the caller return but
+would leave CPU, memory, mappings, and file handles live without a completion
+bound. Running `gix` in a killable helper process would restore a hard
+cancellation boundary but also reproduce the subprocess ownership model
+already provided by the sanitized Git adapter.
+
+An opt-in release probe built a deterministic synthetic SHA-1 index with
+50,000 sorted cached paths and compared exact path results over 20 samples.
+Three complete probe runs on the development workstation produced:
+
+| Adapter state | First observation | Median range | p95 range |
+|---|---:|---:|---:|
+| fresh isolated `gix` repository per query | 7.829–9.454 ms | 7.068–8.358 ms | 7.132–8.845 ms |
+| retained isolated `gix` repository | 6.931–7.818 ms | 0.598–0.672 ms | 0.613–0.687 ms |
+| fresh sanitized Git CLI process | 35.131–43.235 ms | 28.616–42.826 ms | 34.930–49.168 ms |
+
+All 50,000 exact cached paths agreed in every sample. The probe excludes build
+time, does not clear operating-system page caches, and measures cached index
+enumeration rather than untracked discovery, sparse expansion, source reads,
+or complete indexing. The values are comparative evidence, not ratified
+resource budgets.
+
+`gix` is materially faster for this narrow workload, especially with a
+retained repository. It is not promoted because active work cannot meet
+RepoWitness's per-operation cancellation and deadline contract, its raw sparse
+and gitlink semantics still need adaptation, and its 145-package all-target
+dependency graph remains much larger than the invoked index surface.
+Sanitized Git remains the Phase 0 production discovery adapter; exact-pinned
+`gix` remains a development differential oracle.
+
+Reproduce the synthetic probe with:
+
+```text
+cargo test --release -p repowitness-local \
+  gix_and_sanitized_git_report_cold_and_warm_performance \
+  --locked -- --ignored --nocapture
+```
+
+The fail-closed policy is now covered by an actual nested-submodule fixture and
+by sparse and gitlink index-mode transitions between the two source-state
+captures. A mode present at the initial capture retains its specific
+unsupported-scope diagnostic; a mode introduced during indexing reports a
+concurrent source change and cannot reach publication. Retain these
+regressions, and complete Windows conversion and contained-open fixtures,
+before broadening the supported scope or reconsidering the adapter.
 
 ## Alternatives rejected
 
@@ -355,19 +406,20 @@ Adversarial tests cover non-UTF-8 names, symlinks, special files, path
 replacement, concurrent mutation, cancellation, deadlines, and redacted
 diagnostics.
 
-1. Complete the `gix` versus sanitized Git CLI comparison for recursive
-   submodule policy, concurrent mutation, active-work cancellation, and
-   cold/warm performance. The ordinary, arbitrary-byte Unix, SHA-256,
-   conflicted, sparse-index, gitlink, linked-worktree, case-collision,
-   hostile-config, and initial real-repository cases pass.
-2. Prove the supported Windows Git-byte-to-wide conversion against Git for
+1. Completed for Phase 0 on 2026-07-28: the active-work cancellation and
+   synthetic 50,000-path performance comparison retains sanitized Git in
+   production and exact-pinned `gix` as a development oracle.
+2. Completed on 2026-07-28: an actual two-level submodule hierarchy fails
+   closed at each gitlink boundary without recursive indexing, and concurrent
+   sparse/gitlink index-mode changes fail as concurrent source changes.
+3. Prove the supported Windows Git-byte-to-wide conversion against Git for
    valid UTF-8, reserved names, trailing dots/spaces, device names, reparse
    points, and case/Unicode aliases.
-3. Decide and test the Windows contained-open adapter. Retain the same
+4. Decide and test the Windows contained-open adapter. Retain the same
    opened-resource authorization and final revalidation semantics as the Unix
    `cap-std` implementation.
-4. Ratify configurable path byte/component defaults from the Phase 0 corpus and adversarial
-   fixtures; retain hard ceilings regardless of configuration.
+5. Ratify configurable path byte/component defaults from the Phase 0 corpus
+   and adversarial fixtures; retain hard ceilings regardless of configuration.
 
 ## Primary sources
 

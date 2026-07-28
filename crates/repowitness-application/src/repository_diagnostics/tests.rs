@@ -34,6 +34,7 @@ impl RepositoryDiagnosticsPort for FakePort {
             self.output.source_epoch,
             self.output.producer_manifest,
             self.output.index_coverage,
+            self.output.parser_diagnostics,
             self.output.memory_projection,
         ))
     }
@@ -64,6 +65,7 @@ fn output(
         11,
         producer(),
         RustIndexCoverage::new(9, 2, 1, 0),
+        RepositoryParserDiagnostics::new(7, 2),
         memory,
     )
 }
@@ -93,6 +95,8 @@ fn complete_state_preserves_evidence_coverage_and_static_capabilities() {
     assert_eq!(result.source_epoch(), 11);
     assert_eq!(result.producer_manifest(), producer());
     assert_eq!(result.index_coverage(), RustIndexCoverage::new(9, 2, 1, 0));
+    assert_eq!(result.syntax_error_nodes(), 7);
+    assert_eq!(result.known_parser_limitation_nodes(), 2);
     assert_eq!(result.memory_projection(), Some(&memory));
     assert_eq!(
         result
@@ -116,7 +120,7 @@ fn complete_state_preserves_evidence_coverage_and_static_capabilities() {
         ]
     );
     assert_eq!(result.limitations().len(), 6);
-    assert_eq!(result.profile_version(), 1);
+    assert_eq!(result.profile_version(), 2);
 }
 
 #[test]
@@ -165,6 +169,30 @@ fn mixed_source_or_invalid_projection_coverage_fails_closed() {
             RepositoryDiagnosticsError::InvalidPortOutput(_)
         ));
     }
+}
+
+#[test]
+fn known_parser_limitations_must_be_a_subset_of_raw_syntax_errors() {
+    let mut invalid = output(None);
+    invalid.parser_diagnostics = RepositoryParserDiagnostics::new(1, 2);
+    let port = FakePort {
+        output: invalid,
+        cancel_during_call: false,
+    };
+    let error = repository_diagnostics(
+        &port,
+        request(
+            Arc::new(AtomicBool::new(false)),
+            Instant::now() + Duration::from_secs(1),
+        ),
+    )
+    .expect_err("invalid parser diagnostics must fail closed");
+    assert!(matches!(
+        error,
+        RepositoryDiagnosticsError::InvalidPortOutput(
+            RepositoryDiagnosticsPortOutputError::InvalidParserDiagnostics
+        )
+    ));
 }
 
 #[test]

@@ -1,8 +1,36 @@
 #!/bin/sh
 set -eu
 
-EXPECTED_REVISION=3d93b42bc363220f85af4fc9e1bebd35b588a4a3
-MAX_PEAK_RSS_KIB=262144
+MAX_RUNS=100
+MANIFEST=benchmarks/phase0/manifest.json
+
+benchmark_git() (
+    unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY
+    unset GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_SHALLOW_FILE GIT_COMMON_DIR
+    unset GIT_CONFIG GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS GIT_NAMESPACE
+    unset GIT_IMPLICIT_WORK_TREE GIT_CEILING_DIRECTORIES
+    unset GIT_DISCOVERY_ACROSS_FILESYSTEM GIT_REFERENCE_BACKEND
+    unset GIT_LITERAL_PATHSPECS GIT_GLOB_PATHSPECS GIT_NOGLOB_PATHSPECS
+    unset GIT_ICASE_PATHSPECS GIT_EXTERNAL_DIFF GIT_EXEC_PATH GIT_TEMPLATE_DIR
+    unset GIT_TRACE GIT_TRACE2 GIT_TRACE2_EVENT GIT_TRACE2_PERF
+    export GIT_CONFIG_NOSYSTEM=1
+    export GIT_CONFIG_GLOBAL=/dev/null
+    export GIT_CONFIG_SYSTEM=/dev/null
+    export GIT_TERMINAL_PROMPT=0
+    export GCM_INTERACTIVE=never
+    export GIT_OPTIONAL_LOCKS=0
+    export GIT_NO_REPLACE_OBJECTS=1
+    export GIT_PAGER=cat
+    export PAGER=cat
+    command git --no-pager --literal-pathspecs \
+        -c core.fsmonitor=false \
+        -c core.hooksPath=/dev/null \
+        -c core.excludesFile=/dev/null \
+        -c core.untrackedCache=false \
+        -c diff.external= \
+        -c protocol.file.allow=always \
+        "$@"
+)
 
 if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
     echo "usage: ./scripts/run-phase0-benchmark <mini-redis-repository> [runs]" >&2
@@ -11,14 +39,78 @@ fi
 
 CORPUS_ROOT=$1
 RUNS=${2:-5}
+case "$RUNS" in
+    ''|*[!0-9]*)
+        echo "error: runs must be an integer from 2 through $MAX_RUNS" >&2
+        exit 64
+        ;;
+esac
+if [ "${#RUNS}" -gt 3 ] || [ "$RUNS" -lt 2 ] || [ "$RUNS" -gt "$MAX_RUNS" ]; then
+    echo "error: runs must be an integer from 2 through $MAX_RUNS" >&2
+    exit 64
+fi
 
-ACTUAL_REVISION=$(git -C "$CORPUS_ROOT" rev-parse --verify HEAD)
+./scripts/check-benchmarks >/dev/null
+BUDGET_VALUES=$(perl -MJSON::PP -e '
+    my $path = shift @ARGV;
+    open my $handle, "<:raw", $path or die "cannot read benchmark manifest: $!\n";
+    local $/;
+    my $manifest = decode_json(<$handle>);
+    close $handle;
+    my $corpus = $manifest->{corpora}->[0];
+    my $comparison = $manifest->{comparative_evaluations}->[0];
+    my %scenarios = map { $_->{id} => $_ } @{$manifest->{change_scenarios}};
+    my $scenario = $scenarios{$comparison->{change_scenario}};
+    die "benchmark revision profile is missing or invalid\n"
+      if !defined($corpus->{revision}) || $corpus->{revision} !~ /\A[0-9a-f]{40}\z/
+      || !defined($scenario) || !defined($scenario->{base_revision})
+      || $scenario->{base_revision} !~ /\A[0-9a-f]{40}\z/;
+    my $resources = $manifest->{budgets}->{resources};
+    my @values = @{$resources}{
+        qw(
+          max_full_index_wall_ms
+          max_peak_rss_mib
+          max_warm_query_p95_ms
+          max_material_result_bytes
+          max_database_bytes
+          max_wal_bytes_after_completion
+        )
+    };
+    my @minimums = (1, 1, 1, 1, 1, 0);
+    my @maximums = (3_600_000, 1_048_576, 3_600_000, 25_165_824,
+                    17_179_869_184, 17_179_869_184);
+    for my $index (0 .. $#values) {
+        my $value = $values[$index];
+        die "benchmark resource budget is missing or invalid\n"
+          if !defined($value) || ref($value) || $value !~ /\A[0-9]+\z/
+          || $value < $minimums[$index] || $value > $maximums[$index];
+    }
+    print join " ", $corpus->{revision}, $scenario->{base_revision}, @values;
+' "$MANIFEST")
+set -f
+set -- $BUDGET_VALUES
+set +f
+if [ "$#" -ne 8 ]; then
+    echo "error: benchmark manifest execution profile was incomplete" >&2
+    exit 65
+fi
+EXPECTED_REVISION=$1
+COMPARISON_BASE_REVISION=$2
+MAX_FULL_INDEX_WALL_MS=$3
+MAX_PEAK_RSS_MIB=$4
+MAX_WARM_QUERY_P95_MS=$5
+MAX_MATERIAL_RESULT_BYTES=$6
+MAX_DATABASE_BYTES=$7
+MAX_WAL_BYTES_AFTER_COMPLETION=$8
+MAX_PEAK_RSS_KIB=$((MAX_PEAK_RSS_MIB * 1024))
+
+ACTUAL_REVISION=$(benchmark_git -C "$CORPUS_ROOT" rev-parse --verify HEAD)
 if [ "$ACTUAL_REVISION" != "$EXPECTED_REVISION" ]; then
     echo "error: corpus revision does not match the Phase 0 manifest" >&2
     exit 65
 fi
 
-if [ -n "$(git -C "$CORPUS_ROOT" status --porcelain --untracked-files=all)" ]; then
+if [ -n "$(benchmark_git -C "$CORPUS_ROOT" status --porcelain --untracked-files=all)" ]; then
     echo "error: corpus worktree must be clean" >&2
     exit 65
 fi
@@ -31,13 +123,21 @@ trap cleanup EXIT HUP INT TERM
 
 WORK_REPOSITORY=$BENCHMARK_TEMP/mini-redis
 DATABASE=$BENCHMARK_TEMP/index.sqlite3
+COMPARISON_REPOSITORY=$BENCHMARK_TEMP/comparison-mini-redis
+COMPARISON_DATABASE=$BENCHMARK_TEMP/comparison.sqlite3
 TIME_OUTPUT=$BENCHMARK_TEMP/time.txt
-git clone --quiet --no-local "$CORPUS_ROOT" "$WORK_REPOSITORY"
-git -C "$WORK_REPOSITORY" checkout --quiet --detach "$EXPECTED_REVISION"
+benchmark_git clone --quiet --no-local --no-checkout "$CORPUS_ROOT" "$WORK_REPOSITORY"
+benchmark_git -C "$WORK_REPOSITORY" checkout --quiet --detach "$EXPECTED_REVISION"
 printf '%s\n' '.code-memory/' >>"$WORK_REPOSITORY/.git/info/exclude"
+benchmark_git clone --quiet --no-local --no-checkout \
+    "$CORPUS_ROOT" "$COMPARISON_REPOSITORY"
+benchmark_git -C "$COMPARISON_REPOSITORY" \
+    checkout --quiet --detach "$COMPARISON_BASE_REVISION"
+printf '%s\n' '.code-memory/' >>"$COMPARISON_REPOSITORY/.git/info/exclude"
 
 cargo build --release --locked \
     -p repowitness-local --example phase0_product_probe \
+    -p repowitness-local --example phase0_comparison_probe \
     -p repowitness-cli --bin repowitness
 
 echo "observed_at_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -101,10 +201,14 @@ else
 fi
 
 PROBE=target/release/examples/phase0_product_probe
+COMPARISON_PROBE=target/release/examples/phase0_comparison_probe
 CLI=target/release/repowitness
 case "$(uname -s)" in
     Darwin)
         if ! /usr/bin/time -l "$PROBE" "$WORK_REPOSITORY" "$DATABASE" "$CLI" "$RUNS" \
+            "$MAX_FULL_INDEX_WALL_MS" "$MAX_WARM_QUERY_P95_MS" \
+            "$MAX_MATERIAL_RESULT_BYTES" "$MAX_DATABASE_BYTES" \
+            "$MAX_WAL_BYTES_AFTER_COMPLETION" \
             2>"$TIME_OUTPUT"; then
             sed -n '1,120p' "$TIME_OUTPUT" >&2
             exit 1
@@ -113,17 +217,32 @@ case "$(uname -s)" in
         ;;
     Linux)
         if ! /usr/bin/time -f 'peak_rss_kib=%M' "$PROBE" \
-            "$WORK_REPOSITORY" "$DATABASE" "$CLI" "$RUNS" 2>"$TIME_OUTPUT"; then
+            "$WORK_REPOSITORY" "$DATABASE" "$CLI" "$RUNS" \
+            "$MAX_FULL_INDEX_WALL_MS" "$MAX_WARM_QUERY_P95_MS" \
+            "$MAX_MATERIAL_RESULT_BYTES" "$MAX_DATABASE_BYTES" \
+            "$MAX_WAL_BYTES_AFTER_COMPLETION" 2>"$TIME_OUTPUT"; then
             sed -n '1,120p' "$TIME_OUTPUT" >&2
             exit 1
         fi
         PEAK_RSS_KIB=$(sed -n 's/^peak_rss_kib=//p' "$TIME_OUTPUT")
         ;;
     *)
-        "$PROBE" "$WORK_REPOSITORY" "$DATABASE" "$CLI" "$RUNS"
+        "$PROBE" "$WORK_REPOSITORY" "$DATABASE" "$CLI" "$RUNS" \
+            "$MAX_FULL_INDEX_WALL_MS" "$MAX_WARM_QUERY_P95_MS" \
+            "$MAX_MATERIAL_RESULT_BYTES" "$MAX_DATABASE_BYTES" \
+            "$MAX_WAL_BYTES_AFTER_COMPLETION"
         PEAK_RSS_KIB=
         ;;
 esac
+
+"$COMPARISON_PROBE" base "$COMPARISON_REPOSITORY" "$COMPARISON_DATABASE"
+if [ -n "$(benchmark_git -C "$COMPARISON_REPOSITORY" status --porcelain --untracked-files=all)" ]; then
+    echo "error: comparison worktree was not clean before revision change" >&2
+    exit 1
+fi
+benchmark_git -C "$COMPARISON_REPOSITORY" \
+    checkout --quiet --detach "$EXPECTED_REVISION"
+"$COMPARISON_PROBE" changed "$COMPARISON_REPOSITORY" "$COMPARISON_DATABASE"
 
 if [ -n "$PEAK_RSS_KIB" ]; then
     echo "peak_rss_kib=$PEAK_RSS_KIB"

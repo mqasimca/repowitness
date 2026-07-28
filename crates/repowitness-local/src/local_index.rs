@@ -99,6 +99,7 @@ pub struct LocalIndexReport {
     total_source_bytes: u64,
     total_facts: u64,
     syntax_error_nodes: u64,
+    known_parser_limitation_nodes: u64,
     reused_rust_files: u64,
     analyzed_rust_files: u64,
     reused_go_files: u64,
@@ -194,6 +195,12 @@ impl LocalIndexReport {
     #[must_use]
     pub const fn syntax_error_nodes(self) -> u64 {
         self.syntax_error_nodes
+    }
+
+    /// Returns the non-subtractive subset caused by known parser limitations.
+    #[must_use]
+    pub const fn known_parser_limitation_nodes(self) -> u64 {
+        self.known_parser_limitation_nodes
     }
 
     /// Returns files restored from exact persisted analysis artifacts.

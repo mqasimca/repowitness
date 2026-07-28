@@ -3,6 +3,7 @@
 use std::{
     env,
     error::Error,
+    ffi::OsString,
     path::PathBuf,
     sync::{Arc, atomic::AtomicBool},
     time::{Duration, Instant},
@@ -31,9 +32,12 @@ type ProbeResult<T> = Result<T, Box<dyn Error>>;
 
 const BENCHMARK_ID: &str = "phase0-rust-evidence-memory-v1";
 const DEFAULT_RUNS: usize = 5;
+const MAX_RUNS: usize = 100;
 const MIGRATION_TIMESTAMP: u64 = 1_722_000_000_000;
 const APPROVAL_TIMESTAMP: u64 = 1_722_000_000_001;
-const MAX_FULL_INDEX_WALL: Duration = Duration::from_secs(10);
+const MAX_ADMITTED_WALL_MS: u64 = 3_600_000;
+const MAX_ADMITTED_RESULT_BYTES: u64 = 24 * 1024 * 1024;
+const MAX_ADMITTED_STORAGE_BYTES: u64 = 16 * 1024 * 1024 * 1024;
 
 fn main() {
     if let Err(error) = run() {
@@ -68,9 +72,13 @@ fn run() -> ProbeResult<()> {
         &arguments.repository,
         &arguments.database,
         repository_identity.as_str(),
+        arguments.budgets.max_material_result_bytes,
     )?;
     let configuration =
         metrics::active_configuration_digest(&arguments.database, repository_digest)?;
+    let database_bytes = metrics::required_file_size(&arguments.database)?;
+    let wal_bytes = metrics::wal_file_size(&arguments.database)?;
+    validate_storage_budgets(database_bytes, wal_bytes, arguments.budgets)?;
     emit_report(Report {
         arguments: &arguments,
         cold: initial.cold,
@@ -82,6 +90,8 @@ fn run() -> ProbeResult<()> {
         mcp,
         configuration,
         canonical_memory_bytes: current.canonical_memory_bytes,
+        database_bytes,
+        wal_bytes,
     });
     Ok(())
 }
@@ -94,7 +104,7 @@ fn run_initial_phase(
     let cold_started = Instant::now();
     let cold = index(arguments, repository_identity, cancelled)?;
     let cold_wall = cold_started.elapsed();
-    validate_cold_index(cold, cold_wall)?;
+    validate_cold_index(cold, cold_wall, arguments.budgets)?;
     let warm_started = Instant::now();
     let warm = index(arguments, repository_identity, cancelled)?;
     let warm_wall = warm_started.elapsed();
@@ -103,6 +113,7 @@ fn run_initial_phase(
         &arguments.database,
         repository_identity,
         arguments.runs,
+        arguments.budgets.max_warm_query_p95_us()?,
         cancelled,
     )?;
     let source_only = build_context(arguments, repository_identity, "into_frame", cancelled)?;
@@ -304,8 +315,12 @@ fn validate_recall(
     Ok(())
 }
 
-fn validate_cold_index(report: LocalIndexReport, elapsed: Duration) -> ProbeResult<()> {
-    if elapsed > MAX_FULL_INDEX_WALL {
+fn validate_cold_index(
+    report: LocalIndexReport,
+    elapsed: Duration,
+    budgets: BenchmarkBudgets,
+) -> ProbeResult<()> {
+    if elapsed > Duration::from_millis(budgets.max_full_index_wall_ms) {
         return Err("cold full-index wall time exceeded the proposed budget".into());
     }
     if report.indexed_rust_files() == 0
@@ -327,6 +342,20 @@ fn validate_warm_index(cold: LocalIndexReport, warm: LocalIndexReport) -> ProbeR
         || warm.analyzed_rust_files() != 0
     {
         return Err("unchanged indexing did not reuse the exact complete artifact set".into());
+    }
+    Ok(())
+}
+
+fn validate_storage_budgets(
+    database_bytes: u64,
+    wal_bytes: u64,
+    budgets: BenchmarkBudgets,
+) -> ProbeResult<()> {
+    if database_bytes > budgets.max_database_bytes {
+        return Err("SQLite database size exceeded the proposed budget".into());
+    }
+    if wal_bytes > budgets.max_wal_bytes_after_completion {
+        return Err("SQLite WAL was not empty after benchmark completion".into());
     }
     Ok(())
 }
@@ -364,6 +393,24 @@ struct Arguments {
     database: PathBuf,
     cli: PathBuf,
     runs: usize,
+    budgets: BenchmarkBudgets,
+}
+
+#[derive(Clone, Copy)]
+struct BenchmarkBudgets {
+    max_full_index_wall_ms: u64,
+    max_warm_query_p95_ms: u64,
+    max_material_result_bytes: usize,
+    max_database_bytes: u64,
+    max_wal_bytes_after_completion: u64,
+}
+
+impl BenchmarkBudgets {
+    fn max_warm_query_p95_us(self) -> ProbeResult<u64> {
+        self.max_warm_query_p95_ms
+            .checked_mul(1_000)
+            .ok_or_else(|| "warm-query budget was not representable".into())
+    }
 }
 
 struct InitialPhase {
@@ -386,14 +433,38 @@ impl Arguments {
         let repository = PathBuf::from(arguments.next().ok_or(Self::usage())?);
         let database = PathBuf::from(arguments.next().ok_or(Self::usage())?);
         let cli = PathBuf::from(arguments.next().ok_or(Self::usage())?);
-        let runs = match arguments.next() {
-            Some(value) => value
-                .to_str()
-                .ok_or("run count must be UTF-8")?
-                .parse::<usize>()?,
-            None => DEFAULT_RUNS,
-        };
-        if runs < 2 || arguments.next().is_some() {
+        let runs = parse_runs(arguments.next())?;
+        let max_full_index_wall_ms = parse_budget(
+            arguments.next(),
+            "full-index wall milliseconds",
+            1,
+            MAX_ADMITTED_WALL_MS,
+        )?;
+        let max_warm_query_p95_ms = parse_budget(
+            arguments.next(),
+            "warm-query P95 milliseconds",
+            1,
+            MAX_ADMITTED_WALL_MS,
+        )?;
+        let max_material_result_bytes = usize::try_from(parse_budget(
+            arguments.next(),
+            "material-result bytes",
+            1,
+            MAX_ADMITTED_RESULT_BYTES,
+        )?)?;
+        let max_database_bytes = parse_budget(
+            arguments.next(),
+            "database bytes",
+            1,
+            MAX_ADMITTED_STORAGE_BYTES,
+        )?;
+        let max_wal_bytes_after_completion = parse_budget(
+            arguments.next(),
+            "post-completion WAL bytes",
+            0,
+            MAX_ADMITTED_STORAGE_BYTES,
+        )?;
+        if arguments.next().is_some() {
             return Err(Self::usage().into());
         }
         Ok(Self {
@@ -401,12 +472,51 @@ impl Arguments {
             database,
             cli,
             runs,
+            budgets: BenchmarkBudgets {
+                max_full_index_wall_ms,
+                max_warm_query_p95_ms,
+                max_material_result_bytes,
+                max_database_bytes,
+                max_wal_bytes_after_completion,
+            },
         })
     }
 
     const fn usage() -> &'static str {
-        "usage: phase0_product_probe <repository> <database> <repowitness-cli> [runs]"
+        "usage: phase0_product_probe <repository> <database> <repowitness-cli> \
+         <runs> <full-index-ms> <warm-p95-ms> <result-bytes> <database-bytes> <wal-bytes>"
     }
+}
+
+fn parse_runs(value: Option<OsString>) -> ProbeResult<usize> {
+    let runs = match value {
+        Some(value) => value
+            .to_str()
+            .ok_or("run count must be UTF-8")?
+            .parse::<usize>()?,
+        None => DEFAULT_RUNS,
+    };
+    if !(2..=MAX_RUNS).contains(&runs) {
+        return Err("run count must be between 2 and 100".into());
+    }
+    Ok(runs)
+}
+
+fn parse_budget(
+    value: Option<OsString>,
+    label: &str,
+    minimum: u64,
+    maximum: u64,
+) -> ProbeResult<u64> {
+    let value = value
+        .ok_or_else(|| format!("{label} budget is required"))?
+        .into_string()
+        .map_err(|_| format!("{label} budget must be UTF-8"))?
+        .parse::<u64>()?;
+    if !(minimum..=maximum).contains(&value) {
+        return Err(format!("{label} budget must be between {minimum} and {maximum}").into());
+    }
+    Ok(value)
 }
 
 struct Report<'a> {
@@ -420,6 +530,8 @@ struct Report<'a> {
     mcp: mcp::McpMetrics,
     configuration: [u8; 32],
     canonical_memory_bytes: u64,
+    database_bytes: u64,
+    wal_bytes: u64,
 }
 
 fn emit_report(report: Report<'_>) {
@@ -456,17 +568,77 @@ fn emit_report(report: Report<'_>) {
         "resolved_configuration_digest_sha256={}",
         metrics::hex_digest(&report.configuration)
     );
+    println!("database_bytes={}", report.database_bytes);
+    println!("wal_bytes={}", report.wal_bytes);
     println!(
-        "database_bytes={}",
-        metrics::file_size(&report.arguments.database)
+        "budget_max_full_index_wall_ms={}",
+        report.arguments.budgets.max_full_index_wall_ms
     );
     println!(
-        "wal_bytes={}",
-        metrics::wal_file_size(&report.arguments.database)
+        "budget_max_warm_query_p95_ms={}",
+        report.arguments.budgets.max_warm_query_p95_ms
+    );
+    println!(
+        "budget_max_material_result_bytes={}",
+        report.arguments.budgets.max_material_result_bytes
+    );
+    println!(
+        "budget_max_database_bytes={}",
+        report.arguments.budgets.max_database_bytes
+    );
+    println!(
+        "budget_max_wal_bytes_after_completion={}",
+        report.arguments.budgets.max_wal_bytes_after_completion
     );
     println!("memory_current_before_change=true");
     println!("memory_stale_after_change=true");
     println!("stale_memory_context_excluded=true");
     println!("default_mcp_memory_writes_enabled=false");
     println!("correctness_failures=0");
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::OsString;
+
+    use super::{BenchmarkBudgets, parse_budget, parse_runs, validate_storage_budgets};
+
+    const BUDGETS: BenchmarkBudgets = BenchmarkBudgets {
+        max_full_index_wall_ms: 10_000,
+        max_warm_query_p95_ms: 250,
+        max_material_result_bytes: 49_152,
+        max_database_bytes: 4 * 1024 * 1024,
+        max_wal_bytes_after_completion: 0,
+    };
+
+    #[test]
+    fn run_count_is_bounded_before_allocating_samples() {
+        assert_eq!(parse_runs(None).expect("default"), 5);
+        assert_eq!(parse_runs(Some(OsString::from("2"))).expect("minimum"), 2);
+        assert_eq!(
+            parse_runs(Some(OsString::from("100"))).expect("maximum"),
+            100
+        );
+        assert!(parse_runs(Some(OsString::from("1"))).is_err());
+        assert!(parse_runs(Some(OsString::from("101"))).is_err());
+        assert!(parse_runs(Some(OsString::from("not-a-count"))).is_err());
+    }
+
+    #[test]
+    fn storage_budgets_are_inclusive_and_fail_closed() {
+        assert!(validate_storage_budgets(BUDGETS.max_database_bytes, 0, BUDGETS).is_ok());
+        assert!(validate_storage_budgets(BUDGETS.max_database_bytes + 1, 0, BUDGETS).is_err());
+        assert!(validate_storage_budgets(1, 1, BUDGETS).is_err());
+    }
+
+    #[test]
+    fn manifest_budget_arguments_are_bounded() {
+        assert_eq!(
+            parse_budget(Some(OsString::from("250")), "query", 1, 1_000).expect("valid"),
+            250
+        );
+        assert!(parse_budget(Some(OsString::from("0")), "query", 1, 1_000).is_err());
+        assert!(parse_budget(Some(OsString::from("1001")), "query", 1, 1_000).is_err());
+        assert!(parse_budget(Some(OsString::from("invalid")), "query", 1, 1_000).is_err());
+    }
 }

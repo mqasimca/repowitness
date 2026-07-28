@@ -161,10 +161,10 @@ also corrected aggregate search-output accounting for the producer manifest
 carried by every occurrence and added an exact-boundary regression.
 
 Tree-sitter error or missing nodes remain explicit unresolved coverage.
-Relevant grammar limitations include typed tagged templates described by an
-[open upstream grammar issue](https://github.com/tree-sitter/tree-sitter-typescript/issues/341),
-as well as other syntax shapes. The evidence contract does not convert partial
-syntax coverage into successful analysis.
+[ADR-0023](0023-vendor-typescript-grammar-fix.md) records the checksum-pinned
+local fixes for a bounded set of valid syntax shapes. Any remaining grammar
+limitations still contribute raw error or missing-node counts. The evidence
+contract does not convert partial syntax coverage into successful analysis.
 
 The pinned `tree-sitter-typescript` package adds one direct analysis dependency
 and builds both dialect grammars in a 3,388,024-byte release `.rlib` on the

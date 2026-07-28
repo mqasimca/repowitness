@@ -251,7 +251,8 @@ fn index_report() -> CliIndexReport {
         skipped_unsupported_paths: 2,
         total_source_bytes: 101,
         total_facts: 7,
-        syntax_error_nodes: 0,
+        syntax_error_nodes: 3,
+        known_parser_limitation_nodes: 2,
         reused_rust_files: 1,
         analyzed_rust_files: 1,
         reused_go_files: 0,
@@ -318,7 +319,8 @@ fn symbol_report() -> CliSymbolReport {
             name_end: 10,
             declaration_start: 0,
             declaration_end: 13,
-            declaration_hex: "70756220666e2072756e2829207b7d".to_owned(),
+            declaration_encoding: "utf8",
+            declaration: "pub fn run() {}".to_owned(),
         }),
     }
 }

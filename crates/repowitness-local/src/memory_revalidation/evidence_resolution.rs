@@ -197,11 +197,16 @@ fn prepared_evidence_resolution(
             .map_err(|source| LocalMemoryRevalidationError::ProjectionPreparation { source })?,
         )),
         RustCorrespondenceResolution::NeedsReview { candidates } => {
+            let proposed_split = candidates.len() > 1;
             let candidates = candidates
                 .iter()
                 .map(|candidate| PreparedProjectionCandidate {
                     occurrence: ProjectionOccurrence::from_candidate(candidate),
-                    relation: candidate_relation(evidence, candidate),
+                    relation: if proposed_split {
+                        ProjectionCandidateRelation::Split
+                    } else {
+                        candidate_relation(evidence, candidate)
+                    },
                 })
                 .collect();
             Ok((

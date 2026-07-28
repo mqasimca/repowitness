@@ -122,6 +122,26 @@ fn capture_source_state_for_index(
         })
 }
 
+fn recapture_source_state_for_index(
+    worktree_root: &Path,
+    limits: GitPathDiscoveryLimits,
+    cancelled: &AtomicBool,
+    deadline: Instant,
+) -> Result<crate::CapturedSourceState, LocalRustIndexError> {
+    capture_source_state_for_index(worktree_root, limits, cancelled, deadline).map_err(
+        |error| match error {
+            LocalRustIndexError::SourceState {
+                source:
+                    SourceStateError::SparseWorktreeUnsupported
+                    | SourceStateError::SubmoduleUnsupported,
+            } => LocalRustIndexError::SourceState {
+                source: SourceStateError::ConcurrentSourceChange,
+            },
+            error => error,
+        },
+    )
+}
+
 #[derive(Clone, Copy)]
 enum SelectionPolicy {
     RustOnly,
@@ -202,11 +222,24 @@ fn read_selected_sources(
     let mut sources = Vec::with_capacity(selected_paths.len());
     let mut total_source_bytes = 0_u64;
     let mut counts = SelectedLanguageCounts::default();
+    let mut read_session = root
+        .exact_read_session(
+            selected_paths.iter().map(|(path, _language)| *path),
+            deadline,
+            || cancelled.load(Ordering::Relaxed),
+        )
+        .map_err(map_read_plan_error)?;
     for (index, (path, language)) in selected_paths.into_iter().enumerate() {
         check_control(cancelled, deadline)?;
         let ordinal = stable_ordinal(index)?;
         let read_limits = capped_source_read_limits(limits.source_read(), deadline)?;
-        let content = read_source(root, path, read_limits, cancelled, ordinal)?;
+        let content = read_source(
+            &mut read_session,
+            path,
+            read_limits,
+            cancelled,
+            ordinal,
+        )?;
         total_source_bytes = total_source_bytes
             .checked_add(
                 u64::try_from(content.len())
@@ -229,18 +262,30 @@ fn read_selected_sources(
 }
 
 fn read_source(
-    root: &ContainedSourceRoot,
+    session: &mut crate::contained_source::ExactReadSession<'_>,
     path: &repowitness_domain::RepositoryPath,
     limits: SourceReadLimits,
     cancelled: &AtomicBool,
     ordinal: u64,
 ) -> Result<Box<[u8]>, LocalRustIndexError> {
-    root.read_with_cancel(path, limits, || cancelled.load(Ordering::Relaxed))
+    session
+        .read_with_cancel(path, limits, || cancelled.load(Ordering::Relaxed))
         .map_err(|source| match source {
             ContainedSourceError::Cancelled => LocalRustIndexError::Cancelled,
             ContainedSourceError::DeadlineExceeded { .. } => LocalRustIndexError::DeadlineExceeded,
             source => LocalRustIndexError::SourceRead { ordinal, source },
         })
+}
+
+fn map_read_plan_error(
+    error: crate::contained_source::ExactReadSessionError,
+) -> LocalRustIndexError {
+    match error {
+        crate::contained_source::ExactReadSessionError::Cancelled => LocalRustIndexError::Cancelled,
+        crate::contained_source::ExactReadSessionError::DeadlineExceeded => {
+            LocalRustIndexError::DeadlineExceeded
+        }
+    }
 }
 
 fn discover_paths(
@@ -281,11 +326,18 @@ fn revalidate_content(
     cancelled: &AtomicBool,
     deadline: Instant,
 ) -> Result<(), LocalRustIndexError> {
+    let mut read_session = root
+        .exact_read_session(
+            prepared.files().iter().map(|file| file.path()),
+            deadline,
+            || cancelled.load(Ordering::Relaxed),
+        )
+        .map_err(map_read_plan_error)?;
     for (index, file) in prepared.files().iter().enumerate() {
         check_control(cancelled, deadline)?;
         let ordinal = stable_ordinal(index)?;
         let read_limits = capped_source_read_limits(source_limits, deadline)?;
-        let content = root
+        let content = read_session
             .read_with_cancel(file.path(), read_limits, || {
                 cancelled.load(Ordering::Relaxed)
             })

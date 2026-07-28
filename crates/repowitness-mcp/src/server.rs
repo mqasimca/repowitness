@@ -216,6 +216,13 @@ impl RepoWitnessMcpServer {
                 service.diagnostics(request.with_timeout(remaining), cancelled)
             })
             .await?;
+        let output = output.and_then(|output| {
+            if output.parser_diagnostics_are_valid() {
+                Ok(output)
+            } else {
+                Err(RepositoryServiceError::Diagnostics)
+            }
+        });
         operation_result(output, MAX_MCP_DIAGNOSTICS_OUTPUT_BYTES)
     }
 

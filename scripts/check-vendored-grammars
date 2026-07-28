@@ -1,0 +1,226 @@
+#!/usr/bin/env perl
+
+use strict;
+use warnings;
+
+use Digest::SHA;
+use File::Find qw(find);
+
+my %expected = (
+    'third_party/tree-sitter-typescript/Cargo.toml'
+      => '8eaf294afdd3121f89176eb9ca8cecd67c8503a284bb674a3b5b76ddaa373e1f',
+    'third_party/tree-sitter-typescript/LICENSE'
+      => '49bf33cf78ef5897e4e161ce1517df7de1ae5042a65b6bcfd44401e0fc606559',
+    'third_party/tree-sitter-typescript/README.md'
+      => '57352b23cb92e3c3244c7ea91c2f4a2fe894ae974d99de8c20a4b112951b6a6c',
+    'third_party/tree-sitter-typescript/REPOWITNESS-PROVENANCE.md'
+      => '90dde769ec375704a164b0aa49d7f14eb137ffe8a1fa6411bcf53e47a3270bc6',
+    'third_party/tree-sitter-typescript/bindings/rust/build.rs'
+      => '8e3ee9baddea25add039fc5d12d76fecfe81f1fd175429eb08694ccfcdaf85f4',
+    'third_party/tree-sitter-typescript/bindings/rust/lib.rs'
+      => 'f5d90ff81f962148bc0e4ce420f11dc8cc7750a53b65be667b18ca4e23fbc36c',
+    'third_party/tree-sitter-typescript/package-lock.json'
+      => '21bb4fa8da824626fc588174822822c3b1510df3d2e701b54fa2eb9287db2a38',
+    'third_party/tree-sitter-typescript/package.json'
+      => '00033d5845d3f792b136bc76da694b41a5175eb892374e539ccb49c0eb5e3553',
+    'third_party/tree-sitter-typescript/tree-sitter.json'
+      => '4f39daa6a0bde84506cdeaf0b4460ed262df880030b3e6073868d0c746932291',
+    'third_party/tree-sitter-typescript/common/define-grammar.js'
+      => '56f480d79723bba4b59d08bcb9b5e3cf84b31777dbc460dd58acf6585f269e7d',
+    'third_party/tree-sitter-typescript/common/scanner.h'
+      => '74dd1a8b9f7fad91b7d6c7c478000a4fd6bbacb89eff7785808ac4dbc12c6467',
+    'third_party/tree-sitter-typescript/queries/highlights.scm'
+      => 'e0c35adb819127bfd4f853fac5419e7d8ba44760246201d04a4a5ce0228a10c5',
+    'third_party/tree-sitter-typescript/queries/locals.scm'
+      => 'c3680f9b56276fb2ccc9f1d5f4d03dbca5d64bdf3e6d52ce5a4ad342cec162d5',
+    'third_party/tree-sitter-typescript/queries/tags.scm'
+      => 'b391288bcc71b513a5df7c9bb232d8bc7418d7e274b125aa0aa4bdd6121a0338',
+    'third_party/tree-sitter-typescript/typescript/grammar.js'
+      => '7e4109889b2ce2731dde89f82f545a12f1e54a286f72bc874f1aed9965c5d5ae',
+    'third_party/tree-sitter-typescript/typescript/src/grammar.json'
+      => 'e3152075535cfc7333bdb4429a9424b0bfd7cf4f5bdc24afafe3a96990c36e7b',
+    'third_party/tree-sitter-typescript/typescript/src/node-types.json'
+      => 'e8089a9091a906c798801b21d279096aeaa171f738057459baff80a2150f2cb2',
+    'third_party/tree-sitter-typescript/typescript/src/parser.c'
+      => '8b31686490169b91a23d738104d008b1c44029cb7e866a464447bfbe356abbd2',
+    'third_party/tree-sitter-typescript/typescript/src/scanner.c'
+      => '9125013b42cb888379d9be909f1d73dfb75a37626c2cdbf4122718a2b431a6d3',
+    'third_party/tree-sitter-typescript/typescript/src/tree_sitter/alloc.h'
+      => 'b29c1c9fb7cc82f58c84b376df1297d6e2737a1d655fd356db0859e3c29c2fea',
+    'third_party/tree-sitter-typescript/typescript/src/tree_sitter/array.h'
+      => '4ff743903dc46f5db6aa54f31c6b4d160a8a9779e5b2ab1ee59ae7ebcd850ea1',
+    'third_party/tree-sitter-typescript/typescript/src/tree_sitter/parser.h'
+      => 'a1f6ef161fbaf48a0e10fca90ef5290a062462b307b3898aa562993853b9f80a',
+    'third_party/tree-sitter-typescript/tsx/grammar.js'
+      => '19b7bc89bac1dfbb64e01ca15ca52345056028c2582d71762efd675af947a0f6',
+    'third_party/tree-sitter-typescript/tsx/src/grammar.json'
+      => 'eb7184080fd59e131bd00511db02e5850dce45fabd40fde7ed3c5e3567d18a9d',
+    'third_party/tree-sitter-typescript/tsx/src/node-types.json'
+      => '2cfa0b18bef19c362549fb10017794f7417308e33a703fe3978d541c1e577e51',
+    'third_party/tree-sitter-typescript/tsx/src/parser.c'
+      => '42d1632397a132707b40f8503e421c3d3b6c8a88f542be3ababda226e75e9836',
+    'third_party/tree-sitter-typescript/tsx/src/scanner.c'
+      => 'd563cd30b2f39718c9ae4292795c5ce03a2ad01954ba3a86ef84c2781a736673',
+    'third_party/tree-sitter-typescript/tsx/src/tree_sitter/alloc.h'
+      => 'b29c1c9fb7cc82f58c84b376df1297d6e2737a1d655fd356db0859e3c29c2fea',
+    'third_party/tree-sitter-typescript/tsx/src/tree_sitter/array.h'
+      => '4ff743903dc46f5db6aa54f31c6b4d160a8a9779e5b2ab1ee59ae7ebcd850ea1',
+    'third_party/tree-sitter-typescript/tsx/src/tree_sitter/parser.h'
+      => 'a1f6ef161fbaf48a0e10fca90ef5290a062462b307b3898aa562993853b9f80a',
+);
+
+my @errors;
+find(
+    {
+        no_chdir => 1,
+        wanted   => sub {
+            if ($_ eq 'third_party/tree-sitter-typescript/node_modules') {
+                $File::Find::prune = 1;
+                return;
+            }
+            if (-l $_) {
+                push @errors, "vendored grammar symlink is not allowed: $_";
+                return;
+            }
+            return if !-f $_;
+            push @errors, "unexpected vendored grammar file: $_"
+              if !exists $expected{$_};
+        },
+    },
+    'third_party/tree-sitter-typescript',
+);
+
+for my $path (sort keys %expected) {
+    if (!-f $path) {
+        push @errors, "missing vendored grammar file: $path";
+        next;
+    }
+
+    open my $file, '<:raw', $path
+      or die "cannot open $path: $!\n";
+    my $actual = Digest::SHA->new(256)->addfile($file)->hexdigest;
+    close $file
+      or die "cannot close $path: $!\n";
+
+    push @errors, "$path checksum $actual, expected $expected{$path}"
+      if $actual ne $expected{$path};
+}
+
+sub read_raw {
+    my ($path) = @_;
+    open my $file, '<:raw', $path
+      or die "cannot open $path: $!\n";
+    local $/;
+    my $source = <$file>;
+    close $file
+      or die "cannot close $path: $!\n";
+    return $source;
+}
+
+my %capability_checks = (
+    'third_party/tree-sitter-typescript/common/scanner.h' => [
+        [
+            qr{^\s*\#\s*include\s*[<"](?:unistd[.]h|sys/|netdb[.]h|dlfcn[.]h|signal[.]h|spawn[.]h|pthread[.]h|fcntl[.]h|dirent[.]h|termios[.]h|arpa/|netinet/)}m,
+            'operating-system or network header',
+        ],
+        [
+            qr{\b(?:system|popen|fopen|freopen|fwrite|fork|exec[A-Za-z_]*|socket|connect|bind|listen|sendto|recvfrom|dlopen|mmap|mprotect|getenv)\s*[(]},
+            'process, file, network, dynamic-loading, or environment call',
+        ],
+        [
+            qr{__attribute__\s*[(]\s*[(]\s*(?:constructor|destructor)|__asm__|\basm\s*[(]},
+            'constructor, destructor, or inline assembly',
+        ],
+    ],
+    'third_party/tree-sitter-typescript/typescript/src/scanner.c' => [],
+    'third_party/tree-sitter-typescript/tsx/src/scanner.c'        => [],
+);
+
+my @scanner_checks =
+  @{ $capability_checks{
+      'third_party/tree-sitter-typescript/common/scanner.h'} };
+for my $path (
+    'third_party/tree-sitter-typescript/typescript/src/scanner.c',
+    'third_party/tree-sitter-typescript/tsx/src/scanner.c'
+  )
+{
+    $capability_checks{$path} = \@scanner_checks;
+}
+
+my @rust_build_checks = (
+    [
+        qr{\b(?:std::process|Command::|std::net|TcpStream|UdpSocket)\b},
+        'subprocess or network access',
+    ],
+    [
+        qr{\b(?:std::fs|fs::|OpenOptions|File::create)\b},
+        'direct filesystem access',
+    ],
+);
+$capability_checks{'third_party/tree-sitter-typescript/bindings/rust/build.rs'} =
+  \@rust_build_checks;
+$capability_checks{'third_party/tree-sitter-typescript/bindings/rust/lib.rs'} =
+  \@rust_build_checks;
+
+my @javascript_checks = (
+    [
+        qr{\b(?:child_process|process[.]env|fetch\s*[(])},
+        'subprocess, environment, or network access',
+    ],
+    [
+        qr{require\s*[(]\s*['"](?:fs|node:fs|http|node:http|https|node:https|net|node:net|tls|node:tls|dgram|node:dgram|child_process|node:child_process)['"]\s*[)]},
+        'privileged built-in module import',
+    ],
+);
+for my $path (
+    'third_party/tree-sitter-typescript/common/define-grammar.js',
+    'third_party/tree-sitter-typescript/typescript/grammar.js',
+    'third_party/tree-sitter-typescript/tsx/grammar.js'
+  )
+{
+    $capability_checks{$path} = \@javascript_checks;
+}
+
+for my $path (sort keys %capability_checks) {
+    my $source = read_raw($path);
+    for my $check (@{ $capability_checks{$path} }) {
+        my ($pattern, $description) = @{$check};
+        push @errors, "$path contains forbidden $description"
+          if $source =~ $pattern;
+    }
+}
+
+my $package_source =
+  read_raw('third_party/tree-sitter-typescript/package.json');
+push @errors,
+  'third_party/tree-sitter-typescript/package.json contains lifecycle scripts'
+  if $package_source =~
+  /"(?:scripts|preinstall|install|postinstall|prepare)"\s*:/;
+
+my $analysis_path = 'crates/repowitness-analysis/src/typescript_source.rs';
+open my $analysis, '<:raw', $analysis_path
+  or die "cannot open $analysis_path: $!\n";
+local $/;
+my $analysis_source = <$analysis>;
+close $analysis
+  or die "cannot close $analysis_path: $!\n";
+
+for my $required (
+    '0.23.2+repowitness.2',
+    $expected{'third_party/tree-sitter-typescript/typescript/src/parser.c'},
+    $expected{'third_party/tree-sitter-typescript/typescript/src/scanner.c'},
+    $expected{'third_party/tree-sitter-typescript/tsx/src/parser.c'},
+    $expected{'third_party/tree-sitter-typescript/tsx/src/scanner.c'},
+    $expected{'third_party/tree-sitter-typescript/common/scanner.h'},
+  )
+{
+    push @errors, "$analysis_path does not identify vendored grammar $required"
+      if index($analysis_source, $required) < 0;
+}
+
+if (@errors) {
+    print STDERR join("\n", @errors), "\n";
+    exit 1;
+}
+
+print "vendored grammar integrity and capability checks passed\n";

@@ -53,6 +53,7 @@ type PersistedArtifactMetadata = (
     i64,
     i64,
     i64,
+    i64,
     String,
     Option<Vec<u8>>,
 );

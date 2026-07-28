@@ -16,7 +16,7 @@ const SELECTION_POLICY: &[u8] =
 one-canonical-manifest\0one-generation";
 
 /// Version of the combined supported-language snapshot profile.
-pub const PHASE0_SOURCE_SNAPSHOT_PROFILE_VERSION: u32 = 3;
+pub const PHASE0_SOURCE_SNAPSHOT_PROFILE_VERSION: u32 = 4;
 /// Version of the combined snapshot canonicalization.
 pub const PHASE0_SOURCE_CANONICALIZATION_VERSION: u32 = 3;
 
@@ -172,7 +172,8 @@ fn combined_schema(identities: SourceArtifactIdentities) -> AnalysisSchemaDigest
         b"artifact-language=rust-go-typescript-tsx-or-python\0\
 go-kinds=interface-defined_type-variable\0\
 typescript-kinds=class-interface-enum-type_alias-module-function-method-variable\0\
-python-kinds=class-function-method-variable-type_alias",
+python-kinds=class-function-method-variable-type_alias\0\
+known-parser-limitation-nodes=subset-of-syntax-error-nodes",
     );
     AnalysisSchemaDigest::new(hasher.finalize().into())
 }
@@ -240,6 +241,6 @@ mod tests {
             first.canonicalization_version(),
             PHASE0_SOURCE_CANONICALIZATION_VERSION
         );
-        assert_eq!(PHASE0_SOURCE_SNAPSHOT_PROFILE_VERSION, 3);
+        assert_eq!(PHASE0_SOURCE_SNAPSHOT_PROFILE_VERSION, 4);
     }
 }

@@ -41,6 +41,7 @@ fn symbol_get_reports_verified_source_and_passes_the_complete_selector() {
     assert_eq!(code, EXIT_SUCCESS);
     assert!(stderr.is_empty());
     assert!(stdout.contains("status=ok\noperation=symbol-get\n"));
+    assert!(stdout.contains("schema_version=2\n"));
     assert!(stdout.contains("symbol_profile=3\n"));
     assert!(stdout.contains("resolution=confirmed\n"));
     assert!(stdout.contains("fact_ordinal=7\n"));
@@ -48,8 +49,8 @@ fn symbol_get_reports_verified_source_and_passes_the_complete_selector() {
     assert!(stdout.contains("evidence_tier=syntax\n"));
     assert!(stdout.contains("language=rust\n"));
     assert!(stdout.contains("name=run\n"));
-    assert!(stdout.contains("declaration_encoding=lowercase_hex\n"));
-    assert!(stdout.contains("declaration_hex=70756220666e2072756e2829207b7d\n"));
+    assert!(stdout.contains("declaration_encoding=utf8\n"));
+    assert!(stdout.contains("declaration_data_json=\"pub fn run() {}\"\n"));
     assert!(!stdout.contains("private"));
     assert!(!stdout.contains(&identity));
     assert_eq!(getter.calls.get(), 1);
@@ -204,8 +205,19 @@ fn symbol_get_boundary_rejects_an_oversized_encoded_report() {
         .symbol
         .as_mut()
         .expect("fixture has a symbol")
-        .declaration_hex = "0".repeat(MAX_CLI_SYMBOL_OUTPUT_BYTES);
+        .declaration = "0".repeat(MAX_CLI_SYMBOL_OUTPUT_BYTES);
     assert_eq!(emit_symbol_report(&mut io::sink(), &report), EXIT_SOFTWARE);
+}
+
+#[test]
+fn maximum_declaration_json_expansion_fits_the_cli_report_boundary() {
+    let mut report = symbol_report();
+    report
+        .symbol
+        .as_mut()
+        .expect("fixture has a symbol")
+        .declaration = format!("run{}", "\"".repeat(8 * 1024 * 1024 - 3));
+    assert_eq!(emit_symbol_report(&mut io::sink(), &report), EXIT_SUCCESS);
 }
 
 #[test]
@@ -234,6 +246,7 @@ fn index_and_inspection_help_do_not_run_repository_io() {
     let (code, stdout, stderr) = invoke(&["symbol-get", "--help"], &inspector);
     assert_eq!(code, EXIT_SUCCESS);
     assert!(stdout.contains("exact declaration"));
+    assert!(stdout.contains("display-safe UTF-8"));
     assert!(stdout.contains("lowercase hexadecimal"));
     assert!(stderr.is_empty());
 

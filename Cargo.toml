@@ -44,6 +44,9 @@ tree-sitter-python = { version = "=0.25.0" }
 tree-sitter-rust = { version = "=0.24.2" }
 tree-sitter-typescript = { version = "=0.23.2" }
 
+[patch.crates-io]
+tree-sitter-typescript = { path = "third_party/tree-sitter-typescript" }
+
 [workspace.lints.rust]
 unsafe_code = "forbid"
 unsafe_op_in_unsafe_fn = "deny"

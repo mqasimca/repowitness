@@ -135,8 +135,8 @@ memory-management foundation are implemented:
 - contained canonical record create/update/tombstone writes, fixed
   high-confidence secret rejection, bounded observation-only reachable-Git
   history import, and explicit local approval;
-- one clean SQLite baseline-version-1 migration containing occurrence
-  fingerprints, immutable current-memory projection, idempotent manual
+- an immutable SQLite baseline plus compatible version-2 migration containing
+  occurrence fingerprints, immutable current-memory projection, idempotent manual
   correspondence review, precision-first Rust correspondence, Git-DAG/worktree validity,
   conflicts, categorical staleness and review states, bounded current-memory
   recall, and atomic projection activation;
@@ -154,8 +154,10 @@ memory-management foundation are implemented:
 The slice has been exercised on the pinned mini-redis product benchmark, this
 workspace, temporary adversarial and mixed-language repositories, and
 neighboring real repositories. The development benchmark passes every proposed
-numeric ceiling, but these runs do not ratify the manifest or establish the
-real design-partner outcome required by the Phase 0 exit criteria.
+numeric ceiling. One isolated public Codex before/after run also makes both
+correct decisions, uses current memory, ignores stale memory, and rates the MCP
+pack useful. These runs do not ratify the manifest or establish the real
+design-partner outcome required by the Phase 0 exit criteria.
 
 TypeScript and TSX are distinct syntax-only dialects. The implemented profile
 does not evaluate TypeScript types, `tsconfig.json`, package/module resolution,
@@ -171,13 +173,14 @@ dispatch, or extract references and calls.
 
 The local product loop is implemented, but the Phase 0 release gate is not yet
 ratified. Maintainers must accept, revise, or reject proposed ADR-0017 through
-ADR-0019 and ADR-0021; finish the residual rewritten-history,
-obsolete-snapshot, competing-review, and publication-fault matrix; rerun the
-pinned benchmark from a clean exact RepoWitness revision; ratify or revise its
-retrieval/resource budgets; and record a real design-partner task whose
-engineering decision improves relative to the declared baselines. A stable
-public API also remains deferred. No public-beta or production-readiness claim
-follows from the implemented design-partner-alpha loop.
+ADR-0019 and ADR-0021; rerun the pinned benchmark from a clean exact
+RepoWitness revision; ratify or revise its retrieval/resource budgets; and
+record a real design-partner task whose engineering decision improves relative
+to the declared baselines. The rewritten-history, obsolete-snapshot,
+competing-review, split/merge, and publication-fault matrix passes in the
+development worktree. A stable public API also remains deferred. No public-beta
+or production-readiness claim follows from the implemented
+design-partner-alpha loop.
 
 ## Non-goals for the first public beta
 

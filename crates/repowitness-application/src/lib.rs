@@ -89,7 +89,7 @@ pub use repository_diagnostics::{
     RepositoryDiagnosticsMemoryProjection, RepositoryDiagnosticsPort,
     RepositoryDiagnosticsPortOutputError, RepositoryDiagnosticsPortResult,
     RepositoryDiagnosticsRequest, RepositoryDiagnosticsResult, RepositoryDiagnosticsUseCaseResult,
-    repository_diagnostics,
+    RepositoryParserDiagnostics, repository_diagnostics,
 };
 pub use repository_identity_text::{
     REPOSITORY_IDENTITY_TEXT_BYTES, RepositoryIdentityTextError, RepositoryIdentityTextV1,

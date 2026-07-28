@@ -232,10 +232,10 @@ Implemented tests cover:
 - one public end-to-end fixture and one pinned benchmark that write and approve
   a decision, change its source, revalidate, recall, and rebuild context.
 
-Release-matrix follow-up remains for rewritten and missing-object Git history,
-obsolete review snapshots, multiple competing approved targets, explicit
-split/merge abstention, and fault injection at every canonical-file and SQLite
-publication stage.
+Completed release-matrix tests cover rewritten, pruned, and missing-object Git
+history; obsolete review snapshots; multiple competing approved targets;
+explicit split/merge abstention; and deterministic failure at every
+canonical-file and SQLite publication stage, including transaction commit.
 
 ## Follow-up
 
@@ -243,8 +243,7 @@ publication stage.
   the accepted baseline migration in place.
 - Ratify proposed ADR-0017 through ADR-0019 only after their complete Phase 0
   validation matrices pass.
-- Complete the residual release-matrix cases listed above and rerun the pinned
-  benchmark from a clean exact RepoWitness revision.
+- Rerun the pinned benchmark from a clean exact RepoWitness revision.
 - Add reviewed multi-parent merge and archival/export policy in a later
   decision.
 

@@ -255,7 +255,7 @@ fn persisted_analysis_construction_and_source_validation_fail_closed() {
     )
     .expect("fixture fact must be structurally valid");
     let analysis =
-        RustSourceAnalysis::try_from_parts(vec![fact], 5, 0, RustAnalysisLimits::DEFAULT)
+        RustSourceAnalysis::try_from_parts(vec![fact], 5, 0, 0, RustAnalysisLimits::DEFAULT)
             .expect("fixture output must be structurally valid");
     assert!(
         analysis
@@ -267,13 +267,17 @@ fn persisted_analysis_construction_and_source_validation_fail_closed() {
         Err(RustAnalysisError::InvalidAnalysisArtifact)
     );
     assert_eq!(
-        RustSourceAnalysis::try_from_parts(Vec::new(), 0, 0, RustAnalysisLimits::DEFAULT),
+        RustSourceAnalysis::try_from_parts(Vec::new(), 0, 0, 0, RustAnalysisLimits::DEFAULT),
+        Err(RustAnalysisError::InvalidAnalysisArtifact)
+    );
+    assert_eq!(
+        RustSourceAnalysis::try_from_parts(Vec::new(), 1, 0, 1, RustAnalysisLimits::DEFAULT),
         Err(RustAnalysisError::InvalidAnalysisArtifact)
     );
     let narrower = RustAnalysisLimits::try_new(1024, 100, 20, 10, 1, 1)
         .expect("narrow fixture limits must be valid");
     assert_eq!(
-        RustSourceAnalysis::try_from_parts(vec![analysis.facts()[0].clone()], 5, 0, narrower,),
+        RustSourceAnalysis::try_from_parts(vec![analysis.facts()[0].clone()], 5, 0, 0, narrower,),
         Err(RustAnalysisError::InvalidAnalysisArtifact)
     );
 
@@ -308,6 +312,7 @@ fn persisted_analysis_construction_and_source_validation_fail_closed() {
         vec![corrupted_fact],
         analyzed.visited_nodes(),
         analyzed.syntax_error_nodes(),
+        analyzed.known_parser_limitation_nodes(),
         RustAnalysisLimits::DEFAULT,
     )
     .expect("persisted structure remains valid");

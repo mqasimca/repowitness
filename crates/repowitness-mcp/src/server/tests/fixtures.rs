@@ -70,7 +70,7 @@ pub(super) fn memory_output() -> MemoryRecallOutput {
 
 pub(super) fn context_output() -> ContextBuildOutput {
     ContextBuildOutput {
-        schema_version: 1,
+        schema_version: 2,
         context_profile: 1,
         reciprocal_rank_k: 60,
         budget_estimator: "utf8_bytes_upper_bound_v1".to_owned(),
@@ -100,13 +100,15 @@ pub(super) fn context_output() -> ContextBuildOutput {
 
 pub(super) fn diagnostics_output() -> DiagnosticsOutput {
     DiagnosticsOutput {
-        schema_version: 1,
-        diagnostics_profile: 1,
+        schema_version: 2,
+        diagnostics_profile: 2,
         snapshot_sha256: "11".repeat(32),
         generation: 9,
         source_epoch: 2,
         producer_manifest_sha256: "55".repeat(32),
         index_coverage: coverage(),
+        syntax_error_nodes: 4,
+        known_parser_limitation_nodes: 1,
         memory_projection: Some(McpDiagnosticsMemoryProjection {
             projection: 4,
             source_epoch: 2,
@@ -127,7 +129,7 @@ pub(super) fn diagnostics_output() -> DiagnosticsOutput {
 
 pub(super) fn symbol_output() -> SymbolGetOutput {
     SymbolGetOutput {
-        schema_version: 3,
+        schema_version: 4,
         symbol_profile: 3,
         snapshot_sha256: "11".repeat(32),
         generation: 9,
@@ -149,8 +151,8 @@ pub(super) fn symbol_output() -> SymbolGetOutput {
             qualified_name: "fixture::run".to_owned(),
             name_span: McpSpan { start: 7, end: 10 },
             declaration_span: McpSpan { start: 0, end: 13 },
-            declaration_encoding: "lowercase_hex".to_owned(),
-            declaration_hex: "70756220666e2072756e2829207b7d".to_owned(),
+            declaration_encoding: "utf8".to_owned(),
+            declaration: "pub fn run() {}".to_owned(),
         }),
     }
 }

@@ -8,7 +8,21 @@ fn migration_checksums_are_stable_golden_vectors() {
             0x1d, 0xc2, 0x76, 0xd9,
         ]
     );
-    assert_eq!(migrations(), [(1, MIGRATION_1_NAME, MIGRATION_1)]);
+    assert_eq!(
+        migration_checksum(MIGRATION_2),
+        [
+            0x20, 0xef, 0xea, 0x28, 0xa3, 0x13, 0x9d, 0xfe, 0x67, 0xcf, 0x22, 0x64, 0x31, 0xb5,
+            0x6e, 0x0d, 0xf0, 0xdb, 0xfe, 0x2d, 0xeb, 0x35, 0xbb, 0x96, 0x42, 0x51, 0xac, 0x47,
+            0xd7, 0x88, 0xc3, 0x39,
+        ]
+    );
+    assert_eq!(
+        migrations(),
+        [
+            (1, MIGRATION_1_NAME, MIGRATION_1),
+            (2, MIGRATION_2_NAME, MIGRATION_2),
+        ]
+    );
     for transitional_statement in ["CREATE TEMP", "ALTER TABLE", "DROP TABLE"] {
         assert!(!MIGRATION_1.contains(transitional_statement));
     }
@@ -48,9 +62,9 @@ fn baseline_catalog_matches_the_retired_final_schema_golden() {
     assert_eq!(
         migration_checksum(&canonical_catalog),
         [
-            0xca, 0xa4, 0x39, 0x82, 0xc8, 0x86, 0x82, 0xf2, 0xf7, 0x8d, 0xb1, 0x4e, 0xdf, 0x3c,
-            0x13, 0x15, 0x44, 0xd5, 0xa2, 0xff, 0xb8, 0x34, 0x1c, 0xd9, 0x89, 0xbe, 0x2d, 0x66,
-            0x07, 0x96, 0xe4, 0x27,
+            0xac, 0xb9, 0x87, 0x98, 0xd9, 0x26, 0x62, 0xff, 0xd7, 0x8a, 0x4c, 0xe2, 0xd1, 0xff,
+            0x05, 0xe0, 0x50, 0x2c, 0x2b, 0x4c, 0x9c, 0xca, 0x32, 0x6a, 0x59, 0x22, 0x68, 0x68,
+            0xa6, 0xfc, 0x90, 0x17,
         ]
     );
 }
@@ -136,12 +150,20 @@ fn fresh_database_has_exact_identity_ledger_and_required_schema() {
     assert_eq!(user_version, SCHEMA_VERSION);
     assert_eq!(
         ledger,
-        vec![(
-            1,
-            MIGRATION_1_NAME.to_owned(),
-            migration_checksum(MIGRATION_1).to_vec(),
-            123
-        )]
+        vec![
+            (
+                1,
+                MIGRATION_1_NAME.to_owned(),
+                migration_checksum(MIGRATION_1).to_vec(),
+                123
+            ),
+            (
+                2,
+                MIGRATION_2_NAME.to_owned(),
+                migration_checksum(MIGRATION_2).to_vec(),
+                123
+            ),
+        ]
     );
     assert_eq!(tables, 24);
     assert_eq!(memory_schema_objects, (4, 30));
@@ -154,6 +176,19 @@ fn fresh_database_has_exact_identity_ledger_and_required_schema() {
         )
         .expect("artifact payload column should be present");
     assert_eq!(payload_column, ("BLOB".to_owned(), 0));
+    let parser_diagnostic_column: (String, i64, Option<String>) = connection
+        .query_row(
+            "SELECT type, [notnull], dflt_value
+             FROM pragma_table_info('analysis_artifacts')
+             WHERE name = 'known_parser_limitation_nodes'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("known parser diagnostic column should be present");
+    assert_eq!(
+        parser_diagnostic_column,
+        ("INTEGER".to_owned(), 1, Some("0".to_owned()))
+    );
     let language_column: (String, i64, String) = connection
         .query_row(
             "SELECT type, [notnull], dflt_value
@@ -178,10 +213,10 @@ fn baseline_rust_correspondence_requires_complete_immutable_companions() {
                     producer_manifest_digest, configuration_digest,
                     analysis_schema_digest, canonicalization_version,
                     fact_count, visited_nodes, syntax_error_nodes,
-                    payload_digest, language
+                    known_parser_limitation_nodes, payload_digest, language
                  ) VALUES (
                     zeroblob(32), 'staging', zeroblob(32), zeroblob(32),
-                    zeroblob(32), zeroblob(32), 7, 1, 1, 0,
+                    zeroblob(32), zeroblob(32), 7, 1, 1, 0, 0,
                     zeroblob(32), 'rust'
                  )",
             [],

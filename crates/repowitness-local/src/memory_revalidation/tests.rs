@@ -86,9 +86,34 @@ fn git(repository: &Path, arguments: &[&str]) {
     assert!(status.success(), "Git fixture command should succeed");
 }
 
+fn current_git_commit(repository: &Path) -> MemoryCommitId {
+    let output = Command::new("git")
+        .args(["-c", "core.hooksPath=/dev/null", "rev-parse", "HEAD"])
+        .current_dir(repository)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .output()
+        .expect("Git fixture command should start");
+    assert!(
+        output.status.success(),
+        "Git fixture command should succeed"
+    );
+    let object_id = std::str::from_utf8(&output.stdout)
+        .expect("fixture object ID should be UTF-8")
+        .trim();
+    assert_eq!(object_id.len(), 40, "fixture repository should use SHA-1");
+    let mut bytes = [0_u8; 20];
+    for (index, pair) in object_id.as_bytes().chunks_exact(2).enumerate() {
+        let pair = std::str::from_utf8(pair).expect("fixture object ID should be ASCII");
+        bytes[index] =
+            u8::from_str_radix(pair, 16).expect("fixture object ID should be hexadecimal");
+    }
+    MemoryCommitId::Sha1(bytes)
+}
+
 fn initialize_repository(repository: &Path) {
     fs::create_dir(repository).expect("repository directory should be created");
-    git(repository, &["init", "--quiet"]);
+    git(repository, &["init", "--quiet", "--object-format=sha1"]);
     git(repository, &["config", "user.name", "RepoWitness Test"]);
     git(
         repository,
@@ -210,10 +235,6 @@ fn active_occurrence_at(
         .expect("one indexed function occurrence should exist")
 }
 
-#[allow(
-    clippy::too_many_lines,
-    reason = "the fixture reconstructs one exact immutable citation from all persisted occurrence identity fields"
-)]
 fn import_exact_memory(database: &Path, repository: RepositoryIdentityDigest) {
     import_repeated_exact_memory(database, repository, 1);
 }
@@ -223,6 +244,93 @@ fn import_repeated_exact_memory(
     repository: RepositoryIdentityDigest,
     evidence_count: usize,
 ) {
+    import_repeated_exact_memory_with_introduction(database, repository, evidence_count, None);
+}
+
+fn import_exact_commit_memory(
+    database: &Path,
+    repository: RepositoryIdentityDigest,
+    introduction: MemoryCommitId,
+) {
+    import_repeated_exact_memory_with_introduction(database, repository, 1, Some(introduction));
+}
+
+fn import_repeated_exact_memory_with_introduction(
+    database: &Path,
+    repository: RepositoryIdentityDigest,
+    evidence_count: usize,
+    introduction: Option<MemoryCommitId>,
+) {
+    let (snapshot, evidence) = exact_memory_evidence(database, repository);
+    let (validity, observation_source) = match introduction {
+        Some(commit) => (
+            MemoryValidity::try_commits(vec![commit], Vec::new())
+                .expect("commit validity should be valid"),
+            MemoryObservationSource::Git(commit),
+        ),
+        None => (
+            MemoryValidity::worktree(snapshot),
+            MemoryObservationSource::Worktree(snapshot),
+        ),
+    };
+    let record = MemoryRecord::try_new(
+        MemoryRecordHeader::try_new(
+            MemoryRecordId::new([0x91; 16]),
+            MemoryDisplayRevision::try_new(1).expect("display revision should be valid"),
+            Vec::new(),
+        )
+        .expect("record header should be valid"),
+        MemoryClaim::new(
+            MemoryKind::Decision,
+            MemoryTitle::try_new("Keep exact evidence current".to_owned())
+                .expect("title should be valid"),
+            MemoryBody::try_new("The exact indexed declaration remains supported.".to_owned())
+                .expect("body should be valid"),
+        ),
+        MemoryScope::new(
+            repository,
+            MemoryEvidenceIndex::try_new(0).expect("evidence index should be valid"),
+        ),
+        MemoryProvenance::new(
+            MemoryProvenanceOrigin::Human,
+            MemoryActorKind::LocalAsserted,
+            MemoryActorId::try_new("maintainer".to_owned()).expect("actor should be valid"),
+        ),
+        MemoryAssurance::LocallyApproved,
+        MemoryLifecycle::Active,
+        validity,
+        (0..evidence_count)
+            .map(|_| MemoryEvidence::RustSymbol(evidence.clone()))
+            .collect(),
+        Vec::new(),
+        false,
+    )
+    .expect("exact memory record should be valid");
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let (store, _) =
+        OwnedSqliteIndex::start(database, 123, deadline()).expect("store should reopen");
+    store
+        .import_memory_version(
+            repository,
+            record,
+            MemoryPresentationDigest::new([0x92; 32]),
+            observation_source,
+            MemoryAuditActorId::try_new("trusted-test-actor".to_owned())
+                .expect("audit actor should be valid"),
+            MemoryRecordedAtUnixMillis::try_new(1_722_000_000_001)
+                .expect("timestamp should be valid"),
+            MemoryImportApproval::LocallyApproved,
+            Arc::clone(&cancelled),
+            deadline(),
+        )
+        .expect("exact memory should import");
+    store.shutdown(deadline()).expect("store should shut down");
+}
+
+fn exact_memory_evidence(
+    database: &Path,
+    repository: RepositoryIdentityDigest,
+) -> (SourceSnapshotDigest, RustSymbolMemoryEvidence) {
     let occurrence = active_occurrence(database, repository);
     assert_eq!(occurrence.kind, "function");
     let snapshot = SourceSnapshotDigest::try_from_slice(&occurrence.snapshot)
@@ -270,62 +378,11 @@ fn import_repeated_exact_memory(
         ),
     )
     .expect("exact evidence should be valid");
-    let record = MemoryRecord::try_new(
-        MemoryRecordHeader::try_new(
-            MemoryRecordId::new([0x91; 16]),
-            MemoryDisplayRevision::try_new(1).expect("display revision should be valid"),
-            Vec::new(),
-        )
-        .expect("record header should be valid"),
-        MemoryClaim::new(
-            MemoryKind::Decision,
-            MemoryTitle::try_new("Keep exact evidence current".to_owned())
-                .expect("title should be valid"),
-            MemoryBody::try_new("The exact indexed declaration remains supported.".to_owned())
-                .expect("body should be valid"),
-        ),
-        MemoryScope::new(
-            repository,
-            MemoryEvidenceIndex::try_new(0).expect("evidence index should be valid"),
-        ),
-        MemoryProvenance::new(
-            MemoryProvenanceOrigin::Human,
-            MemoryActorKind::LocalAsserted,
-            MemoryActorId::try_new("maintainer".to_owned()).expect("actor should be valid"),
-        ),
-        MemoryAssurance::LocallyApproved,
-        MemoryLifecycle::Active,
-        MemoryValidity::worktree(snapshot),
-        (0..evidence_count)
-            .map(|_| MemoryEvidence::RustSymbol(evidence.clone()))
-            .collect(),
-        Vec::new(),
-        false,
-    )
-    .expect("exact memory record should be valid");
-    let cancelled = Arc::new(AtomicBool::new(false));
-    let (store, _) =
-        OwnedSqliteIndex::start(database, 123, deadline()).expect("store should reopen");
-    store
-        .import_memory_version(
-            repository,
-            record,
-            MemoryPresentationDigest::new([0x92; 32]),
-            MemoryObservationSource::Worktree(snapshot),
-            MemoryAuditActorId::try_new("trusted-test-actor".to_owned())
-                .expect("audit actor should be valid"),
-            MemoryRecordedAtUnixMillis::try_new(1_722_000_000_001)
-                .expect("timestamp should be valid"),
-            MemoryImportApproval::LocallyApproved,
-            Arc::clone(&cancelled),
-            deadline(),
-        )
-        .expect("exact memory should import");
-    store.shutdown(deadline()).expect("store should shut down");
+    (snapshot, evidence)
 }
 
 #[test]
-fn facade_revalidates_git_validity_and_atomically_activates_projection() {
+fn missing_git_object_history_is_indeterminate_and_never_auto_links() {
     let fixture = TempDirectory::new();
     let repository = fixture.repository();
     let database = fixture.database();
@@ -390,45 +447,7 @@ fn facade_revalidates_git_validity_and_atomically_activates_projection() {
     );
 }
 
-fn exact_projection_fixture() -> (
-    TempDirectory,
-    PathBuf,
-    PathBuf,
-    RepositoryIdentityDigest,
-    String,
-) {
-    let fixture = TempDirectory::new();
-    let repository = fixture.repository();
-    let database = fixture.database();
-    initialize_repository(&repository);
-    let repository_identity = RepositoryIdentityDigest::new([0xA7; 32]);
-    let identity = RepositoryIdentityTextV1::encode(repository_identity);
-    index_local_repository(
-        LocalIndexRequest::new(&repository, &database, identity.as_str(), 123),
-        Arc::new(AtomicBool::new(false)),
-    )
-    .expect("source index should activate");
-    import_exact_memory(&database, repository_identity);
-
-    let report = revalidate_local_memory(
-        LocalMemoryRevalidationRequest::new(&repository, &database, identity.as_str(), 123),
-        Arc::new(AtomicBool::new(false)),
-    )
-    .expect("exact memory projection should activate");
-
-    assert_eq!(report.projected_records(), 1);
-    assert_eq!(report.skipped_records(), 0);
-    assert_eq!(report.unresolved_records(), 0);
-    assert_eq!(report.git_queries(), 2);
-    assert!(report.head_available());
-    (
-        fixture,
-        repository,
-        database,
-        repository_identity,
-        identity.as_str().to_owned(),
-    )
-}
+include!("tests/projection_fixtures.rs");
 
 #[test]
 fn exact_indexed_rust_evidence_becomes_current_end_to_end() {

@@ -196,8 +196,9 @@ sanitized Git and worktree receipts before and after contained source reads,
 and rejects a changed index, status, or `HEAD` instead of publishing a mixed
 snapshot. SHA-1, SHA-256, unborn/detached `HEAD`, linked worktrees,
 non-UTF-8/case-colliding paths, hostile configuration, and concurrent-mutation
-fixtures pass. Sparse worktrees and gitlinks remain explicit fail-closed Phase
-0 scope.
+fixtures pass. An actual nested-submodule fixture and concurrent sparse/gitlink
+mode-transition fixtures also pass. Sparse worktrees and gitlinks remain
+explicit fail-closed Phase 0 scope.
 
 ## Validation matrix
 
