@@ -28,7 +28,9 @@ pub use self::backup::{BackupLimits, BackupOutcome, create_online_backup};
 pub use self::reader::{
     OwnedSqliteReader, SearchHit, SearchLimits, SearchResults, SymbolLookupResults,
 };
-use self::schema::{APPLICATION_ID, MIGRATION_1, MIGRATION_1_NAME, SCHEMA_VERSION};
+use self::schema::{
+    APPLICATION_ID, MIGRATION_1, MIGRATION_1_NAME, MIGRATION_2, MIGRATION_2_NAME, SCHEMA_VERSION,
+};
 pub(crate) use self::worker::SqliteMutationLease;
 pub use self::worker::{IndexStoreStartup, OwnedSqliteIndex};
 pub use self::writer::{
@@ -642,8 +644,11 @@ fn validate_migration_ledger_through(
     Ok(())
 }
 
-const fn migrations() -> [(i64, &'static str, &'static str); 1] {
-    [(1, MIGRATION_1_NAME, MIGRATION_1)]
+const fn migrations() -> [(i64, &'static str, &'static str); 2] {
+    [
+        (1, MIGRATION_1_NAME, MIGRATION_1),
+        (2, MIGRATION_2_NAME, MIGRATION_2),
+    ]
 }
 
 fn migration_checksum(sql: &str) -> [u8; 32] {

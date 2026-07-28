@@ -380,5 +380,5 @@ fn reopening_is_idempotent_and_preserves_the_original_ledger() {
         )
         .expect("ledger should remain readable");
 
-    assert_eq!(applied_at, (1, 123, 123));
+    assert_eq!(applied_at, (2, 123, 123));
 }

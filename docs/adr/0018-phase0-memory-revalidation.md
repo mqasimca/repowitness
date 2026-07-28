@@ -252,8 +252,10 @@ That converts incomplete history into false certainty and violates ADR-0005.
 - Completed 2026-07-28: add bounded approve, reject, and manual-link review
   commands, immutable SQLite audit, deterministic conflict aggregation, and
   reviewed projection evidence under proposed ADR-0021.
-- Finish the residual obsolete-snapshot, competing-target, split/merge,
-  rewritten-history, and design-partner evaluation matrix.
+- Completed 2026-07-28: pass obsolete-snapshot, competing-target,
+  split/merge-abstention, rewritten/missing-history, and projection-publication
+  fault cases.
+- Complete the comparative design-partner evaluation before ratification.
 
 ## Supersession
 

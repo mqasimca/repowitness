@@ -59,16 +59,16 @@ The output is a design-partner alpha, not a general public beta.
 |---|---|---|
 | Rust workspace and engineering baseline | Implemented | Six packages, enforced dependency policy, pinned Rust/MSRV and dependencies, formatting, Clippy, docs, lockfile, license/advisory/source checks, Make targets, and required Ubuntu PR CI |
 | Repository and source identity | Implemented | Sanitized bounded Git discovery, canonical Git/worktree receipts, exact byte paths, capability-contained no-follow reads, final stability fence, and fail-closed sparse/gitlink scope |
-| Rust, Go, TypeScript, TSX, and Python analysis and incremental reuse | Implemented | Bounded language-specific Tree-sitter facts, one canonical mixed snapshot, five independent artifact identities and payload digests, exact per-language/dialect reuse validation, and clean-versus-incremental equivalence |
-| SQLite publication and recovery | Implemented | One clean baseline-version-1 migration and exact ledger row, explicit non-mutating rejection of retired development versions 1–8, persisted exact artifact language, Rust occurrence fingerprints, reviewed correspondence, owned connections, immutable source and memory generations, atomic activation, FTS5 projection switching, startup recovery, checkpoints, online backup, mutation lease, and database file-identity guards |
+| Rust, Go, TypeScript, TSX, and Python analysis and incremental reuse | Implemented | Bounded language-specific Tree-sitter facts, one canonical mixed snapshot, five independent artifact identities and payload digests, a checksum-pinned reviewed TypeScript/TSX grammar fix, exact per-language/dialect reuse validation, and clean-versus-incremental equivalence |
+| SQLite publication and recovery | Implemented | Immutable baseline-version-1 and compatible parser-diagnostic-version-2 migrations with exact ledger rows and populated upgrade coverage, explicit non-mutating rejection of retired development versions 1–8, persisted exact artifact language, Rust occurrence fingerprints, reviewed correspondence, owned connections, immutable source and memory generations, atomic activation, FTS5 projection switching, startup recovery, checkpoints, online backup, mutation lease, and database file-identity guards |
 | Evidence retrieval | Implemented | Bounded literal `code_search`, exact digest-verified `symbol_get`, persisted language, language-specific producer attribution, explicit limitations, match counts, and coverage |
 | CLI and local stdio MCP | Implemented | CLI commands cover indexing, exact retrieval, canonical memory write/approval/history/review, memory revalidation/recall, context compilation, diagnostics, and path inspection; MCP exposes five read-only tools by default and adds fixed-actor `memory_manage` only under explicit startup authorization |
 | Engineering-memory format | Implemented | Accepted version-1 pure domain values, strict hostile-YAML parser, bounded canonicalizer and deterministic writer, exact golden vectors, independent mutation/property oracle, release resource probes, and a coverage-guided fuzz target |
 | Engineering-memory import and persistence | Implemented | Capability-contained worktree admission and canonical writes, scope-checked import, observation-only bounded Git history, separately trusted approvals, immutable SQLite journal rows, and rebuildable current projections pass rollback, reopen, corruption, idempotency, and online-backup tests |
 | Correspondence and memory revalidation | Implemented | Versioned Rust fingerprints, exact/same-path-rename/exact-Git-move correspondence, explicit ambiguity and staleness, Git-DAG/worktree validity, head conflicts, idempotent approve/reject/manual-link audit events, deterministic conflict aggregation, and atomic projection activation are implemented |
-| Context compiler and read tools | Implemented | Deterministic reciprocal-rank fusion, conservative byte-budget admission, exact source expansion, current-memory exclusion rules, `context_build`, `memory_recall`, and transactionally pinned diagnostics are shared by CLI and MCP with explicit coverage, omissions, limits, cancellation, and source-only fallback |
+| Context compiler and read tools | Implemented | Deterministic reciprocal-rank fusion, conservative byte-budget admission, exact source expansion, current-memory exclusion rules, `context_build`, `memory_recall`, and transactionally pinned raw/recognized parser diagnostics are shared by CLI and MCP with explicit coverage, omissions, limits, cancellation, and source-only fallback |
 | Memory management | Implemented | CLI `memory-manage` writes canonical records, approves exact current revisions, records exact manual review, and imports reachable Git history as observations only; opt-in MCP shares the use case without accepting host paths, actor, repository identity, or resource policy |
-| Phase 0 evaluation and release gate | Partial | The public pinned product-loop benchmark passes all proposed correctness and numeric ceilings in a dirty development worktree; crash/recovery, adversarial, and four requested neighboring-repository runs pass, while explicit ADR/budget ratification, residual release-matrix cases, clean-revision attestation, and a comparative design-partner outcome remain |
+| Phase 0 evaluation and release gate | Partial | The public pinned product-loop benchmark passes all proposed correctness and numeric ceilings in a dirty development worktree; crash/recovery, the complete adversarial release matrix, a controlled lexical/naive-memory comparison, and three repeated isolated Codex utility runs pass, while explicit ADR/budget ratification, clean-revision attestation, and a real design-partner outcome remain |
 
 ## Phase 1 — trustworthy local core
 
@@ -138,23 +138,35 @@ Prioritize these independently using measured demand:
    [ADR-0018](adr/0018-phase0-memory-revalidation.md),
    [ADR-0019](adr/0019-phase0-context-compilation-and-diagnostics.md), and
    [ADR-0021](adr/0021-phase0-memory-management-and-review.md). Accept, revise,
-   or reject them explicitly. The current database contract is the single
-   baseline-version-1 migration accepted by
-   [ADR-0022](adr/0022-squash-pre-release-sqlite-schema.md).
-2. Finish the residual adversarial matrix for rewritten or missing Git
-   history, obsolete review snapshots, competing reviewed targets,
-   split/merge abstention, and fault injection at every canonical-file and
-   SQLite publication stage.
+   or reject them explicitly. The current database contract is the immutable
+   baseline accepted by
+   [ADR-0022](adr/0022-squash-pre-release-sqlite-schema.md) plus the compatible
+   version-2 migration accepted by
+   [ADR-0024](adr/0024-persist-parser-diagnostics-migration.md).
+2. Completed 2026-07-28: the adversarial release matrix covers rewritten,
+   pruned, and missing-object Git history; obsolete review snapshots;
+   competing reviewed targets; explicit split/merge abstention; and
+   deterministic failure at every canonical-file and SQLite publication stage,
+   including transaction commit.
 3. Rerun the complete pinned
    [product-loop benchmark](research/phase0-product-benchmark-2026-07-28.md)
    from a clean exact RepoWitness revision, then explicitly ratify or revise
    correctness, latency, RSS, database/WAL, and result-size budgets.
-4. Compare RepoWitness with the declared lexical/source-only and
-   naive-memory-text baselines on one real design-partner task, and record
-   whether evidence or recalled failure changes a useful engineering decision.
-5. Keep production reconciliation separate from watcher hints, finish the
-   active-`gix` cancellation/performance and Windows path/containment spikes,
-   and retain fail-closed sparse and recursive-submodule behavior until their
-   coverage contracts are accepted.
+4. Completed 2026-07-28 for the controlled public fixture: RepoWitness,
+   lexical/source-only, and naive-memory-text now run against one pinned
+   before/after oracle. Three repeated isolated Codex paired runs make both
+   correct decisions, use current memory, ignore stale memory, and rate the
+   packet useful. Repeat the comparison on one real design-partner task and
+   record whether evidence or recalled failure changes a useful engineering
+   decision.
+5. Completed 2026-07-28 for Phase 0 Git discovery: a synthetic 50,000-path
+   comparison found `gix` faster, but its index-open path does not provide the
+   caller-owned active cancellation/deadline boundary. Retain sanitized Git in
+   production and exact-pinned `gix` as a development oracle. Keep production
+   reconciliation separate from watcher hints, finish the Windows
+   path/containment spikes, and retain fail-closed sparse and
+   recursive-submodule behavior until their coverage contracts are accepted.
+   Actual nested-submodule and concurrent sparse/gitlink-mode regressions now
+   enforce that boundary.
 
 See the dated [architecture research](research/architecture-2026-07-22.md) for the spike definitions and [`plan.md`](../plan.md) for the broader product research record.

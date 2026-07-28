@@ -1,10 +1,10 @@
-# Phase 0 SQLite baseline schema version 1
+# Phase 0 SQLite baseline migration version 1
 
-- Status: Implemented and current
+- Status: Implemented and supported upgrade source
 - Governing decisions:
   [ADR-0012](../adr/0012-phase0-sqlite-schema-and-ownership.md) and
   [ADR-0022](../adr/0022-squash-pre-release-sqlite-schema.md)
-- Compatibility: fresh databases and exact baseline-version-1 databases only
+- Compatibility: fresh migration chain and exact baseline-version-1 databases
 
 ## Identity
 
@@ -62,20 +62,22 @@ Most index data can be rebuilt. Local approvals and manual review events may not
 be reconstructable, so an operator must preserve or export them using the
 matching old build before rebuilding.
 
-## Migration policy
+## Forward compatibility
 
-The migration and checksum machinery remains active. Once maintainers declare a
-persistence-compatibility boundary, the next compatible schema change is
-version 2 and must include a forward migration, backup/recovery analysis, and
-fixtures from every then-supported version. A further pre-release squash
-requires another explicit superseding ADR.
+The current adapter preserves this migration byte for byte, then applies
+[migration 2](phase0-sqlite-current-v2.md) to persist recognized parser
+limitations. Exact baseline-version-1 databases upgrade transactionally without
+rebuilding or deleting source, memory, approval, or review state.
+
+Future compatible changes use new monotonically numbered migrations. A further
+pre-release squash requires an explicit superseding ADR.
 
 ## Validation
 
 Automated validation covers:
 
-- exact application ID, version, migration name, checksum, timestamp, and one-row
-  ledger;
+- exact application ID, migration name, checksum, timestamp, and version-1
+  ledger row;
 - complete table, index, trigger, FTS5, and seed-state introspection;
 - `integrity_check` and `foreign_key_check`;
 - semantic immutability and lifecycle triggers;
@@ -85,4 +87,4 @@ Automated validation covers:
 - exact rejection and byte preservation of retired development versions 1
   through 8;
 - clean-versus-incremental indexing, retrieval, memory revalidation, CLI, MCP,
-  and real-repository behavior.
+  and public-corpus behavior.

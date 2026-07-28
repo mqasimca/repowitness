@@ -187,7 +187,7 @@ pub struct McpContextSourceItem {
     pub fact_ordinal: u64,
     /// Syntax producer-manifest SHA-256.
     pub producer_manifest_sha256: String,
-    /// Persisted source language.
+    /// Persisted source language: `rust`, `go`, `typescript`, `tsx`, or `python`.
     pub language: String,
     /// Language-specific declaration kind.
     pub declaration_kind: String,
@@ -199,10 +199,10 @@ pub struct McpContextSourceItem {
     pub name_span: McpSpan,
     /// Exact complete declaration span.
     pub declaration_span: McpSpan,
-    /// Safe source representation; currently `lowercase_hex`.
+    /// Exact declaration representation: `utf8` or `lowercase_hex`.
     pub declaration_encoding: String,
-    /// Exact declaration bytes encoded as lowercase hexadecimal.
-    pub declaration_hex: String,
+    /// Exact untrusted declaration bytes in the declared representation.
+    pub declaration: String,
 }
 
 /// One admitted current engineering-memory record.
@@ -231,7 +231,7 @@ pub enum McpContextItem {
     Source(McpContextSourceItem),
 }
 
-/// Version-1 structured response for `context_build`.
+/// Version-2 structured response for `context_build`.
 #[derive(Clone, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ContextBuildOutput {

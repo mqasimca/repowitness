@@ -17,6 +17,7 @@ impl WriterState {
             fixed_usize(analysis.facts().len())?,
             i64::from(analysis.visited_nodes()),
             i64::from(analysis.syntax_error_nodes()),
+            i64::from(analysis.known_parser_limitation_nodes()),
             file.language().as_str().to_owned(),
         );
         let actual: PersistedArtifactMetadata = self
@@ -25,7 +26,7 @@ impl WriterState {
                 "SELECT source_content_digest, producer_manifest_digest,
                         configuration_digest, analysis_schema_digest,
                         canonicalization_version, fact_count, visited_nodes, syntax_error_nodes,
-                        language, payload_digest
+                        known_parser_limitation_nodes, language, payload_digest
                  FROM analysis_artifacts
                  WHERE artifact_digest = ?1 AND lifecycle_state = 'complete'",
                 [file.artifact_digest().as_bytes().as_slice()],
@@ -40,7 +41,8 @@ impl WriterState {
                         row.get(6)?,
                         row.get(7)?,
                         row.get(8)?,
-                        row.get::<_, Option<Vec<u8>>>(9)?,
+                        row.get(9)?,
+                        row.get::<_, Option<Vec<u8>>>(10)?,
                     ))
                 },
             )
@@ -54,11 +56,12 @@ impl WriterState {
             || actual.6 != expected.6
             || actual.7 != expected.7
             || actual.8 != expected.8
+            || actual.9 != expected.9
         {
             return Err(SqliteStoreError::IntegrityCheckFailed);
         }
         self.verify_artifact_facts(file, control)?;
-        match actual.9 {
+        match actual.10 {
             Some(payload) if payload.as_slice() == expected_payload.as_bytes() => {}
             Some(_) => return Err(SqliteStoreError::IntegrityCheckFailed),
             None => {

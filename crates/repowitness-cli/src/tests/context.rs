@@ -29,7 +29,7 @@ impl RepositoryContextBuilder for FailingContextBuilder {
 
 fn context_output() -> ContextBuildOutput {
     ContextBuildOutput {
-        schema_version: 1,
+        schema_version: 2,
         context_profile: 1,
         reciprocal_rank_k: 60,
         budget_estimator: "utf8_bytes_upper_bound_v1".to_owned(),
@@ -78,8 +78,8 @@ fn context_output() -> ContextBuildOutput {
             qualified_name: "crate::Widget".to_owned(),
             name_span: McpSpan { start: 0, end: 6 },
             declaration_span: McpSpan { start: 0, end: 6 },
-            declaration_encoding: "lowercase_hex".to_owned(),
-            declaration_hex: "576964676574".to_owned(),
+            declaration_encoding: "utf8".to_owned(),
+            declaration: "Widget".to_owned(),
         })],
     }
 }
@@ -115,8 +115,58 @@ fn context_command_passes_explicit_bounds_and_emits_safe_evidence() {
     assert!(output.contains("operation=context-build"));
     assert!(output.contains("budget_estimator=utf8_bytes_upper_bound_v1"));
     assert!(output.contains("context_item_0_name_hex=576964676574"));
-    assert!(output.contains("context_item_0_declaration_hex=576964676574"));
+    assert!(output.contains("context_item_0_declaration_encoding=utf8"));
+    assert!(output.contains("context_item_0_declaration_data_json=\"Widget\""));
     assert!(!output.contains("crate::Widget"));
+}
+
+#[test]
+fn source_bytes_prefer_display_safe_utf8_and_fall_back_to_exact_hex() {
+    let utf8 = encoded_source_bytes("fn café() { println!(\"👋\"); }\n".as_bytes());
+    assert_eq!(utf8.encoding, "utf8");
+    assert_eq!(utf8.data, "fn café() { println!(\"👋\"); }\n");
+
+    let binary = encoded_source_bytes(&[0xFF, 0x00, 0x41]);
+    assert_eq!(binary.encoding, "lowercase_hex");
+    assert_eq!(binary.data, "ff0041");
+
+    for unsafe_text in [
+        "line\u{0001}control",
+        "delete\u{007f}control",
+        "next\u{0085}line",
+        "line\u{2028}separator",
+        "paragraph\u{2029}separator",
+        "bidi\u{202e}override",
+        "isolate\u{2066}text\u{2069}",
+        "zero\u{200b}width",
+    ] {
+        let encoded = encoded_source_bytes(unsafe_text.as_bytes());
+        assert_eq!(encoded.encoding, "lowercase_hex");
+        assert_eq!(encoded.data, hex(unsafe_text.as_bytes()));
+    }
+}
+
+#[test]
+fn encoded_source_json_expands_by_at_most_two_bytes_per_input_byte() {
+    let cases = [
+        b"".as_slice(),
+        b"\n\r\t\"\\",
+        &[0x00, 0x01, 0x7f, 0x80, 0xff],
+        "safe café 👋".as_bytes(),
+        "unsafe\u{2028}\u{202e}".as_bytes(),
+    ];
+    for bytes in cases {
+        let encoded = encoded_source_bytes(bytes);
+        assert!(encoded.data.len() <= bytes.len().saturating_mul(2));
+        let json = serde_json::to_vec(&encoded.data).expect("source representation serializes");
+        assert!(json.len() <= bytes.len().saturating_mul(2).saturating_add(2));
+    }
+
+    for byte in 0_u8..=u8::MAX {
+        let encoded = encoded_source_bytes(&[byte]);
+        let json = serde_json::to_vec(&encoded.data).expect("single byte serializes");
+        assert!(json.len() <= 4, "byte {byte:#04x} exceeded the bound");
+    }
 }
 
 #[test]

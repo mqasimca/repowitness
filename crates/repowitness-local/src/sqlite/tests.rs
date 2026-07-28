@@ -11,9 +11,9 @@ use std::{
 use rusqlite::{Connection, OpenFlags, params};
 
 use super::{
-    APPLICATION_ID, MIGRATION_1, MIGRATION_1_NAME, SCHEMA_VERSION, SqliteStoreError,
-    database_file_identity, migration_checksum, migrations, open_index_writer,
-    open_index_writer_with_identity_and_hook,
+    APPLICATION_ID, MIGRATION_1, MIGRATION_1_NAME, MIGRATION_2, MIGRATION_2_NAME, SCHEMA_VERSION,
+    SqliteStoreError, apply_migration, database_file_identity, migration_checksum, migrations,
+    open_index_writer, open_index_writer_with_identity_and_hook,
 };
 
 static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
@@ -113,12 +113,12 @@ fn insert_active_generation_fixture(connection: &Connection) {
                     producer_manifest_digest, configuration_digest,
                     analysis_schema_digest, canonicalization_version,
                     fact_count, visited_nodes, syntax_error_nodes,
-                    payload_digest, language
+                    known_parser_limitation_nodes, payload_digest, language
                  ) VALUES (
                     X'5555555555555555555555555555555555555555555555555555555555555555',
                     'staging',
                     X'4444444444444444444444444444444444444444444444444444444444444444',
-                    zeroblob(32), zeroblob(32), zeroblob(32), 2, 1, 1, 0,
+                    zeroblob(32), zeroblob(32), zeroblob(32), 2, 1, 1, 0, 0,
                     zeroblob(32), 'rust'
                  );
                  INSERT INTO artifact_facts(
@@ -204,3 +204,4 @@ fn insert_minimal_local_approval(connection: &Connection) {
 include!("tests/schema_projection.rs");
 include!("tests/memory_startup.rs");
 include!("tests/baseline.rs");
+include!("tests/migration_2.rs");

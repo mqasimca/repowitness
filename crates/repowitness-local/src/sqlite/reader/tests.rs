@@ -14,8 +14,9 @@ use std::{
 use repowitness_analysis::RustSymbolKind;
 use repowitness_application::{
     CodeSearchLimits, CodeSearchQuery, CodeSearchRequest, ImmutableRustSource, PreparedRustIndex,
-    RustArtifactIdentity, RustIndexLimits, RustSourceSnapshotIdentity, SourceLanguage,
-    SymbolGetSelector, code_search, hash_rust_source_snapshot, prepare_rust_index,
+    RepositoryDiagnosticsRequest, RustArtifactIdentity, RustIndexLimits,
+    RustSourceSnapshotIdentity, SourceLanguage, SymbolGetSelector, code_search,
+    hash_rust_source_snapshot, prepare_rust_index, repository_diagnostics,
 };
 use repowitness_domain::{
     AnalysisSchemaDigest, ConfigurationDigest, GitStateDigest, ProducerManifestDigest,
@@ -653,3 +654,5 @@ fn hostile_syntax_is_literal_and_query_result_and_control_bounds_fail_closed() {
     reader.shutdown(deadline()).expect("reader should stop");
     writer.shutdown(deadline()).expect("writer should stop");
 }
+
+include!("tests/artifact_parser_diagnostics.rs");

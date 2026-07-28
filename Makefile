@@ -19,6 +19,7 @@ CARGO_DENY_VERSION ?= 0.19.4
 	fmt \
 	fmt-check \
 	fuzz-check \
+	grammars \
 	help \
 	rustdoc \
 	test \
@@ -46,6 +47,7 @@ help:
 		'  make deny                      Check advisories, licenses, bans, and sources' \
 		'  make docs                      Check Markdown files and local links' \
 		'  make deps                      Check workspace dependency directions' \
+		'  make grammars                  Check vendored grammar integrity and regeneration' \
 		'  make benchmarks                Check benchmark manifests' \
 		'  make diff-check                Check the Git diff for whitespace errors' \
 		'  make ci                        Run the required pull-request checks' \
@@ -110,12 +112,17 @@ docs:
 deps:
 	./scripts/check-workspace-deps
 
+grammars:
+	./scripts/check-vendored-grammars
+	./scripts/check-vendored-grammar-regeneration
+
 benchmarks:
 	./scripts/check-benchmarks
+	./scripts/validate-codex-evaluation --self-test
 
 diff-check:
 	git diff --check
 
-ci: fmt-check fuzz-check check clippy test test-all-features test-doc rustdoc deny deps benchmarks docs diff-check
+ci: fmt-check fuzz-check check clippy test test-all-features test-doc rustdoc deny deps grammars benchmarks docs diff-check
 
 all: ci

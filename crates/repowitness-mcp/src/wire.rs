@@ -59,7 +59,10 @@ pub(crate) const MAX_MCP_CONTEXT_OUTPUT_BYTES: usize = 24 * 1024 * 1024;
 pub(crate) const MAX_MCP_DIAGNOSTICS_OUTPUT_BYTES: usize = 256 * 1024;
 pub(crate) const MAX_MCP_MEMORY_RECALL_OUTPUT_BYTES: usize = 20 * 1024 * 1024;
 pub(crate) const MAX_MCP_MEMORY_MANAGE_OUTPUT_BYTES: usize = 64 * 1024;
-pub(crate) const MAX_MCP_SYMBOL_OUTPUT_BYTES: usize = 40 * 1024 * 1024;
+// The MCP SDK includes both structured JSON and a compatibility text copy.
+// A bounded 10 MiB application payload can therefore require almost 60 MiB
+// after exact source representation and nested JSON escaping.
+pub(crate) const MAX_MCP_SYMBOL_OUTPUT_BYTES: usize = 64 * 1024 * 1024;
 
 /// Version-1 wire input for `code_search`.
 #[derive(Deserialize, JsonSchema)]
@@ -406,7 +409,7 @@ pub struct McpSearchMatch {
     pub producer_manifest_sha256: String,
     /// Evidence strength; currently `syntax`.
     pub evidence_tier: String,
-    /// Persisted source language: `rust`, `go`, `typescript`, or `tsx`.
+    /// Persisted source language: `rust`, `go`, `typescript`, `tsx`, or `python`.
     pub language: String,
     /// Language-specific declaration kind.
     pub kind: String,
@@ -470,7 +473,7 @@ pub struct McpSymbol {
     pub producer_manifest_sha256: String,
     /// Evidence strength; currently `syntax`.
     pub evidence_tier: String,
-    /// Persisted source language: `rust`, `go`, `typescript`, or `tsx`.
+    /// Persisted source language: `rust`, `go`, `typescript`, `tsx`, or `python`.
     pub language: String,
     /// Language-specific declaration kind.
     pub kind: String,
@@ -482,13 +485,13 @@ pub struct McpSymbol {
     pub name_span: McpSpan,
     /// Exact complete declaration byte span.
     pub declaration_span: McpSpan,
-    /// Safe source-byte representation.
+    /// Exact declaration representation: `utf8` or `lowercase_hex`.
     pub declaration_encoding: String,
-    /// Exact declaration bytes encoded as lowercase hexadecimal.
-    pub declaration_hex: String,
+    /// Exact untrusted declaration bytes in the declared representation.
+    pub declaration: String,
 }
 
-/// Version-3 structured response for `symbol_get`.
+/// Version-4 structured response for `symbol_get`.
 #[derive(Clone, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SymbolGetOutput {

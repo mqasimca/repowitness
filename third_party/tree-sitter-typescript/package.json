@@ -1,0 +1,10 @@
+{
+  "name": "repowitness-tree-sitter-typescript-regeneration",
+  "version": "0.23.2",
+  "private": true,
+  "description": "Pinned inputs for regenerating the vendored TypeScript and TSX parsers",
+  "license": "MIT",
+  "devDependencies": {
+    "tree-sitter-javascript": "0.23.1"
+  }
+}

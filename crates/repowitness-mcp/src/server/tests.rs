@@ -23,6 +23,7 @@ struct FakeService {
     search_calls: AtomicUsize,
     context_calls: AtomicUsize,
     diagnostics_calls: AtomicUsize,
+    invalid_diagnostics: AtomicBool,
     manage_calls: AtomicUsize,
     memory_calls: AtomicUsize,
     symbol_calls: AtomicUsize,
@@ -141,6 +142,7 @@ impl FakeService {
             search_calls: AtomicUsize::new(0),
             context_calls: AtomicUsize::new(0),
             diagnostics_calls: AtomicUsize::new(0),
+            invalid_diagnostics: AtomicBool::new(false),
             manage_calls: AtomicUsize::new(0),
             memory_calls: AtomicUsize::new(0),
             symbol_calls: AtomicUsize::new(0),
@@ -196,7 +198,11 @@ impl RepositoryService for FakeService {
         _cancelled: Arc<AtomicBool>,
     ) -> Result<DiagnosticsOutput, RepositoryServiceError> {
         self.diagnostics_calls.fetch_add(1, Ordering::Relaxed);
-        Ok(diagnostics_output())
+        let mut output = diagnostics_output();
+        if self.invalid_diagnostics.load(Ordering::Relaxed) {
+            output.known_parser_limitation_nodes = output.syntax_error_nodes + 1;
+        }
+        Ok(output)
     }
 
     fn memory_recall(
@@ -275,6 +281,40 @@ fn tool_contract_is_exact_sorted_versioned_and_read_only() {
             .as_deref()
             .is_some_and(|description| description.contains("Python"))
     );
+    for tool_name in [
+        CODE_SEARCH_TOOL_NAME,
+        CONTEXT_BUILD_TOOL_NAME,
+        SYMBOL_GET_TOOL_NAME,
+    ] {
+        let tool = server
+            .tools
+            .iter()
+            .find(|tool| tool.name.as_ref() == tool_name)
+            .expect("language-bearing tool");
+        let schema = serde_json::to_string(
+            tool.output_schema
+                .as_ref()
+                .expect("language-bearing tool has an output schema"),
+        )
+        .expect("output schema serializes");
+        assert!(
+            schema.contains("`python`"),
+            "{tool_name} output schema must describe Python"
+        );
+    }
+    let diagnostics = server
+        .tools
+        .iter()
+        .find(|tool| tool.name.as_ref() == DIAGNOSTICS_TOOL_NAME)
+        .expect("diagnostics tool");
+    let diagnostics_properties = diagnostics
+        .output_schema
+        .as_ref()
+        .and_then(|schema| schema.get("properties"))
+        .and_then(serde_json::Value::as_object)
+        .expect("diagnostics output properties");
+    assert!(diagnostics_properties.contains_key("syntax_error_nodes"));
+    assert!(diagnostics_properties.contains_key("known_parser_limitation_nodes"));
     assert_eq!(
         server.get_info().protocol_version,
         ProtocolVersion::V_2025_11_25
@@ -363,7 +403,7 @@ async fn initialized_client_lists_and_calls_all_tools() {
             .as_ref()
             .and_then(|value| value.get("schema_version"))
             .and_then(serde_json::Value::as_u64),
-        Some(1)
+        Some(2)
     );
 
     let diagnostics = client
@@ -376,6 +416,22 @@ async fn initialized_client_lists_and_calls_all_tools() {
             .structured_content
             .as_ref()
             .and_then(|value| value.get("schema_version"))
+            .and_then(serde_json::Value::as_u64),
+        Some(2)
+    );
+    let diagnostics_content = diagnostics
+        .structured_content
+        .as_ref()
+        .expect("diagnostics structured content");
+    assert_eq!(
+        diagnostics_content
+            .get("syntax_error_nodes")
+            .and_then(serde_json::Value::as_u64),
+        Some(4)
+    );
+    assert_eq!(
+        diagnostics_content
+            .get("known_parser_limitation_nodes")
             .and_then(serde_json::Value::as_u64),
         Some(1)
     );

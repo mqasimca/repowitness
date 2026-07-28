@@ -412,8 +412,9 @@ sanitizer when run with a supported nightly toolchain.
 - Completed 2026-07-28: add the fixed high-confidence secret/promotion policy,
   contained canonical writes, explicit local approval, and default-deny
   write-capable MCP under proposed ADR-0021.
-- Finish the residual rewritten-history, obsolete-review, competing-target,
-  and publication-fault release matrix before ratification.
+- Completed 2026-07-28: pass the rewritten/missing-history, obsolete-review,
+  competing-target, split/merge, and canonical-file/SQLite publication-fault
+  release matrix.
 - Supersede this ADR for new record kinds or incompatible schema semantics;
   never edit version 1 in place after release.
 

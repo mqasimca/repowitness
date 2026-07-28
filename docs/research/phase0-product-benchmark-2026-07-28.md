@@ -34,15 +34,15 @@ the runner exits.
 
 | Field | Observed value |
 |---|---|
-| RepoWitness revision | `809d825fad7a2884698168ffc93e7200a9c63cc2`, dirty working tree |
-| Toolchain | pinned repository Rust toolchain, release profile, locked dependency graph |
+| RepoWitness revision | `f4f1c05e1081ca9e12797849267feabb7a2e5a08`, dirty working tree |
+| Toolchain | `rustc 1.97.1`, release profile, locked dependency graph |
 | Operating system | Darwin 25.5.0 arm64 |
 | CPU | Apple M4 Pro |
 | Logical CPUs | 14 |
 | Memory | 24,576 MiB |
 | Corpus filesystem | APFS |
 | Repeated warm queries | 5 |
-| Configuration digest | `5c7c3e4bf8e03ffd6680ccdfe3b2bfc464c535c2cc77cf430efffd8acbd5108a` |
+| Configuration digest | `254fb904ed557bfcbc404b1f6bf582457190327e70f0bc49a6a4a7bbae754680` |
 
 Because the user required that the implementation remain uncommitted, this is
 development evidence rather than a clean-revision release attestation.
@@ -51,13 +51,13 @@ development evidence rather than a clean-revision release attestation.
 
 | Metric | Result | Proposed ceiling |
 |---|---:|---:|
-| Cold full index | 451.160 ms | 10,000 ms |
-| Unchanged warm index | 293.652 ms | 10,000 ms |
-| Warm query p50 | 1.336 ms | — |
-| Warm query p95 | 1.481 ms | 250 ms |
-| Peak process RSS | 11,904 KiB | 256 MiB |
-| SQLite database | 544,768 bytes | — |
-| SQLite WAL after completion | 0 bytes | — |
+| Cold full index | 421.332 ms | 10,000 ms |
+| Unchanged warm index | 412.227 ms | 10,000 ms |
+| Warm query p50 | 2.180 ms | — |
+| Warm query p95 | 3.022 ms | 250 ms |
+| Peak process RSS | 12,192 KiB | 256 MiB |
+| SQLite database | 528,384 bytes | 4,194,304 bytes |
+| SQLite WAL after completion | 0 bytes | 0 bytes |
 | MCP material result | 3,620 bytes | 49,152 bytes |
 | Canonical memory record | 1,408 bytes | record-format bound |
 
@@ -90,6 +90,12 @@ disposable edit is a deterministic correctness scenario, not evidence that
 memory changed a real engineering decision relative to the lexical/source-only
 and naive-memory baselines.
 
+The runner now also performs a separate pinned historical before/after
+comparison. See the
+[controlled comparative evaluation](phase0-comparative-evaluation-2026-07-28.md).
+That evaluation closes the automated baseline-harness gap, but it does not
+claim to be a real design-partner outcome.
+
 ## Reproduction
 
 Use a clean external checkout at the pinned revision:
@@ -100,8 +106,10 @@ Use a clean external checkout at the pinned revision:
 
 The runner rejects a wrong revision or dirty source checkout, clones with
 `--no-local`, builds release binaries with the locked dependency graph,
-captures environment and peak RSS, enforces the proposed resource ceilings,
-and removes its disposable worktree and database on exit.
+captures environment and peak RSS, reads the bounded resource ceilings from
+the checked manifest, passes them explicitly into the product probe, reports
+the resolved values, and enforces them, including database and post-completion
+WAL size. It removes its disposable worktree and database on exit.
 
 For a release attestation, rerun from an exact clean RepoWitness revision after
 maintainer review, then explicitly ratify or revise the manifest and budgets.

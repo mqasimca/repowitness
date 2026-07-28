@@ -14,7 +14,6 @@ use crate::ProbeResult;
 const IO_DEADLINE: Duration = Duration::from_secs(10);
 const MAX_MESSAGE_BYTES: usize = 64 * 1024;
 const MAX_STDERR_BYTES: u64 = 16 * 1024;
-const MAX_MATERIAL_RESULT_BYTES: usize = 49_152;
 
 pub struct McpMetrics {
     pub tool_count: usize,
@@ -26,9 +25,10 @@ pub fn probe_default_surface(
     repository: &Path,
     database: &Path,
     repository_identity: &str,
+    max_material_result_bytes: usize,
 ) -> ProbeResult<McpMetrics> {
     let mut process = McpProcess::start(cli, repository, database, repository_identity)?;
-    let result = probe(&mut process);
+    let result = probe(&mut process, max_material_result_bytes);
     let stopped = process.stop();
     match (result, stopped) {
         (Ok(metrics), Ok(())) => Ok(metrics),
@@ -37,7 +37,7 @@ pub fn probe_default_surface(
     }
 }
 
-fn probe(process: &mut McpProcess) -> ProbeResult<McpMetrics> {
+fn probe(process: &mut McpProcess, max_material_result_bytes: usize) -> ProbeResult<McpMetrics> {
     let initialized = process.request(json!({
         "jsonrpc": "2.0",
         "id": 1,
@@ -99,7 +99,7 @@ fn probe(process: &mut McpProcess) -> ProbeResult<McpMetrics> {
     }
     let material = &searched["result"]["structuredContent"];
     let material_bytes = serde_json::to_vec(material)?.len();
-    if material_bytes > MAX_MATERIAL_RESULT_BYTES {
+    if material_bytes > max_material_result_bytes {
         return Err("MCP material result exceeded the proposed output budget".into());
     }
     let matches = material["matches"]

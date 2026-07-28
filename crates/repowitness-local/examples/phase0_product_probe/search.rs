@@ -9,7 +9,6 @@ use repowitness_local::{LocalCodeSearchRequest, search_local_index};
 
 use crate::ProbeResult;
 
-const MAX_WARM_QUERY_P95_US: u64 = 250_000;
 const SEARCH_RESULTS: u16 = 100;
 
 struct RequiredEvidence {
@@ -76,6 +75,7 @@ pub fn verify_manifest_evidence(
     database: &Path,
     repository_identity: &str,
     runs: usize,
+    max_warm_query_p95_us: u64,
     cancelled: &Arc<AtomicBool>,
 ) -> ProbeResult<SearchMetrics> {
     for required in &REQUIRED_EVIDENCE {
@@ -95,7 +95,7 @@ pub fn verify_manifest_evidence(
     warm.sort_unstable();
     let p50 = nearest_rank(&warm, 50)?;
     let p95 = nearest_rank(&warm, 95)?;
-    if p95 > MAX_WARM_QUERY_P95_US {
+    if p95 > max_warm_query_p95_us {
         return Err("warm query P95 exceeded the proposed budget".into());
     }
     Ok(SearchMetrics {

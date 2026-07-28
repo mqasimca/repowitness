@@ -196,9 +196,12 @@ changes.
 1. Completed: implement and property-test the pure `RepositoryPath` domain type without
    filesystem or Git dependencies.
 2. Completed: select the tagged textual boundary encoding and add golden DTO fixtures.
-3. Implemented for Phase 0 Linux: use sanitized Git in production and retain
-   `gix` as a differential oracle; active-work cancellation, performance, and
-   recursive-submodule comparisons remain.
+3. Completed for Phase 0 Linux: use sanitized Git in production and retain
+   `gix` as a differential oracle. The 50,000-path comparison found `gix`
+   faster, but its index-open path does not accept the caller-owned
+   cancellation/deadline state required for production. Actual nested
+   submodule and concurrent sparse/gitlink-mode fixtures enforce the current
+   fail-closed scope.
 4. Completed on Unix: capability-contained no-follow reads authorize the
    opened file and revalidate identity/content. Windows conversion and
    reparse-point containment remain before Windows production support.

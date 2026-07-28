@@ -15,7 +15,7 @@ use crate::{
 };
 
 /// Version of the stable Phase 0 repository-diagnostics contract.
-pub const REPOSITORY_DIAGNOSTICS_PROFILE_VERSION: u16 = 1;
+pub const REPOSITORY_DIAGNOSTICS_PROFILE_VERSION: u16 = 2;
 
 const SUPPORTED_LANGUAGES: [SourceLanguage; 5] = [
     SourceLanguage::Rust,
@@ -150,6 +150,36 @@ impl<P> RepositoryDiagnosticsMemoryProjection<P> {
     }
 }
 
+/// Aggregate parser diagnostics for one complete active source generation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RepositoryParserDiagnostics {
+    syntax_error_nodes: u64,
+    known_parser_limitation_nodes: u64,
+}
+
+impl RepositoryParserDiagnostics {
+    /// Constructs adapter output for application validation.
+    #[must_use]
+    pub const fn new(syntax_error_nodes: u64, known_parser_limitation_nodes: u64) -> Self {
+        Self {
+            syntax_error_nodes,
+            known_parser_limitation_nodes,
+        }
+    }
+
+    /// Returns the raw number of parser syntax-error nodes.
+    #[must_use]
+    pub const fn syntax_error_nodes(self) -> u64 {
+        self.syntax_error_nodes
+    }
+
+    /// Returns the non-subtractive subset caused by known parser limitations.
+    #[must_use]
+    pub const fn known_parser_limitation_nodes(self) -> u64 {
+        self.known_parser_limitation_nodes
+    }
+}
+
 /// Complete adapter result pinned by one read transaction.
 pub struct RepositoryDiagnosticsPortResult<G, P> {
     snapshot: SourceSnapshotDigest,
@@ -157,6 +187,7 @@ pub struct RepositoryDiagnosticsPortResult<G, P> {
     source_epoch: u64,
     producer_manifest: ProducerManifestDigest,
     index_coverage: RustIndexCoverage,
+    parser_diagnostics: RepositoryParserDiagnostics,
     memory_projection: Option<RepositoryDiagnosticsMemoryProjection<P>>,
 }
 
@@ -169,6 +200,7 @@ impl<G, P> RepositoryDiagnosticsPortResult<G, P> {
         source_epoch: u64,
         producer_manifest: ProducerManifestDigest,
         index_coverage: RustIndexCoverage,
+        parser_diagnostics: RepositoryParserDiagnostics,
         memory_projection: Option<RepositoryDiagnosticsMemoryProjection<P>>,
     ) -> Self {
         Self {
@@ -177,6 +209,7 @@ impl<G, P> RepositoryDiagnosticsPortResult<G, P> {
             source_epoch,
             producer_manifest,
             index_coverage,
+            parser_diagnostics,
             memory_projection,
         }
     }
@@ -241,6 +274,7 @@ pub struct RepositoryDiagnosticsResult<G, P> {
     source_epoch: u64,
     producer_manifest: ProducerManifestDigest,
     index_coverage: RustIndexCoverage,
+    parser_diagnostics: RepositoryParserDiagnostics,
     memory_projection: Option<RepositoryDiagnosticsMemoryProjection<P>>,
 }
 
@@ -273,6 +307,18 @@ impl<G, P> RepositoryDiagnosticsResult<G, P> {
     #[must_use]
     pub const fn index_coverage(&self) -> RustIndexCoverage {
         self.index_coverage
+    }
+
+    /// Returns the raw number of parser syntax-error nodes in the active index.
+    #[must_use]
+    pub const fn syntax_error_nodes(&self) -> u64 {
+        self.parser_diagnostics.syntax_error_nodes()
+    }
+
+    /// Returns the non-subtractive subset caused by known parser limitations.
+    #[must_use]
+    pub const fn known_parser_limitation_nodes(&self) -> u64 {
+        self.parser_diagnostics.known_parser_limitation_nodes()
     }
 
     /// Returns the matching complete memory projection when one exists.
@@ -315,6 +361,7 @@ impl<G: fmt::Debug, P: fmt::Debug> fmt::Debug for RepositoryDiagnosticsResult<G,
             .field("source_epoch", &self.source_epoch)
             .field("producer_manifest", &self.producer_manifest)
             .field("index_coverage", &self.index_coverage)
+            .field("parser_diagnostics", &self.parser_diagnostics)
             .field("memory_projection", &self.memory_projection)
             .finish()
     }
@@ -323,6 +370,8 @@ impl<G: fmt::Debug, P: fmt::Debug> fmt::Debug for RepositoryDiagnosticsResult<G,
 /// Stable invalid-adapter-output classification.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RepositoryDiagnosticsPortOutputError {
+    /// Known parser limitations are not a subset of raw syntax-error nodes.
+    InvalidParserDiagnostics,
     /// The memory projection does not match the active source epoch or snapshot.
     MemorySourceMismatch,
     /// Projection coverage or effective-state counts are inconsistent.
@@ -332,6 +381,9 @@ pub enum RepositoryDiagnosticsPortOutputError {
 impl fmt::Display for RepositoryDiagnosticsPortOutputError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
+            Self::InvalidParserDiagnostics => {
+                "repository-diagnostics adapter returned invalid parser diagnostics"
+            }
             Self::MemorySourceMismatch => {
                 "repository-diagnostics adapter returned mixed source and memory state"
             }
@@ -410,6 +462,7 @@ where
         source_epoch: result.source_epoch,
         producer_manifest: result.producer_manifest,
         index_coverage: result.index_coverage,
+        parser_diagnostics: result.parser_diagnostics,
         memory_projection: result.memory_projection,
     })
 }
@@ -417,6 +470,13 @@ where
 fn validate_port_result<G, P, E>(
     result: &RepositoryDiagnosticsPortResult<G, P>,
 ) -> Result<(), RepositoryDiagnosticsError<E>> {
+    if result.parser_diagnostics.known_parser_limitation_nodes()
+        > result.parser_diagnostics.syntax_error_nodes()
+    {
+        return Err(RepositoryDiagnosticsError::InvalidPortOutput(
+            RepositoryDiagnosticsPortOutputError::InvalidParserDiagnostics,
+        ));
+    }
     let Some(memory) = result.memory_projection.as_ref() else {
         return Ok(());
     };

@@ -71,7 +71,7 @@ pub struct McpDiagnosticsMemoryProjection {
     pub coverage: McpMemoryCoverage,
 }
 
-/// Version-1 structured response for read-only repository diagnostics.
+/// Version-2 structured response for read-only repository diagnostics.
 #[derive(Clone, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct DiagnosticsOutput {
@@ -89,6 +89,10 @@ pub struct DiagnosticsOutput {
     pub producer_manifest_sha256: String,
     /// Complete active-index coverage.
     pub index_coverage: McpCoverage,
+    /// Raw parser syntax-error nodes in the active source index.
+    pub syntax_error_nodes: u64,
+    /// Non-subtractive subset caused by known parser limitations.
+    pub known_parser_limitation_nodes: u64,
     /// Matching complete memory projection, or `null` when none exists.
     pub memory_projection: Option<McpDiagnosticsMemoryProjection>,
     /// Supported source languages in stable order.
@@ -97,6 +101,12 @@ pub struct DiagnosticsOutput {
     pub capabilities: Vec<String>,
     /// Explicit Phase 0 limitations in stable order.
     pub limitations: Vec<String>,
+}
+
+impl DiagnosticsOutput {
+    pub(crate) const fn parser_diagnostics_are_valid(&self) -> bool {
+        self.known_parser_limitation_nodes <= self.syntax_error_nodes
+    }
 }
 
 #[cfg(test)]

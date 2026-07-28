@@ -448,6 +448,10 @@ impl fmt::Debug for PreparedRustFile {
             .field("fact_count", &self.analysis.facts().len())
             .field("visited_nodes", &self.analysis.visited_nodes())
             .field("syntax_error_nodes", &self.analysis.syntax_error_nodes())
+            .field(
+                "known_parser_limitation_nodes",
+                &self.analysis.known_parser_limitation_nodes(),
+            )
             .finish()
     }
 }
@@ -461,6 +465,7 @@ pub struct PreparedRustIndex {
     total_source_bytes: u64,
     total_facts: u64,
     total_syntax_error_nodes: u64,
+    total_known_parser_limitation_nodes: u64,
     reused_files: u64,
     analyzed_files: u64,
     indexed_rust_files: u64,
@@ -525,6 +530,8 @@ pub enum RustIndexPreparationError {
     },
     /// An aggregate syntax-error count overflowed.
     SyntaxErrorCountOverflowed,
+    /// An aggregate known parser-limitation count overflowed.
+    KnownParserLimitationCountOverflowed,
     /// Canonical manifest construction failed.
     Manifest {
         /// Stable manifest invariant failure.
@@ -573,6 +580,9 @@ impl fmt::Display for RustIndexPreparationError {
             }
             Self::SyntaxErrorCountOverflowed => {
                 formatter.write_str("source syntax-error count overflowed")
+            }
+            Self::KnownParserLimitationCountOverflowed => {
+                formatter.write_str("known parser-limitation count overflowed")
             }
             Self::Manifest { .. } => {
                 formatter.write_str("canonical source manifest could not be constructed")

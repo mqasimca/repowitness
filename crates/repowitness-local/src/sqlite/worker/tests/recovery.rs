@@ -318,10 +318,11 @@ fn restart_removes_incomplete_snapshot_and_artifact_staging() {
             "INSERT INTO analysis_artifacts(
                     artifact_digest, lifecycle_state, source_content_digest,
                     producer_manifest_digest, configuration_digest, analysis_schema_digest,
-                    canonicalization_version, fact_count, visited_nodes, syntax_error_nodes
+                    canonicalization_version, fact_count, visited_nodes, syntax_error_nodes,
+                    known_parser_limitation_nodes
                  ) VALUES (
                     zeroblob(32), 'staging', zeroblob(32), zeroblob(32),
-                    zeroblob(32), zeroblob(32), 1, 0, 0, 0
+                    zeroblob(32), zeroblob(32), 1, 0, 0, 0, 0
                  )",
             [],
         )

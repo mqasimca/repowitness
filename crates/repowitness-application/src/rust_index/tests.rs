@@ -108,6 +108,7 @@ fn all_supported_languages_share_one_manifest_but_not_artifact_identity() {
     assert_eq!(prepared.analyzed_tsx_files(), 1);
     assert_eq!(prepared.analyzed_python_files(), 1);
     assert_eq!(prepared.reused_files(), 0);
+    assert_eq!(prepared.total_known_parser_limitation_nodes(), 0);
     assert_eq!(
         prepared
             .files()
@@ -128,6 +129,91 @@ fn all_supported_languages_share_one_manifest_but_not_artifact_identity() {
             .iter()
             .all(|file| file.artifact_identity()
                 == source_identities().for_language(file.language()))
+    );
+}
+
+#[test]
+fn known_parser_limitations_are_aggregated_without_subtracting_raw_errors() {
+    let cancelled = AtomicBool::new(false);
+    let synthetic_classified = b"export const statement = true;";
+    let sources = || {
+        vec![
+            typescript_source(b"web/classified.ts", synthetic_classified),
+            tsx_source(b"web/classified.tsx", synthetic_classified),
+            typescript_source(b"web/malformed.ts", b"export interface Broken { value:"),
+        ]
+    };
+    let identities = source_identities();
+    let fixture_sources = sources();
+    let classified =
+        RustSourceAnalysis::try_from_parts(Vec::new(), 1, 1, 1, RustAnalysisLimits::DEFAULT)
+            .expect("classified persisted analysis should be valid");
+    let reusable = fixture_sources
+        .iter()
+        .filter(|source| source.path().as_bytes() != b"web/malformed.ts")
+        .map(|source| {
+            let identity = identities.for_language(source.language());
+            let key = AnalysisArtifactKey::new(
+                hash_source_content(source.content()),
+                identity.producer_manifest(),
+                identity.configuration(),
+                identity.schema(),
+                identity.canonicalization_version(),
+            );
+            (hash_analysis_artifact_key(&key), classified.clone())
+        })
+        .collect::<BTreeMap<_, _>>();
+    let prepared = prepare_source_index_with_reuse(
+        fixture_sources,
+        identities,
+        RustIndexLimits::default(),
+        &reusable,
+        &cancelled,
+        deadline(),
+    )
+    .expect("known and unknown syntax errors should remain explicit");
+
+    assert_eq!(prepared.reused_files(), 2);
+    assert_eq!(prepared.analyzed_files(), 1);
+    assert_eq!(prepared.total_known_parser_limitation_nodes(), 2);
+    assert!(prepared.total_syntax_error_nodes() > 2);
+    assert!(prepared.total_known_parser_limitation_nodes() <= prepared.total_syntax_error_nodes());
+    for file in prepared.files() {
+        assert!(
+            file.analysis().known_parser_limitation_nodes() <= file.analysis().syntax_error_nodes()
+        );
+        if file.path().as_bytes() == b"web/malformed.ts" {
+            assert_eq!(file.analysis().known_parser_limitation_nodes(), 0);
+            assert!(file.analysis().syntax_error_nodes() > 0);
+        } else {
+            assert_eq!(file.analysis().known_parser_limitation_nodes(), 1);
+            assert_eq!(file.analysis().syntax_error_nodes(), 1);
+        }
+    }
+
+    let all_reusable = prepared
+        .files()
+        .iter()
+        .map(|file| (file.artifact_digest(), file.analysis().clone()))
+        .collect::<BTreeMap<_, _>>();
+    let reused = prepare_source_index_with_reuse(
+        sources(),
+        source_identities(),
+        RustIndexLimits::default(),
+        &all_reusable,
+        &cancelled,
+        deadline(),
+    )
+    .expect("exact reuse should preserve parser coverage");
+
+    assert_eq!(reused.reused_files(), 3);
+    assert_eq!(
+        reused.total_syntax_error_nodes(),
+        prepared.total_syntax_error_nodes()
+    );
+    assert_eq!(
+        reused.total_known_parser_limitation_nodes(),
+        prepared.total_known_parser_limitation_nodes()
     );
 }
 
@@ -293,6 +379,7 @@ fn unordered_inputs_produce_one_canonical_complete_index() {
     assert_eq!(prepared.total_source_bytes(), 20);
     assert_eq!(prepared.total_facts(), 2);
     assert_eq!(prepared.total_syntax_error_nodes(), 0);
+    assert_eq!(prepared.total_known_parser_limitation_nodes(), 0);
     assert_eq!(
         prepared.manifest_digest(),
         hash_source_manifest(prepared.manifest())
@@ -373,6 +460,10 @@ fn exact_reuse_matches_clean_output_and_semantic_changes_analyze_only_affected_f
     assert_eq!(incremental.manifest(), clean.manifest());
     assert_eq!(incremental.files(), clean.files());
     assert_eq!(incremental.total_facts(), clean.total_facts());
+    assert_eq!(
+        incremental.total_known_parser_limitation_nodes(),
+        clean.total_known_parser_limitation_nodes()
+    );
     assert_eq!(incremental.reused_files(), 2);
     assert_eq!(incremental.analyzed_files(), 0);
 

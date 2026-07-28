@@ -268,15 +268,7 @@ pub(crate) enum ProjectionCandidateRelation {
     Moved,
     Renamed,
     MovedRenamed,
-    #[allow(
-        dead_code,
-        reason = "the baseline schema reserves split for append-only manual review"
-    )]
     Split,
-    #[allow(
-        dead_code,
-        reason = "the baseline schema reserves merged for append-only manual review"
-    )]
     Merged,
 }
 

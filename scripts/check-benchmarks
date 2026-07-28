@@ -108,9 +108,9 @@ for my $path (@manifests) {
         next;
     }
 
-    report($path, 'schema_version must equal integer 1')
+    report($path, 'schema_version must equal integer 2')
       if !is_non_negative_integer($manifest->{schema_version})
-      || $manifest->{schema_version} != 1;
+      || $manifest->{schema_version} != 2;
     report($path, 'benchmark_id must be a kebab-case identifier')
       if !is_id($manifest->{benchmark_id});
     report($path, "duplicate benchmark_id '$manifest->{benchmark_id}'")
@@ -189,6 +189,7 @@ for my $path (@manifests) {
     report($path, 'tasks must be a non-empty array')
       if !is_array($tasks) || !@{$tasks // []};
     my %task_ids;
+    my %tasks_by_id;
     if (is_array($tasks)) {
         for my $task (@$tasks) {
             if (!is_object($task)) {
@@ -201,6 +202,7 @@ for my $path (@manifests) {
               if !is_id($id);
             report($path, "duplicate task id '$id'")
               if is_id($id) && $task_ids{$id}++;
+            $tasks_by_id{$id} = $task if is_id($id);
             report($path, "task '$id' references an unknown corpus")
               if !defined $task->{corpus}
               || !exists $corpora_by_id{$task->{corpus}};
@@ -232,6 +234,7 @@ for my $path (@manifests) {
     report($path, 'change_scenarios must be a non-empty array')
       if !is_array($scenarios) || !@{$scenarios // []};
     my %scenario_ids;
+    my %scenarios_by_id;
     if (is_array($scenarios)) {
         for my $scenario (@$scenarios) {
             if (!is_object($scenario)) {
@@ -244,6 +247,7 @@ for my $path (@manifests) {
               if !is_id($id);
             report($path, "duplicate change scenario id '$id'")
               if is_id($id) && $scenario_ids{$id}++;
+            $scenarios_by_id{$id} = $scenario if is_id($id);
             report($path, "change scenario '$id' references an unknown corpus")
               if !defined $scenario->{corpus}
               || !exists $corpora_by_id{$scenario->{corpus}};
@@ -314,6 +318,282 @@ for my $path (@manifests) {
         }
     }
 
+    my $evaluations = $manifest->{comparative_evaluations};
+    report($path, 'comparative_evaluations must be a non-empty array')
+      if !is_array($evaluations) || !@{$evaluations // []};
+    my %evaluation_ids;
+    if (is_array($evaluations)) {
+        for my $evaluation (@$evaluations) {
+            if (!is_object($evaluation)) {
+                report($path, 'every comparative evaluation must be an object');
+                next;
+            }
+            my $id = $evaluation->{id};
+            report($path, 'comparative evaluation id must be a kebab-case identifier')
+              if !is_id($id);
+            report($path, "duplicate comparative evaluation id '$id'")
+              if is_id($id) && $evaluation_ids{$id}++;
+            report($path, "comparative evaluation '$id' references an unknown task")
+              if !defined $evaluation->{task}
+              || !exists $tasks_by_id{$evaluation->{task}};
+            report(
+                $path,
+                "comparative evaluation '$id' references an unknown change scenario"
+              )
+              if !defined $evaluation->{change_scenario}
+              || !exists $scenarios_by_id{$evaluation->{change_scenario}};
+            if (defined $evaluation->{task}
+                && defined $evaluation->{change_scenario}
+                && exists $tasks_by_id{$evaluation->{task}}
+                && exists $scenarios_by_id{$evaluation->{change_scenario}})
+            {
+                report(
+                    $path,
+                    "comparative evaluation '$id' task and scenario use different corpora"
+                  )
+                  if $tasks_by_id{$evaluation->{task}}->{corpus}
+                  ne $scenarios_by_id{$evaluation->{change_scenario}}->{corpus};
+            }
+            report($path, "comparative evaluation '$id' memory_claim is required")
+              if !is_non_empty_string($evaluation->{memory_claim});
+            for my $field (qw(base_claim_relation changed_claim_relation)) {
+                report($path, "comparative evaluation '$id' $field is invalid")
+                  if !defined $evaluation->{$field}
+                  || !$evidence_relations{$evaluation->{$field}};
+            }
+            report(
+                $path,
+                "comparative evaluation '$id' claim relation must change"
+              )
+              if defined $evaluation->{base_claim_relation}
+              && defined $evaluation->{changed_claim_relation}
+              && $evaluation->{base_claim_relation}
+              eq $evaluation->{changed_claim_relation};
+            report(
+                $path,
+                "comparative evaluation '$id' expected_memory_transition is invalid"
+              )
+              if !defined $evaluation->{expected_memory_transition}
+              || !$memory_transitions{$evaluation->{expected_memory_transition}};
+
+            my $signals = $evaluation->{lexical_signals};
+            report(
+                $path,
+                "comparative evaluation '$id' lexical_signals must be an object"
+              )
+              if !is_object($signals);
+            if (is_object($signals)) {
+                for my $field (qw(base_support changed_contradiction)) {
+                    report(
+                        $path,
+                        "comparative evaluation '$id' lexical signal '$field' is invalid"
+                      )
+                      if !is_non_empty_string($signals->{$field})
+                      || length($signals->{$field}) > 256;
+                }
+                report(
+                    $path,
+                    "comparative evaluation '$id' lexical signals must differ"
+                  )
+                  if defined $signals->{base_support}
+                  && defined $signals->{changed_contradiction}
+                  && $signals->{base_support} eq $signals->{changed_contradiction};
+            }
+
+            my $lexical_limits = $evaluation->{lexical_limits};
+            report(
+                $path,
+                "comparative evaluation '$id' lexical_limits must be an object"
+              )
+              if !is_object($lexical_limits);
+            if (is_object($lexical_limits)) {
+                for my $field (
+                    qw(
+                    max_paths
+                    max_file_bytes
+                    max_total_source_bytes
+                    deadline_ms
+                    )
+                  )
+                {
+                    report(
+                        $path,
+                        "comparative evaluation '$id' lexical limit '$field' must be positive"
+                      )
+                      if !is_positive_integer($lexical_limits->{$field});
+                }
+                report(
+                    $path,
+                    "comparative evaluation '$id' aggregate source limit is below its file limit"
+                  )
+                  if is_positive_integer($lexical_limits->{max_file_bytes})
+                  && is_positive_integer($lexical_limits->{max_total_source_bytes})
+                  && $lexical_limits->{max_total_source_bytes}
+                  < $lexical_limits->{max_file_bytes};
+            }
+
+            my $evaluation_baselines = $evaluation->{baseline_ids};
+            report(
+                $path,
+                "comparative evaluation '$id' baseline_ids must name every baseline"
+              )
+              if !is_non_empty_string_array($evaluation_baselines)
+              || @{$evaluation_baselines // []} != keys %baseline_ids;
+            if (is_array($evaluation_baselines)) {
+                my %seen;
+                for my $baseline_id (@$evaluation_baselines) {
+                    report(
+                        $path,
+                        "comparative evaluation '$id' references unknown baseline '$baseline_id'"
+                      )
+                      if !exists $baseline_ids{$baseline_id};
+                    report(
+                        $path,
+                        "comparative evaluation '$id' repeats baseline '$baseline_id'"
+                      )
+                      if $seen{$baseline_id}++;
+                }
+            }
+
+            my $observations = $evaluation->{required_observations};
+            report(
+                $path,
+                "comparative evaluation '$id' required_observations must be non-empty"
+              )
+              if !is_non_empty_string_array($observations);
+            if (is_array($observations)) {
+                my %observed = map { $_ => 1 } @$observations;
+                for my $required (
+                    qw(
+                    source_evidence_relation
+                    memory_effective_state
+                    memory_context_inclusion
+                    stale_claims_exposed
+                    )
+                  )
+                {
+                    report(
+                        $path,
+                        "comparative evaluation '$id' omits observation '$required'"
+                      )
+                      if !$observed{$required};
+                }
+            }
+            report(
+                $path,
+                "comparative evaluation '$id' expected_decision_change must be true"
+              )
+              if !JSON::PP::is_bool($evaluation->{expected_decision_change})
+              || !$evaluation->{expected_decision_change};
+        }
+    }
+
+    my $agent_evaluations = $manifest->{agent_evaluations};
+    report($path, 'agent_evaluations must be a non-empty array')
+      if !is_array($agent_evaluations) || !@{$agent_evaluations // []};
+    my %agent_evaluation_ids;
+    if (is_array($agent_evaluations)) {
+        for my $evaluation (@$agent_evaluations) {
+            if (!is_object($evaluation)) {
+                report($path, 'every agent evaluation must be an object');
+                next;
+            }
+            my $id = $evaluation->{id};
+            report($path, 'agent evaluation id must be a kebab-case identifier')
+              if !is_id($id);
+            report($path, "duplicate agent evaluation id '$id'")
+              if is_id($id) && $agent_evaluation_ids{$id}++;
+            report(
+                $path,
+                "agent evaluation '$id' references an unknown comparison"
+              )
+              if !defined $evaluation->{comparison}
+              || !exists $evaluation_ids{$evaluation->{comparison}};
+            report($path, "agent evaluation '$id' consumer must be 'codex'")
+              if !defined $evaluation->{consumer}
+              || $evaluation->{consumer} ne 'codex';
+            report($path, "agent evaluation '$id' execution must be 'opt-in'")
+              if !defined $evaluation->{execution}
+              || $evaluation->{execution} ne 'opt-in';
+            report($path, "agent evaluation '$id' question is invalid")
+              if !is_non_empty_string($evaluation->{question})
+              || length($evaluation->{question}) > 1_024;
+            report(
+                $path,
+                "agent evaluation '$id' response contract is invalid"
+              )
+              if !defined $evaluation->{response_contract}
+              || $evaluation->{response_contract} ne 'codex-decision-v2';
+            if (defined $evaluation->{response_contract}
+                && $evaluation->{response_contract} eq 'codex-decision-v2')
+            {
+                my $contract_path = $path;
+                $contract_path =~ s{manifest[.]json\z}{
+                    $evaluation->{response_contract} . '.schema.json'
+                }e;
+                report($contract_path, 'response contract must not be a symbolic link')
+                  if -l $contract_path;
+                report($contract_path, 'response contract must be a regular file')
+                  if !-f $contract_path;
+                my $contract_size = -s $contract_path;
+                report($contract_path, 'response contract must not exceed 1 MiB')
+                  if defined $contract_size && $contract_size > 1_048_576;
+                if (-f $contract_path && !-l $contract_path) {
+                    open my $contract_handle, '<:raw', $contract_path
+                      or report($contract_path, "cannot read: $!");
+                    if ($contract_handle) {
+                        local $/;
+                        my $contract = eval { decode_json(<$contract_handle>) };
+                        report($contract_path, "invalid JSON object: $@")
+                          if !$contract || $@ || !is_object($contract);
+                        close $contract_handle;
+                    }
+                }
+            }
+            report(
+                $path,
+                "agent evaluation '$id' minimum_complete_runs must be 1 through 10"
+              )
+              if !is_positive_integer($evaluation->{minimum_complete_runs})
+              || $evaluation->{minimum_complete_runs} > 10;
+            report(
+                $path,
+                "agent evaluation '$id' base expected decision is invalid"
+              )
+              if !defined $evaluation->{base_expected_decision}
+              || $evaluation->{base_expected_decision} ne 'bug-present';
+            report(
+                $path,
+                "agent evaluation '$id' changed expected decision is invalid"
+              )
+              if !defined $evaluation->{changed_expected_decision}
+              || $evaluation->{changed_expected_decision} ne 'bug-fixed';
+            for my $field (
+                qw(
+                require_source_grounding
+                require_current_memory_use_at_base
+                )
+              )
+            {
+                report($path, "agent evaluation '$id' $field must be true")
+                  if !JSON::PP::is_bool($evaluation->{$field})
+                  || !$evaluation->{$field};
+            }
+            report(
+                $path,
+                "agent evaluation '$id' max_stale_memory_uses must equal zero"
+              )
+              if !defined $evaluation->{max_stale_memory_uses}
+              || $evaluation->{max_stale_memory_uses} != 0;
+            report(
+                $path,
+                "agent evaluation '$id' required_usefulness must be 'useful'"
+              )
+              if !defined $evaluation->{required_usefulness}
+              || $evaluation->{required_usefulness} ne 'useful';
+        }
+    }
+
     my $budgets = $manifest->{budgets};
     report($path, 'budgets must be an object') if !is_object($budgets);
     if (is_object($budgets)) {
@@ -350,12 +630,19 @@ for my $path (@manifests) {
                 max_peak_rss_mib
                 max_warm_query_p95_ms
                 max_material_result_bytes
+                max_database_bytes
                 )
               )
             {
                 report($path, "resource budget $field must be positive")
                   if !is_positive_integer($resources->{$field});
             }
+            report(
+                $path,
+                'resource budget max_wal_bytes_after_completion must equal zero'
+              )
+              if !defined $resources->{max_wal_bytes_after_completion}
+              || $resources->{max_wal_bytes_after_completion} != 0;
         }
     }
 

@@ -102,6 +102,108 @@ fn ordinary_reads_require_exact_component_spelling() {
 }
 
 #[test]
+fn exact_read_sessions_scan_flat_directories_once() {
+    const FILE_COUNT: u64 = 256;
+
+    let fixture = TempDirectory::new();
+    fs::create_dir(fixture.path().join("src")).expect("source directory must be created");
+    let paths = (0..FILE_COUNT)
+        .map(|index| {
+            let relative = format!("src/file-{index:04}.rs");
+            fs::write(fixture.path().join(&relative), relative.as_bytes())
+                .expect("source fixture must be written");
+            path(relative.as_bytes())
+        })
+        .collect::<Vec<_>>();
+    let root = ContainedSourceRoot::open(fixture.path()).expect("root must open");
+    let mut session = root
+        .exact_read_session(
+            paths.iter(),
+            Instant::now() + Duration::from_secs(1),
+            || false,
+        )
+        .expect("exact-read plan must complete");
+
+    for source in paths.iter().rev() {
+        assert!(
+            !session
+                .read_with_cancel(source, SourceReadLimits::default(), || false)
+                .expect("planned source must be read")
+                .is_empty()
+        );
+    }
+
+    assert!(
+        session.inspected_entry_count() <= FILE_COUNT.saturating_mul(2).saturating_add(8),
+        "directory-entry inspection must remain linear in the planned path count"
+    );
+    assert_eq!(
+        session.open_directory_scan_count(),
+        0,
+        "completed exact-name proofs must release directory iterators"
+    );
+}
+
+#[test]
+fn exact_read_sessions_release_completed_leaf_directory_scans() {
+    const DIRECTORY_COUNT: u64 = 96;
+
+    let fixture = TempDirectory::new();
+    let paths = (0..DIRECTORY_COUNT)
+        .map(|index| {
+            let directory = format!("module-{index:04}");
+            fs::create_dir(fixture.path().join(&directory))
+                .expect("source directory must be created");
+            let relative = format!("{directory}/lib.rs");
+            fs::write(fixture.path().join(&relative), b"fn indexed() {}\n")
+                .expect("source fixture must be written");
+            path(relative.as_bytes())
+        })
+        .collect::<Vec<_>>();
+    let root = ContainedSourceRoot::open(fixture.path()).expect("root must open");
+    let mut session = root
+        .exact_read_session(
+            paths.iter(),
+            Instant::now() + Duration::from_secs(1),
+            || false,
+        )
+        .expect("exact-read plan must complete");
+
+    for source in &paths {
+        session
+            .read_with_cancel(source, SourceReadLimits::default(), || false)
+            .expect("planned source must be read");
+        assert!(
+            session.open_directory_scan_count() <= 1,
+            "completed leaf scans must not accumulate open directory iterators"
+        );
+    }
+    assert_eq!(session.open_directory_scan_count(), 0);
+}
+
+#[test]
+fn exact_read_session_planning_obeys_cancellation_and_deadlines() {
+    let fixture = TempDirectory::new();
+    fs::write(fixture.path().join("source.rs"), b"fn source() {}\n")
+        .expect("source fixture must be written");
+    let root = ContainedSourceRoot::open(fixture.path()).expect("root must open");
+    let source = path(b"source.rs");
+
+    assert!(matches!(
+        root.exact_read_session(
+            std::iter::once(&source),
+            Instant::now() + Duration::from_secs(1),
+            || true,
+        ),
+        Err(ExactReadSessionError::Cancelled)
+    ));
+    assert!(matches!(
+        root.exact_read_session(std::iter::once(&source), Instant::now(), || false),
+        Err(ExactReadSessionError::DeadlineExceeded)
+    ));
+}
+
+#[test]
 fn cancellation_deadline_and_limit_configuration_are_explicit() {
     let fixture = TempDirectory::new();
     fs::write(fixture.path().join("source.rs"), b"fn source() {}\n")

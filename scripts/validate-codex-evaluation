@@ -1,0 +1,415 @@
+#!/usr/bin/env perl
+
+use strict;
+use warnings;
+
+use JSON::PP;
+
+my $MAX_EVENTS_BYTES = 8 * 1024 * 1024;
+my $MAX_EVENT_BYTES  = 2 * 1024 * 1024;
+my $MAX_ANSWER_BYTES = 64 * 1024;
+my $MAX_PACKET_BYTES = 24 * 1024 * 1024;
+
+if (@ARGV == 1 && $ARGV[0] eq '--self-test') {
+    self_test();
+    exit 0;
+}
+
+@ARGV == 6
+  or die
+  "usage: scripts/validate-codex-evaluation <events> <answer> <packet> <phase> <expected-decision> <expected-current-memory>\n";
+
+my ($events_path, $answer_path, $packet_path, $phase, $expected, $expect_current) =
+  @ARGV;
+$phase =~ /\A(?:base|changed)\z/
+  or die "invalid evaluation phase\n";
+$expected =~ /\A(?:bug-present|bug-fixed|indeterminate)\z/
+  or die "invalid expected decision\n";
+$expect_current =~ /\A[01]\z/
+  or die "invalid expected current-memory value\n";
+
+my $events = read_bounded($events_path, $MAX_EVENTS_BYTES, 'Codex event stream');
+my $answer = read_bounded($answer_path, $MAX_ANSWER_BYTES, 'Codex answer');
+my $packet = read_bounded($packet_path, $MAX_PACKET_BYTES, 'RepoWitness packet');
+
+my $usage = validate_event_stream($events);
+my $score = validate_answer(
+    $answer,
+    $packet,
+    $phase,
+    $expected,
+    $expect_current,
+);
+
+print "codex_input_tokens=$usage->{input_tokens}\n";
+print "codex_cached_input_tokens=$usage->{cached_input_tokens}\n";
+print "codex_output_tokens=$usage->{output_tokens}\n";
+print "codex_reasoning_output_tokens=$usage->{reasoning_output_tokens}\n";
+print "codex_total_tokens=", $usage->{input_tokens} + $usage->{output_tokens}, "\n";
+print "codex_tool_events=0\n";
+print $score;
+
+sub read_bounded {
+    my ($path, $limit, $label) = @_;
+    -f $path && !-l $path
+      or die "$label is unavailable\n";
+    my $size = -s $path;
+    defined $size && $size <= $limit
+      or die "$label exceeds its byte limit\n";
+
+    open my $handle, '<:raw', $path
+      or die "$label is unavailable\n";
+    my $content = '';
+    while (1) {
+        my $chunk = '';
+        my $read = read $handle, $chunk, 65_536;
+        defined $read
+          or die "$label could not be read\n";
+        last if $read == 0;
+        $content .= $chunk;
+        length($content) <= $limit
+          or die "$label exceeds its byte limit\n";
+    }
+    close $handle
+      or die "$label could not be closed\n";
+    return $content;
+}
+
+sub validate_event_stream {
+    my ($content) = @_;
+    length($content) > 0
+      or die "Codex event stream is empty\n";
+
+    my %allowed_event = map { $_ => 1 } qw(
+      thread.started
+      turn.started
+      item.started
+      item.updated
+      item.completed
+      turn.completed
+    );
+    my %allowed_item = map { $_ => 1 } qw(agent_message reasoning);
+    my ($threads, $turns_started, $turns_completed, $agent_messages) =
+      (0, 0, 0, 0);
+    my $usage;
+    my @lines = split /\n/, $content, -1;
+    pop @lines if @lines && $lines[-1] eq '';
+    @lines <= 10_000
+      or die "Codex event stream has too many events\n";
+
+    for my $line (@lines) {
+        length($line) > 0 && length($line) <= $MAX_EVENT_BYTES
+          or die "Codex event has an invalid size\n";
+        my $event = eval { decode_json($line) };
+        !$@ && ref($event) eq 'HASH'
+          or die "Codex event stream contains invalid JSON\n";
+        my $type = $event->{type};
+        defined $type && !ref($type) && $allowed_event{$type}
+          or die "Codex emitted a disallowed event\n";
+
+        if ($type =~ /\Aitem[.]/) {
+            my $item = $event->{item};
+            ref($item) eq 'HASH'
+              or die "Codex item event is malformed\n";
+            my $item_type = $item->{type};
+            defined $item_type
+              && !ref($item_type)
+              && $allowed_item{$item_type}
+              or die "Codex attempted to use a tool or unsupported item\n";
+            $agent_messages++
+              if $type eq 'item.completed' && $item_type eq 'agent_message';
+        }
+        elsif ($type eq 'thread.started') {
+            $threads++;
+        }
+        elsif ($type eq 'turn.started') {
+            $turns_started++;
+        }
+        elsif ($type eq 'turn.completed') {
+            $turns_completed++;
+            ref($event->{usage}) eq 'HASH'
+              or die "Codex completion omitted token usage\n";
+            $usage = validated_usage($event->{usage});
+        }
+    }
+
+    $threads == 1
+      or die "Codex event stream must contain one thread\n";
+    $turns_started == 1 && $turns_completed == 1
+      or die "Codex event stream must contain one completed turn\n";
+    $agent_messages >= 1
+      or die "Codex event stream omitted the final agent message\n";
+    return $usage;
+}
+
+sub validated_usage {
+    my ($usage) = @_;
+    my %validated;
+    for my $field (
+        qw(input_tokens cached_input_tokens output_tokens reasoning_output_tokens)
+      )
+    {
+        my $value = $usage->{$field};
+        defined $value && !ref($value) && $value =~ /\A[0-9]+\z/
+          or die "Codex token usage is invalid\n";
+        $validated{$field} = 0 + $value;
+    }
+    $validated{cached_input_tokens} <= $validated{input_tokens}
+      or die "Codex cached-token usage is invalid\n";
+    return \%validated;
+}
+
+sub validate_answer {
+    my ($answer_json, $packet_json, $phase, $expected, $expect_current) = @_;
+    my $answer = eval { decode_json($answer_json) };
+    !$@ && ref($answer) eq 'HASH'
+      or die "Codex answer is invalid JSON\n";
+    my $packet = eval { decode_json($packet_json) };
+    !$@ && ref($packet) eq 'HASH'
+      or die "RepoWitness packet is invalid JSON\n";
+
+    my $evidence = packet_evidence($packet);
+    my $ids = $answer->{evidence_ids};
+    ref($ids) eq 'ARRAY' && @{$ids} >= 1 && @{$ids} <= 8
+      or die "Codex answer omitted bounded evidence identifiers\n";
+
+    my %seen;
+    my ($source_count, $memory_count) = (0, 0);
+    for my $id (@{$ids}) {
+        defined $id && !ref($id) && length($id) <= 256
+          or die "Codex evidence identifier is invalid\n";
+        !$seen{$id}++
+          or die "Codex evidence identifiers must be unique\n";
+        my $item = $evidence->{$id}
+          or die "Codex cited evidence outside the supplied packet\n";
+        if ($item->{kind} eq 'source') {
+            $source_count++;
+        }
+        else {
+            $memory_count++;
+            $item->{effective_state} eq 'current'
+              or die "Codex cited non-current memory\n";
+        }
+    }
+
+    $answer->{decision} eq $expected
+      or die "Codex decision mismatch\n";
+    JSON::PP::is_bool($answer->{source_grounded})
+      && $answer->{source_grounded}
+      && $source_count >= 1
+      or die "Codex answer was not grounded in cited packet source\n";
+    JSON::PP::is_bool($answer->{current_memory_used})
+      or die "Codex current-memory use is invalid\n";
+    (!!$answer->{current_memory_used}) == ($memory_count > 0)
+      or die "Codex current-memory claim does not match cited evidence\n";
+    (!!$answer->{current_memory_used}) == (!!$expect_current)
+      or die "Codex current-memory use mismatch\n";
+    JSON::PP::is_bool($answer->{stale_memory_used})
+      && !$answer->{stale_memory_used}
+      or die "Codex used stale memory\n";
+    $answer->{packet_usefulness} eq 'useful'
+      or die "Codex did not classify the packet as useful\n";
+
+    return join(
+        '',
+        "codex_phase=$phase\n",
+        "codex_decision=$answer->{decision}\n",
+        "codex_source_grounded=true\n",
+        'codex_current_memory_used=',
+        ($answer->{current_memory_used} ? 'true' : 'false'),
+        "\n",
+        "codex_stale_memory_used=false\n",
+        "codex_packet_usefulness=$answer->{packet_usefulness}\n",
+        'codex_cited_source_items=',
+        $source_count,
+        "\n",
+        'codex_cited_memory_items=',
+        $memory_count,
+        "\n",
+    );
+}
+
+sub packet_evidence {
+    my ($packet) = @_;
+    ref($packet->{items}) eq 'ARRAY'
+      or die "RepoWitness packet omitted context items\n";
+    my %evidence;
+
+    for my $item (@{ $packet->{items} }) {
+        ref($item) eq 'HASH'
+          or die "RepoWitness packet item is invalid\n";
+        my $kind = $item->{kind};
+        my ($expected_id, $effective_state);
+        if (defined $kind && $kind eq 'source') {
+            my $digest = $item->{artifact_sha256};
+            my $ordinal = $item->{fact_ordinal};
+            defined $digest
+              && !ref($digest)
+              && $digest =~ /\A[0-9a-f]{64}\z/
+              && defined $ordinal
+              && !ref($ordinal)
+              && $ordinal =~ /\A[0-9]+\z/
+              or die "RepoWitness source evidence identity is invalid\n";
+            $expected_id = "source/$digest/$ordinal";
+        }
+        elsif (defined $kind && $kind eq 'memory') {
+            my $record = $item->{record};
+            ref($record) eq 'HASH'
+              or die "RepoWitness memory evidence is invalid\n";
+            my $record_id = $record->{record_id};
+            my $revision  = $record->{revision_sha256};
+            defined $record_id
+              && !ref($record_id)
+              && $record_id =~ /\A[A-Za-z0-9_.:-]{1,128}\z/
+              && defined $revision
+              && !ref($revision)
+              && $revision =~ /\A[0-9a-f]{64}\z/
+              or die "RepoWitness memory evidence identity is invalid\n";
+            $effective_state = $record->{effective_state};
+            defined $effective_state && !ref($effective_state)
+              or die "RepoWitness memory state is invalid\n";
+            $expected_id = "memory/$record_id/$revision";
+        }
+        else {
+            die "RepoWitness packet item kind is invalid\n";
+        }
+
+        my $actual_id = $item->{evaluation_evidence_id};
+        defined $actual_id && !ref($actual_id) && $actual_id eq $expected_id
+          or die "RepoWitness packet evidence annotation is invalid\n";
+        !exists $evidence{$actual_id}
+          or die "RepoWitness packet evidence identifiers are not unique\n";
+        $evidence{$actual_id} = {
+            kind            => $kind,
+            effective_state => $effective_state,
+        };
+    }
+    return \%evidence;
+}
+
+sub self_test {
+    my $source_digest = 'a' x 64;
+    my $memory_digest = 'b' x 64;
+    my $packet = {
+        items => [
+            {
+                kind                   => 'source',
+                artifact_sha256        => $source_digest,
+                fact_ordinal           => 7,
+                evaluation_evidence_id => "source/$source_digest/7",
+            },
+            {
+                kind   => 'memory',
+                record => {
+                    record_id        => 'mem_00000000000000000000000000',
+                    revision_sha256  => $memory_digest,
+                    effective_state  => 'current',
+                },
+                evaluation_evidence_id =>
+                  "memory/mem_00000000000000000000000000/$memory_digest",
+            },
+        ],
+    };
+    my $answer = {
+        decision            => 'bug-present',
+        evidence_ids        => [
+            "source/$source_digest/7",
+            "memory/mem_00000000000000000000000000/$memory_digest",
+        ],
+        source_grounded      => JSON::PP::true,
+        current_memory_used  => JSON::PP::true,
+        stale_memory_used    => JSON::PP::false,
+        packet_usefulness    => 'useful',
+        limitations          => [],
+    };
+    my $events = join(
+        "\n",
+        encode_json({ type => 'thread.started', thread_id => 'test' }),
+        encode_json({ type => 'turn.started' }),
+        encode_json({
+            type => 'item.completed',
+            item => { id => 'answer', type => 'agent_message', text => '{}' },
+        }),
+        encode_json({
+            type  => 'turn.completed',
+            usage => {
+                input_tokens            => 10,
+                cached_input_tokens     => 2,
+                output_tokens           => 3,
+                reasoning_output_tokens => 1,
+            },
+        }),
+        '',
+    );
+
+    validate_event_stream($events);
+    validate_answer(
+        encode_json($answer),
+        encode_json($packet),
+        'base',
+        'bug-present',
+        1,
+    );
+
+    my $tool_events = $events;
+    $tool_events =~ s/"agent_message"/"command_execution"/;
+    must_fail(sub { validate_event_stream($tool_events) });
+
+    my $outside = { %{$answer}, evidence_ids => ['source/' . ('c' x 64) . '/1'] };
+    must_fail(
+        sub {
+            validate_answer(
+                encode_json($outside),
+                encode_json($packet),
+                'base',
+                'bug-present',
+                1,
+            );
+        }
+    );
+
+    my $uncited_memory = {
+        %{$answer},
+        evidence_ids       => ["source/$source_digest/7"],
+        current_memory_used => JSON::PP::true,
+    };
+    must_fail(
+        sub {
+            validate_answer(
+                encode_json($uncited_memory),
+                encode_json($packet),
+                'base',
+                'bug-present',
+                1,
+            );
+        }
+    );
+
+    my $stale_packet = decode_json(encode_json($packet));
+    $stale_packet->{items}->[1]->{record}->{effective_state} = 'stale';
+    must_fail(
+        sub {
+            validate_answer(
+                encode_json($answer),
+                encode_json($stale_packet),
+                'base',
+                'bug-present',
+                1,
+            );
+        }
+    );
+
+    print "Codex evaluation contract self-tests passed\n";
+}
+
+sub must_fail {
+    my ($operation) = @_;
+    my $failed = 0;
+    {
+        local $@;
+        eval { $operation->() };
+        $failed = $@ ne '';
+    }
+    $failed
+      or die "Codex evaluation self-test expected rejection\n";
+}

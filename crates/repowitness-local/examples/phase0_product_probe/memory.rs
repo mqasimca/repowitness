@@ -21,10 +21,43 @@ use rusqlite::Connection;
 
 use crate::ProbeResult;
 
-const RECORD_ID: MemoryRecordId = MemoryRecordId::new([0xB7; 16]);
+const RECORD_ID: [u8; 16] = [0xB7; 16];
 const TARGET_PATH: &[u8] = b"src/cmd/set.rs";
+const TARGET_NAME: &str = "into_frame";
+const MEMORY_TITLE: &str = "SET into_frame encoding decision";
+const MEMORY_BODY: &str = "SET into_frame remains the evidence anchor for expiration encoding.";
+const MEMORY_ACTOR: &str = "phase0-benchmark";
 const MAX_TARGET_FILE_BYTES: u64 = 4 * 1024 * 1024;
 const MUTATION: &[u8] = b"\n        // RepoWitness Phase 0 revalidation probe.\n";
+
+pub struct MemoryInputSpec {
+    record_id: [u8; 16],
+    target_path: &'static [u8],
+    target_name: &'static str,
+    title: &'static str,
+    body: &'static str,
+    actor: &'static str,
+}
+
+impl MemoryInputSpec {
+    pub const fn new(
+        record_id: [u8; 16],
+        target_path: &'static [u8],
+        target_name: &'static str,
+        title: &'static str,
+        body: &'static str,
+        actor: &'static str,
+    ) -> Self {
+        Self {
+            record_id,
+            target_path,
+            target_name,
+            title,
+            body,
+            actor,
+        }
+    }
+}
 
 pub struct ExactMemoryInput {
     yaml: Vec<u8>,
@@ -51,10 +84,31 @@ pub fn exact_memory_input(
     database: &Path,
     repository: RepositoryIdentityDigest,
 ) -> ProbeResult<ExactMemoryInput> {
-    let target = active_occurrence(database, repository)?;
+    exact_memory_input_for(
+        repository_root,
+        database,
+        repository,
+        &MemoryInputSpec::new(
+            RECORD_ID,
+            TARGET_PATH,
+            TARGET_NAME,
+            MEMORY_TITLE,
+            MEMORY_BODY,
+            MEMORY_ACTOR,
+        ),
+    )
+}
+
+pub fn exact_memory_input_for(
+    repository_root: &Path,
+    database: &Path,
+    repository: RepositoryIdentityDigest,
+    spec: &MemoryInputSpec,
+) -> ProbeResult<ExactMemoryInput> {
+    let target = active_occurrence(database, repository, spec.target_path, spec.target_name)?;
     let introduced_by = head_commit(repository_root)?;
     let evidence = rust_evidence(&target)?;
-    let record = memory_record(repository, introduced_by, evidence)?;
+    let record = memory_record(repository, introduced_by, evidence, spec)?;
     let cancelled = AtomicBool::new(false);
     let deadline = Instant::now()
         .checked_add(Duration::from_secs(10))
@@ -62,7 +116,7 @@ pub fn exact_memory_input(
     let yaml = generate_memory_yaml(&record, MemoryFormatControl::new(&cancelled, deadline))?;
     Ok(ExactMemoryInput {
         yaml,
-        record_id: MemoryRecordIdTextV1::encode(RECORD_ID).into_string(),
+        record_id: MemoryRecordIdTextV1::encode(MemoryRecordId::new(spec.record_id)).into_string(),
         target,
     })
 }
@@ -102,21 +156,24 @@ fn memory_record(
     repository: RepositoryIdentityDigest,
     introduced_by: MemoryCommitId,
     evidence: RustSymbolMemoryEvidence,
+    spec: &MemoryInputSpec,
 ) -> ProbeResult<MemoryRecord> {
     Ok(MemoryRecord::try_new(
-        MemoryRecordHeader::try_new(RECORD_ID, MemoryDisplayRevision::try_new(1)?, Vec::new())?,
+        MemoryRecordHeader::try_new(
+            MemoryRecordId::new(spec.record_id),
+            MemoryDisplayRevision::try_new(1)?,
+            Vec::new(),
+        )?,
         MemoryClaim::new(
             MemoryKind::Decision,
-            MemoryTitle::try_new("SET into_frame encoding decision".to_owned())?,
-            MemoryBody::try_new(
-                "SET into_frame remains the evidence anchor for expiration encoding.".to_owned(),
-            )?,
+            MemoryTitle::try_new(spec.title.to_owned())?,
+            MemoryBody::try_new(spec.body.to_owned())?,
         ),
         MemoryScope::new(repository, MemoryEvidenceIndex::try_new(0)?),
         MemoryProvenance::new(
             MemoryProvenanceOrigin::Human,
             MemoryActorKind::LocalAsserted,
-            MemoryActorId::try_new("phase0-benchmark".to_owned())?,
+            MemoryActorId::try_new(spec.actor.to_owned())?,
         ),
         MemoryAssurance::LocallyApproved,
         MemoryLifecycle::Active,
@@ -241,6 +298,8 @@ struct ActiveOccurrence {
 fn active_occurrence(
     database: &Path,
     repository: RepositoryIdentityDigest,
+    target_path: &[u8],
+    target_name: &str,
 ) -> ProbeResult<ActiveOccurrence> {
     let connection = Connection::open(database)?;
     Ok(connection.query_row(
@@ -268,10 +327,10 @@ fn active_occurrence(
            AND generation.lifecycle_state = 'active'
            AND artifact.language = 'rust'
            AND file.repository_path = ?2
-           AND fact.name = 'into_frame'
+           AND fact.name = ?3
          ORDER BY fact.ordinal
          LIMIT 1",
-        (repository.as_bytes().as_slice(), TARGET_PATH),
+        (repository.as_bytes().as_slice(), target_path, target_name),
         |row| {
             Ok(ActiveOccurrence {
                 snapshot: row.get(0)?,

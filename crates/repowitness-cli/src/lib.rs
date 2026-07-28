@@ -59,7 +59,10 @@ const MAX_CLI_CONTEXT_OUTPUT_BYTES: usize = 24 * 1024 * 1024;
 const MAX_CLI_DIAGNOSTICS_OUTPUT_BYTES: usize = 256 * 1024;
 const MAX_CLI_SEARCH_OUTPUT_BYTES: usize = 3 * 1024 * 1024;
 const MAX_CLI_MEMORY_RECALL_OUTPUT_BYTES: usize = 20 * 1024 * 1024;
-const MAX_CLI_SYMBOL_OUTPUT_BYTES: usize = 20 * 1024 * 1024;
+// The application payload can reach 10 MiB. Exact path and declaration
+// representations expand by at most two, with room for the report envelope.
+const MAX_CLI_SYMBOL_OUTPUT_BYTES: usize = (20 * 1024 * 1024) + (64 * 1024);
+const CLI_SYMBOL_REPORT_SCHEMA_VERSION: u16 = 2;
 const PATH_TEXT_LIMIT: RepositoryPathTextByteLimit = RepositoryPathTextByteLimit::new(2_097_160);
 const MCP_RUNTIME_WORKER_THREADS: usize = 2;
 const MCP_RUNTIME_BLOCKING_THREADS: usize = 6;
@@ -200,7 +203,8 @@ const SYMBOL_GET_HELP: &str = concat!(
     "The complete snapshot, generation, path, content, artifact, and fact selector\n",
     "must still identify the active occurrence. Source bytes are read through a\n",
     "no-follow contained root, verified against the indexed digest, and emitted\n",
-    "as lowercase hexadecimal so terminal control bytes cannot be injected.\n",
+    "as display-safe UTF-8 or exact lowercase hexadecimal. The data is one\n",
+    "JSON-escaped report field so source bytes cannot forge report lines.\n",
 );
 
 include!("cli/adapters.rs");

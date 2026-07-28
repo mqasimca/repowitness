@@ -20,12 +20,28 @@ checkout:
 ```
 
 The runner verifies the exact manifest revision before making a disposable
-`--no-local` clone and building the release CLI and probe. It creates the
-SQLite database and memory record only in that clone, measures cold and
-unchanged indexing plus repeated warm queries, changes one attached
-declaration, and removes all disposable state on exit. The supplied corpus
-checkout remains read-only. On supported systems, `/usr/bin/time` also records
-peak resident memory.
+`--no-local` product clone and a separate comparison clone before building the
+release CLI and probes. It creates SQLite databases and memory records only in
+those clones, measures cold and unchanged indexing plus repeated warm queries,
+changes one attached declaration, and runs the manifest's historical
+before/after comparison. It validates and passes the manifest's bounded
+resource profile explicitly into the probe, which reports the resolved values.
+It removes all disposable state on exit. The supplied corpus checkout remains
+read-only. On supported systems, `/usr/bin/time` also records peak resident
+memory. The repeated-query sample count is bounded from 2 through 100.
+
+Run the separate opt-in Codex utility evaluation with:
+
+```text
+./scripts/run-phase0-codex-evaluation /path/to/mini-redis 1
+```
+
+It obtains the actual structured `context_build` packet at the comparison's
+base and changed revisions and supplies that evidence to an ephemeral read-only
+Codex process with runtime tools disabled. It rejects tool events, validates
+every cited evidence identifier against a packet item, and checks the response
+against the manifest's versioned agent contract. Each model run has fixed time
+and output limits.
 
 ## Initial tasks
 
@@ -35,7 +51,10 @@ The manifest defines:
 - a cross-module graceful-shutdown trace;
 - current-revision evidence retrieval for SET expiration encoding;
 - a source-only revalidation scenario for the SET expiration fix;
-- a source-plus-regression-test revalidation scenario for negative bulk-length validation.
+- a source-plus-regression-test revalidation scenario for negative bulk-length
+  validation; and
+- a controlled temporal-decision comparison across the negative bulk-length
+  fix.
 
 The lexical/source-only and naive-memory-text baselines use the same corpus revision and task wording.
 
@@ -50,9 +69,14 @@ proves current recall and source-plus-memory context, changes its exact source,
 then proves stale recall and stale-memory context exclusion.
 
 The [2026-07-28 provisional run](../../docs/research/phase0-product-benchmark-2026-07-28.md)
-passes every proposed numeric ceiling. The lexical/source-only and
-naive-memory baselines are declared but not yet compared on a real
-design-partner engineering decision.
+passes every proposed numeric ceiling. The
+[controlled comparative evaluation](../../docs/research/phase0-comparative-evaluation-2026-07-28.md)
+also passes: lexical evidence changes with the source, naive memory continues
+to expose the obsolete claim, and RepoWitness marks it stale and excludes it.
+The [Codex utility evaluation](../../docs/research/phase0-codex-utility-evaluation-2026-07-28.md)
+passes one paired run: both decisions are correct and source-grounded, current
+memory is used, stale memory is ignored, and both packets are rated useful. A
+real design-partner engineering-decision comparison remains.
 
 ## Budgets
 

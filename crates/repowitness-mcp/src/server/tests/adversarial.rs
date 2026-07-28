@@ -149,3 +149,45 @@ fn encoded_output_budget_is_inclusive_at_the_exact_call_result_size() {
         Some(true)
     );
 }
+
+#[test]
+fn maximum_supported_declaration_expansion_fits_the_symbol_output_budget() {
+    let mut output = symbol_output();
+    let symbol = output.symbol.as_mut().expect("fixture has a symbol");
+    symbol.declaration_encoding = "utf8".to_owned();
+    symbol.declaration = format!("run{}", "\"".repeat(8 * 1024 * 1024 - 3));
+    let result = operation_result(Ok(output), MAX_MCP_SYMBOL_OUTPUT_BYTES)
+        .expect("maximum declaration serializes");
+    assert_eq!(result.is_error, Some(false));
+}
+
+#[tokio::test]
+async fn invalid_parser_diagnostics_fail_closed_at_the_protocol_boundary() {
+    let service = Arc::new(FakeService::new());
+    service.invalid_diagnostics.store(true, Ordering::Relaxed);
+    let (server_transport, client_transport) = tokio::io::duplex(32 * 1024);
+    let server = RepoWitnessMcpServer::new(service);
+    let server_task = tokio::spawn(async move {
+        server
+            .serve(server_transport)
+            .await
+            .expect("server starts")
+            .waiting()
+            .await
+            .expect("server stops")
+    });
+    let client = ().serve(client_transport).await.expect("client starts");
+
+    let result = client
+        .call_tool(CallToolRequestParams::new(DIAGNOSTICS_TOOL_NAME))
+        .await
+        .expect("invalid service output becomes a tool error");
+    assert_eq!(result.is_error, Some(true));
+    assert_eq!(
+        result.content[0].as_text().expect("text error").text,
+        "repository diagnostics failed"
+    );
+
+    client.cancel().await.expect("client closes");
+    server_task.await.expect("server task");
+}

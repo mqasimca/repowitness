@@ -25,8 +25,8 @@ impl RepositoryDiagnosticsReader for FailingDiagnosticsReader {
 
 fn diagnostics_output() -> DiagnosticsOutput {
     DiagnosticsOutput {
-        schema_version: 1,
-        diagnostics_profile: 1,
+        schema_version: 2,
+        diagnostics_profile: 2,
         snapshot_sha256: "11".repeat(32),
         generation: 3,
         source_epoch: 2,
@@ -37,6 +37,8 @@ fn diagnostics_output() -> DiagnosticsOutput {
             unresolved: 2,
             truncated: 0,
         },
+        syntax_error_nodes: 5,
+        known_parser_limitation_nodes: 2,
         memory_projection: None,
         supported_languages: vec![
             "rust".to_owned(),
@@ -74,7 +76,10 @@ fn diagnostics_command_passes_explicit_inputs_and_emits_safe_aggregates() {
     assert_eq!(reader.calls.get(), 1);
     let output = String::from_utf8(stdout).expect("output");
     assert!(output.contains("operation=diagnostics"));
-    assert!(output.contains("schema_version=1"));
+    assert!(output.contains("schema_version=2"));
+    assert!(output.contains("diagnostics_profile=2"));
+    assert!(output.contains("syntax_error_nodes=5"));
+    assert!(output.contains("known_parser_limitation_nodes=2"));
     assert!(output.contains("memory_projection_available=false"));
     assert!(output.contains("capabilities=2"));
     assert!(output.contains("supported_language_3=tsx"));
@@ -113,6 +118,16 @@ fn diagnostics_parser_rejects_missing_duplicate_odd_and_unknown_arguments() {
             .collect::<Vec<_>>();
         assert!(parse_diagnostics_arguments(&arguments).is_err());
     }
+}
+
+#[test]
+fn diagnostics_output_rejects_known_parser_counts_above_raw_syntax_errors() {
+    let mut report = diagnostics_output();
+    report.syntax_error_nodes = 1;
+    report.known_parser_limitation_nodes = 2;
+    let mut output = Vec::new();
+    assert_eq!(emit_diagnostics_report(&mut output, &report), EXIT_SOFTWARE);
+    assert!(output.is_empty());
 }
 
 #[test]

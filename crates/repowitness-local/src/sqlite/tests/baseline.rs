@@ -42,7 +42,7 @@ fn pre_baseline_schema_versions_are_rejected_without_mutation() {
         let original_bytes = fs::read(&database).expect("legacy database should be readable");
         let error = open_index_writer(&database, 456)
             .expect_err("pre-baseline databases must require an explicit rebuild");
-        let expected = if legacy_version == 1 {
+        let expected = if legacy_version <= 2 {
             SqliteStoreError::MigrationLedgerMismatch
         } else {
             SqliteStoreError::SchemaVersionMismatch
@@ -108,10 +108,11 @@ fn typescript_and_tsx_artifacts_accept_their_persisted_fact_kinds() {
                         artifact_digest, lifecycle_state, source_content_digest,
                         producer_manifest_digest, configuration_digest,
                         analysis_schema_digest, canonicalization_version,
-                        fact_count, visited_nodes, syntax_error_nodes, payload_digest, language
+                        fact_count, visited_nodes, syntax_error_nodes,
+                        known_parser_limitation_nodes, payload_digest, language
                      ) VALUES (
                         ?1, 'staging', zeroblob(32), zeroblob(32), zeroblob(32),
-                        zeroblob(32), 1, 4, 4, 0, zeroblob(32), ?2
+                        zeroblob(32), 1, 4, 4, 0, 0, zeroblob(32), ?2
                      )",
                 params![digest, language],
             )
@@ -132,6 +133,34 @@ fn typescript_and_tsx_artifacts_accept_their_persisted_fact_kinds() {
                 .expect("supported TypeScript fact kind should be accepted");
         }
     }
+}
+
+#[test]
+fn parser_diagnostic_counts_are_nonnegative_and_known_is_a_raw_subset() {
+    let directory = TempDirectory::new();
+    let connection =
+        open_index_writer(&directory.database(), 123).expect("baseline should succeed");
+    let insert = "INSERT INTO analysis_artifacts(
+            artifact_digest, lifecycle_state, source_content_digest,
+            producer_manifest_digest, configuration_digest, analysis_schema_digest,
+            canonicalization_version, fact_count, visited_nodes, syntax_error_nodes,
+            known_parser_limitation_nodes, payload_digest, language
+         ) VALUES (
+            ?1, 'staging', zeroblob(32), zeroblob(32), zeroblob(32), zeroblob(32),
+            1, 0, 1, ?2, ?3, zeroblob(32), 'typescript'
+         )";
+
+    for (byte, raw, known) in [(10_u8, -1_i64, 0_i64), (11, 0, 1)] {
+        assert!(
+            connection
+                .execute(insert, params![vec![byte; 32], raw, known])
+                .is_err(),
+            "invalid parser diagnostics must fail at the schema boundary"
+        );
+    }
+    connection
+        .execute(insert, params![vec![12_u8; 32], 2_i64, 1_i64])
+        .expect("a nonnegative known subset should persist");
 }
 
 #[test]

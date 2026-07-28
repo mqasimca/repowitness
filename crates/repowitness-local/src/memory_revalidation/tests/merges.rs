@@ -39,6 +39,73 @@ fn automatic(target: ProjectionOccurrence) -> PreparedProjectionEvidence {
 }
 
 #[test]
+fn one_to_many_split_candidates_require_review_without_an_automatic_relink() {
+    let (_fixture, repository, database, _repository_identity, identity) =
+        exact_commit_projection_fixture();
+    fs::write(
+        repository.join("src/lib.rs"),
+        b"pub fn first() -> bool { true }\npub fn second() -> bool { true }\n",
+    )
+    .expect("split source should be written");
+    git(&repository, &["add", "src/lib.rs"]);
+    git(&repository, &["commit", "--quiet", "-m", "split function"]);
+    index_local_repository(
+        LocalIndexRequest::new(&repository, &database, &identity, 123),
+        Arc::new(AtomicBool::new(false)),
+    )
+    .expect("split source index should activate");
+
+    let report = revalidate_local_memory(
+        LocalMemoryRevalidationRequest::new(&repository, &database, &identity, 123),
+        Arc::new(AtomicBool::new(false)),
+    )
+    .expect("split projection should activate conservatively");
+    assert_eq!(report.unresolved_records(), 1);
+
+    let connection = Connection::open(database).expect("database should open");
+    let state: (String, String, String, i64, i64) = connection
+        .query_row(
+            "SELECT record.effective_state, evidence.outcome, evidence.assurance,
+                    count(candidate.ordinal),
+                    count(candidate.ordinal) FILTER (
+                        WHERE candidate.proposed_relation = 'split'
+                    )
+             FROM active_memory_projections AS active
+             JOIN memory_projection_records AS record
+               ON record.projection_id = active.projection_id
+             JOIN memory_projection_evidence AS evidence
+               ON evidence.projection_id = record.projection_id
+              AND evidence.record_ordinal = record.ordinal
+             LEFT JOIN memory_projection_candidates AS candidate
+               ON candidate.projection_id = evidence.projection_id
+              AND candidate.record_ordinal = evidence.record_ordinal
+              AND candidate.evidence_ordinal = evidence.evidence_ordinal
+             GROUP BY record.effective_state, evidence.outcome, evidence.assurance",
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )
+        .expect("split projection should be readable");
+    assert_eq!(
+        state,
+        (
+            "needs_review".to_owned(),
+            "ambiguous".to_owned(),
+            "none".to_owned(),
+            2,
+            2,
+        )
+    );
+}
+
+#[test]
 fn repeated_evidence_cannot_become_current_through_one_automatic_target() {
     let fixture = TempDirectory::new();
     let repository = fixture.repository();

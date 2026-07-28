@@ -136,3 +136,38 @@ fn indexed_repository_reports_exact_source_and_absent_memory_projection() {
     assert_eq!(diagnostics.capabilities().len(), 4);
     assert_eq!(diagnostics.limitations().len(), 6);
 }
+
+#[test]
+fn diagnostics_rejects_a_persisted_known_count_outside_the_raw_total() {
+    let directory = TempDirectory::new();
+    let repository = fixture_repository(&directory);
+    let database = directory.database();
+    index_local_repository(
+        LocalIndexRequest::new(&repository, &database, REPOSITORY_ID, 0),
+        Arc::new(AtomicBool::new(false)),
+    )
+    .expect("index");
+
+    let connection = rusqlite::Connection::open(&database).expect("fixture database should reopen");
+    connection
+        .execute_batch(
+            "PRAGMA ignore_check_constraints = ON;
+             DROP TRIGGER analysis_artifacts_no_semantic_update;
+             UPDATE analysis_artifacts
+             SET known_parser_limitation_nodes = 1;",
+        )
+        .expect("fixture parser diagnostics should be corrupted");
+    drop(connection);
+
+    let error = diagnose_local_repository(
+        LocalRepositoryDiagnosticsRequest::new(&database, REPOSITORY_ID),
+        Arc::new(AtomicBool::new(false)),
+    )
+    .expect_err("known diagnostics outside the raw total must fail closed");
+    assert!(matches!(
+        error,
+        LocalRepositoryDiagnosticsError::Diagnostics(RepositoryDiagnosticsError::Port(
+            SqliteStoreError::IntegrityCheckFailed
+        ))
+    ));
+}

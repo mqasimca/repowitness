@@ -89,6 +89,7 @@ fn index_activates_and_replaces_real_generations_without_leaking_inputs() {
     assert_index_work_counts(&first, 0, 1, 0, 1);
     assert!(first.contains("skipped_unsupported_paths=1\n"));
     assert!(first.contains("symbol_facts=4\n"));
+    assert_parser_diagnostics_counts(&first, "0", "0");
     assert!(!first.contains(REPOSITORY_ID));
     assert!(!first.contains(repository.to_string_lossy().as_ref()));
     assert!(!first.contains(database.to_string_lossy().as_ref()));
@@ -284,10 +285,10 @@ fn cli_indexes_searches_retrieves_and_reuses_python_and_stub_files() {
     assert!(context.stderr.is_empty());
     let context = String::from_utf8(context.stdout).expect("context report must be UTF-8");
     assert!(context.contains("context_item_0_language=python\n"));
-    assert!(context.contains(&format!(
-        "context_item_0_declaration_hex={}\n",
-        hex_bytes(b"def send(self): pass")
-    )));
+    assert!(context.contains("context_item_0_declaration_encoding=utf8\n"));
+    assert!(context.contains(
+        "context_item_0_declaration_data_json=\"def send(self): pass\"\n"
+    ));
 
     let second = index(&repository, &database, REPOSITORY_ID);
     assert!(second.status.success());
@@ -308,6 +309,14 @@ fn assert_index_work_counts(
     assert!(report.contains(&format!("analyzed_rust_files={analyzed_rust}\n")));
     assert!(report.contains(&format!("reused_go_files={reused_go}\n")));
     assert!(report.contains(&format!("analyzed_go_files={analyzed_go}\n")));
+}
+
+fn assert_parser_diagnostics_counts(report: &str, raw: &str, known: &str) {
+    assert_eq!(report_value(report, "syntax_error_nodes"), raw);
+    assert_eq!(
+        report_value(report, "known_parser_limitation_nodes"),
+        known
+    );
 }
 
 #[test]

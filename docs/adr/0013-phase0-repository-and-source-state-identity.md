@@ -211,12 +211,13 @@ scope required by evidence and temporal-memory decisions.
 - The local index request/report facade and behavior tests compose source-state
   capture with the shared publication use case.
 - Explicit `--repository-id` and `--database` CLI arguments are implemented,
-  and `index` atomically activates production Rust generations.
+  and `index` atomically activates production supported-language generations.
 - Add the equivalent validated MCP request/response boundary before enabling
   MCP indexing.
 - Specify `init`, shared repository-ID storage, and conflict behavior in a
   later focused configuration/memory decision.
-- Revisit sparse and recursive-submodule support with explicit coverage.
+- Revisit sparse and recursive-submodule support only after accepting an
+  explicit capture and coverage contract.
 
 ## Supersession
 

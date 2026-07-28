@@ -176,9 +176,10 @@ fn extend_local_artifact_identity(
     )
 }
 
-fn local_producer_implementation_fingerprint_inputs() -> [&'static [u8]; 10] {
+pub(super) fn local_producer_implementation_fingerprint_inputs() -> [&'static [u8]; 11] {
     [
         include_bytes!("../contained_source.rs"),
+        include_bytes!("../contained_source/exact_session.rs"),
         include_bytes!("../contained_source/io.rs"),
         include_bytes!("../git_paths.rs"),
         include_bytes!("../git_paths/process.rs"),
@@ -244,6 +245,7 @@ struct ReportInput {
     total_source_bytes: u64,
     total_facts: u64,
     syntax_error_nodes: u64,
+    known_parser_limitation_nodes: u64,
     reused_rust_files: u64,
     analyzed_rust_files: u64,
     reused_go_files: u64,
@@ -270,6 +272,9 @@ impl ReportInput {
             total_source_bytes: preparation.prepared().total_source_bytes(),
             total_facts: preparation.prepared().total_facts(),
             syntax_error_nodes: preparation.prepared().total_syntax_error_nodes(),
+            known_parser_limitation_nodes: preparation
+                .prepared()
+                .total_known_parser_limitation_nodes(),
             reused_rust_files: preparation.prepared().reused_rust_files(),
             analyzed_rust_files: preparation.prepared().analyzed_rust_files(),
             reused_go_files: preparation.prepared().reused_go_files(),
@@ -304,6 +309,7 @@ fn activated_report(
         total_source_bytes: input.total_source_bytes,
         total_facts: input.total_facts,
         syntax_error_nodes: input.syntax_error_nodes,
+        known_parser_limitation_nodes: input.known_parser_limitation_nodes,
         reused_rust_files: input.reused_rust_files,
         analyzed_rust_files: input.analyzed_rust_files,
         reused_go_files: input.reused_go_files,

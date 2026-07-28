@@ -39,6 +39,12 @@ impl PreparedRustIndex {
         self.total_syntax_error_nodes
     }
 
+    /// Returns the conservative non-subtractive subset attributed to known parser limitations.
+    #[must_use]
+    pub const fn total_known_parser_limitation_nodes(&self) -> u64 {
+        self.total_known_parser_limitation_nodes
+    }
+
     /// Returns files restored from exact, validated analysis artifacts.
     #[must_use]
     pub const fn reused_files(&self) -> u64 {
@@ -151,6 +157,10 @@ impl fmt::Debug for PreparedRustIndex {
             .field("total_source_bytes", &self.total_source_bytes)
             .field("total_facts", &self.total_facts)
             .field("total_syntax_error_nodes", &self.total_syntax_error_nodes)
+            .field(
+                "total_known_parser_limitation_nodes",
+                &self.total_known_parser_limitation_nodes,
+            )
             .field("reused_files", &self.reused_files)
             .field("analyzed_files", &self.analyzed_files)
             .field("indexed_rust_files", &self.indexed_rust_files)

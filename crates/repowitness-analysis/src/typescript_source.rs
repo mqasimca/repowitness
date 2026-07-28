@@ -9,9 +9,18 @@ use crate::{
 };
 
 /// Version of the Phase 0 TypeScript/TSX extraction behavior.
-pub const TYPESCRIPT_ANALYSIS_PROFILE_VERSION: u32 = 2;
-/// Pinned Tree-sitter TypeScript grammar package version.
-pub const TREE_SITTER_TYPESCRIPT_GRAMMAR_VERSION: &str = "0.23.2";
+pub const TYPESCRIPT_ANALYSIS_PROFILE_VERSION: u32 = 4;
+/// Pinned Tree-sitter TypeScript grammar and local patch version.
+pub const TREE_SITTER_TYPESCRIPT_GRAMMAR_VERSION: &str = "0.23.2+repowitness.2";
+
+const TYPESCRIPT_GRAMMAR_FINGERPRINT: &[u8] = b"parser-sha256=\
+8b31686490169b91a23d738104d008b1c44029cb7e866a464447bfbe356abbd2;\
+scanner-sha256=9125013b42cb888379d9be909f1d73dfb75a37626c2cdbf4122718a2b431a6d3;\
+common-scanner-sha256=74dd1a8b9f7fad91b7d6c7c478000a4fd6bbacb89eff7785808ac4dbc12c6467";
+const TSX_GRAMMAR_FINGERPRINT: &[u8] = b"parser-sha256=\
+42d1632397a132707b40f8503e421c3d3b6c8a88f542be3ababda226e75e9836;\
+scanner-sha256=d563cd30b2f39718c9ae4292795c5ce03a2ad01954ba3a86ef84c2781a736673;\
+common-scanner-sha256=74dd1a8b9f7fad91b7d6c7c478000a4fd6bbacb89eff7785808ac4dbc12c6467";
 
 /// Exact TypeScript grammar dialect selected from the repository extension.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -28,12 +37,12 @@ pub fn typescript_analyzer_implementation_fingerprint_input() -> &'static [u8] {
     include_bytes!("typescript_source.rs")
 }
 
-/// Returns the pinned dialect grammar node schema for producer fingerprinting.
+/// Returns the pinned dialect runtime-grammar checksums for producer fingerprinting.
 #[must_use]
 pub fn typescript_grammar_fingerprint_input(dialect: TypeScriptDialect) -> &'static [u8] {
     match dialect {
-        TypeScriptDialect::TypeScript => tree_sitter_typescript::TYPESCRIPT_NODE_TYPES.as_bytes(),
-        TypeScriptDialect::Tsx => tree_sitter_typescript::TSX_NODE_TYPES.as_bytes(),
+        TypeScriptDialect::TypeScript => TYPESCRIPT_GRAMMAR_FINGERPRINT,
+        TypeScriptDialect::Tsx => TSX_GRAMMAR_FINGERPRINT,
     }
 }
 
@@ -115,6 +124,7 @@ fn traverse_tree(
     let mut facts = Vec::new();
     let mut visited_nodes = 0_u32;
     let mut syntax_error_nodes = 0_u32;
+    let mut known_parser_limitation_nodes = 0_u32;
     let mut depth = 0_u16;
     let mut cursor = tree.walk();
 
@@ -132,6 +142,9 @@ fn traverse_tree(
         let node = cursor.node();
         if node.is_error() || node.is_missing() {
             syntax_error_nodes = syntax_error_nodes.saturating_add(1);
+            if is_typed_tagged_template_limitation(node, source) {
+                known_parser_limitation_nodes = known_parser_limitation_nodes.saturating_add(1);
+            }
         }
         extract_symbol_fact(node, source, limits, &mut facts)?;
 
@@ -150,6 +163,7 @@ fn traverse_tree(
                     facts,
                     visited_nodes,
                     syntax_error_nodes,
+                    known_parser_limitation_nodes,
                     limits,
                 );
             }
@@ -158,6 +172,45 @@ fn traverse_tree(
                 .ok_or(SourceAnalysisError::InvalidSourceSpan)?;
         }
     }
+}
+
+fn is_typed_tagged_template_limitation(node: Node<'_>, source: &[u8]) -> bool {
+    if !node.is_missing()
+        || node.kind() != "!"
+        || node.start_byte() != node.end_byte()
+        || source.get(node.start_byte()) != Some(&b'`')
+        || node.start_byte() == 0
+        || source.get(node.start_byte() - 1) != Some(&b'>')
+    {
+        return false;
+    }
+    let Some(non_null) = node.parent() else {
+        return false;
+    };
+    let Some(instantiation) = non_null.named_child(0) else {
+        return false;
+    };
+    let Some(call) = non_null.parent() else {
+        return false;
+    };
+    let Some(function) = call.child_by_field_name("function") else {
+        return false;
+    };
+    let Some(template) = call.child_by_field_name("arguments") else {
+        return false;
+    };
+
+    non_null.kind() == "non_null_expression"
+        && non_null.named_child_count() == 1
+        && instantiation.kind() == "instantiation_expression"
+        && instantiation.end_byte() == node.start_byte()
+        && instantiation
+            .named_children(&mut instantiation.walk())
+            .any(|child| child.kind() == "type_arguments")
+        && call.kind() == "call_expression"
+        && function == non_null
+        && template.kind() == "template_string"
+        && template.start_byte() == node.start_byte()
 }
 
 fn extract_symbol_fact(
@@ -514,6 +567,68 @@ for (const LoopBinding of []) {
         );
         assert!(analysis.has_syntax_errors());
         assert!(analysis.syntax_error_nodes() > 0);
+        assert_eq!(analysis.known_parser_limitation_nodes(), 0);
+    }
+
+    #[test]
+    fn typed_tagged_templates_parse_without_recovery_nodes() {
+        for dialect in [TypeScriptDialect::TypeScript, TypeScriptDialect::Tsx] {
+            for source in [
+                b"export const statement = tag<{ value: string }>`value`;".as_slice(),
+                b"export const nested = client.tag<Result<number>>`value`;".as_slice(),
+            ] {
+                let analysis = analyze(source, dialect);
+
+                assert_eq!(analysis.syntax_error_nodes(), 0);
+                assert_eq!(analysis.known_parser_limitation_nodes(), 0);
+                assert_eq!(analysis.facts().len(), 1);
+            }
+        }
+    }
+
+    #[test]
+    fn locally_patched_valid_syntax_parses_without_recovery_nodes() {
+        let typescript_sources = [
+            br#"interface RequestShape {
+  id: string
+  in: "body" | "query"
+}"#
+            .as_slice(),
+            br#"type ImportedItems = import("./module.js").Item[];
+const override = { field: 0 };
+if (true) {
+  override["field"] = 1;
+}"#
+            .as_slice(),
+            br#"const actual = testDouble.requireActual<typeof import("./module.js")>(
+  "./module.js",
+);"#
+            .as_slice(),
+            br#"declare const item: unknown;
+declare const collection: object;
+const contained = item
+  in collection;
+const dynamicModule = typeof import("./module.js");
+class Derived extends Base {
+  override method(): void {}
+}"#
+            .as_slice(),
+        ];
+
+        for source in typescript_sources {
+            let analysis = analyze(source, TypeScriptDialect::TypeScript);
+            assert_eq!(analysis.syntax_error_nodes(), 0);
+            assert_eq!(analysis.known_parser_limitation_nodes(), 0);
+        }
+
+        let tsx = analyze(
+            br#"export const View = () => (
+  <button>mail &amp; calendar & contacts</button>
+);"#,
+            TypeScriptDialect::Tsx,
+        );
+        assert_eq!(tsx.syntax_error_nodes(), 0);
+        assert_eq!(tsx.known_parser_limitation_nodes(), 0);
     }
 
     #[test]

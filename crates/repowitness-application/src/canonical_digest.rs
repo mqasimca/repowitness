@@ -13,10 +13,9 @@ const ARTIFACT_KEY_DOMAIN: &[u8] = b"RepoWitness\0analysis-artifact-key\0";
 const ARTIFACT_PAYLOAD_DOMAIN: &[u8] = b"RepoWitness\0analysis-artifact-payload\0";
 const SOURCE_MANIFEST_DOMAIN: &[u8] = b"RepoWitness\0source-manifest\0";
 
-const LEGACY_ANALYSIS_ARTIFACT_PAYLOAD_VERSION: u32 = 1;
 /// Current canonical version of the persisted analysis-artifact payload
 /// encoding.
-pub const ANALYSIS_ARTIFACT_PAYLOAD_VERSION: u32 = 2;
+pub const ANALYSIS_ARTIFACT_PAYLOAD_VERSION: u32 = 3;
 
 /// Concrete logical key whose components have canonical fixed-width identities.
 pub type CanonicalAnalysisArtifactKey = AnalysisArtifactKey<
@@ -62,20 +61,14 @@ pub fn hash_analysis_artifact_payload(
         .iter()
         .any(|fact| fact.correspondence().is_some());
     hasher.update(ARTIFACT_PAYLOAD_DOMAIN);
-    hasher.update(
-        if has_correspondence {
-            ANALYSIS_ARTIFACT_PAYLOAD_VERSION
-        } else {
-            LEGACY_ANALYSIS_ARTIFACT_PAYLOAD_VERSION
-        }
-        .to_be_bytes(),
-    );
+    hasher.update(ANALYSIS_ARTIFACT_PAYLOAD_VERSION.to_be_bytes());
     if has_correspondence {
         update_length_prefixed(&mut hasher, RUST_CORRESPONDENCE_PROFILE_ID.as_bytes());
         hasher.update(RUST_CORRESPONDENCE_PROFILE_VERSION.to_be_bytes());
     }
     hasher.update(analysis.visited_nodes().to_be_bytes());
     hasher.update(analysis.syntax_error_nodes().to_be_bytes());
+    hasher.update(analysis.known_parser_limitation_nodes().to_be_bytes());
     hasher.update(
         u64::try_from(analysis.facts().len())
             .expect("bounded source fact count fits in u64")
@@ -154,8 +147,8 @@ mod tests {
     };
 
     use super::{
-        hash_analysis_artifact_key, hash_analysis_artifact_payload, hash_source_content,
-        hash_source_manifest,
+        ANALYSIS_ARTIFACT_PAYLOAD_VERSION, hash_analysis_artifact_key,
+        hash_analysis_artifact_payload, hash_source_content, hash_source_manifest,
     };
 
     const PATH_LIMITS: RepositoryPathLimits = RepositoryPathLimits::new(1024, 32);
@@ -207,6 +200,7 @@ mod tests {
 
     #[test]
     fn artifact_payload_hash_has_a_stable_golden_vector() {
+        assert_eq!(ANALYSIS_ARTIFACT_PAYLOAD_VERSION, 3);
         let cancelled = AtomicBool::new(false);
         let deadline = Instant::now()
             .checked_add(Duration::from_secs(1))
@@ -223,14 +217,14 @@ mod tests {
         assert_eq!(
             hash_analysis_artifact_payload(&analysis).into_bytes(),
             [
-                0x94, 0x01, 0xB6, 0xA0, 0x5C, 0xF8, 0x8C, 0x10, 0x42, 0x58, 0xA6, 0x79, 0x60, 0x0A,
-                0x69, 0x3B, 0xE6, 0x92, 0xA7, 0x8E, 0x9E, 0xB9, 0x31, 0xA0, 0x3A, 0x65, 0x51, 0x26,
-                0xDE, 0x1C, 0x2E, 0xD4,
+                0x2E, 0x14, 0x17, 0x27, 0xEE, 0x33, 0xFF, 0xBD, 0x64, 0xC0, 0x4C, 0x76, 0x6D, 0x83,
+                0xDD, 0x37, 0x46, 0x0D, 0x0F, 0x2B, 0x46, 0xF1, 0x20, 0x68, 0x9F, 0xB9, 0x2B, 0x94,
+                0x1D, 0x06, 0x06, 0x24,
             ]
         );
 
         let fact = &analysis.facts()[0];
-        let legacy_fact = RustSymbolFact::try_new(
+        let fact_without_correspondence = RustSymbolFact::try_new(
             fact.kind(),
             fact.name().to_owned(),
             fact.qualified_name().to_owned(),
@@ -238,21 +232,41 @@ mod tests {
             fact.declaration_span(),
             RustAnalysisLimits::DEFAULT,
         )
-        .expect("legacy fact remains structurally valid");
-        let legacy = RustSourceAnalysis::try_from_parts(
-            vec![legacy_fact],
+        .expect("fact without correspondence remains structurally valid");
+        let without_correspondence = RustSourceAnalysis::try_from_parts(
+            vec![fact_without_correspondence],
             analysis.visited_nodes(),
             analysis.syntax_error_nodes(),
+            analysis.known_parser_limitation_nodes(),
             RustAnalysisLimits::DEFAULT,
         )
-        .expect("legacy analysis remains structurally valid");
+        .expect("analysis without correspondence remains structurally valid");
         assert_eq!(
-            hash_analysis_artifact_payload(&legacy).into_bytes(),
+            hash_analysis_artifact_payload(&without_correspondence).into_bytes(),
             [
-                0x6B, 0x9A, 0x3D, 0x92, 0xCE, 0xDF, 0x99, 0x7D, 0xB5, 0x71, 0x6E, 0x70, 0xB2, 0xB6,
-                0xC3, 0x6E, 0x1E, 0x5C, 0xE8, 0x9F, 0x11, 0xA1, 0x9D, 0x49, 0x5D, 0x98, 0xFB, 0xBA,
-                0xB4, 0x85, 0x09, 0x07,
+                0x3B, 0xD5, 0x17, 0xFC, 0xE0, 0x8E, 0x4A, 0xF2, 0xCE, 0xD8, 0x31, 0x91, 0xE4, 0x14,
+                0x3A, 0x62, 0x1E, 0xE6, 0x6C, 0xF6, 0xFC, 0x02, 0x7E, 0x6D, 0xC9, 0xCD, 0xE9, 0x73,
+                0x9C, 0x08, 0xCA, 0x0E,
             ]
+        );
+    }
+
+    #[test]
+    fn known_parser_limitations_change_payload_identity_without_subtracting_raw_errors() {
+        let raw_only =
+            RustSourceAnalysis::try_from_parts(Vec::new(), 1, 1, 0, RustAnalysisLimits::DEFAULT)
+                .expect("raw-error analysis should be valid");
+        let classified =
+            RustSourceAnalysis::try_from_parts(Vec::new(), 1, 1, 1, RustAnalysisLimits::DEFAULT)
+                .expect("classified-error analysis should be valid");
+
+        assert_eq!(raw_only.syntax_error_nodes(), 1);
+        assert_eq!(classified.syntax_error_nodes(), 1);
+        assert_eq!(raw_only.known_parser_limitation_nodes(), 0);
+        assert_eq!(classified.known_parser_limitation_nodes(), 1);
+        assert_ne!(
+            hash_analysis_artifact_payload(&raw_only),
+            hash_analysis_artifact_payload(&classified)
         );
     }
 

@@ -43,6 +43,8 @@ use crate::sqlite::writer::MAX_STARTUP_RECOVERY_GENERATIONS;
 static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 const PATH_LIMITS: RepositoryPathLimits = RepositoryPathLimits::new(4096, 256);
 const COMMIT_MEMORY_YAML: &[u8] = include_bytes!("../../../tests/fixtures/memory-v1/commit.yaml");
+const WORKTREE_RELATIONSHIP_MEMORY_YAML: &[u8] =
+    include_bytes!("../../../tests/fixtures/memory-v1/worktree-relationship.yaml");
 
 struct TempDirectory(PathBuf);
 
@@ -108,5 +110,6 @@ fn memory_source() -> MemoryObservationSource {
 
 include!("tests/memory_import.rs");
 include!("tests/generation.rs");
+include!("tests/projection_publication.rs");
 include!("tests/projection.rs");
 include!("tests/recovery.rs");

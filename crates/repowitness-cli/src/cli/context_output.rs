@@ -282,11 +282,9 @@ fn write_context_item(
                 "{prefix}_declaration_encoding={}",
                 item.declaration_encoding
             )?;
-            writeln!(
-                writer,
-                "{prefix}_declaration_hex={}",
-                item.declaration_hex
-            )
+            let declaration = serde_json::to_string(&item.declaration)
+                .map_err(std::io::Error::other)?;
+            writeln!(writer, "{prefix}_declaration_data_json={declaration}")
         }
     }
 }

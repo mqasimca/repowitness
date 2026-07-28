@@ -140,8 +140,10 @@ impl WriterState {
                     artifact_digest, lifecycle_state, source_content_digest,
                     producer_manifest_digest, configuration_digest, analysis_schema_digest,
                     canonicalization_version, fact_count, visited_nodes, syntax_error_nodes,
-                    payload_digest, language
-                 ) VALUES (?1, 'staging', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                    known_parser_limitation_nodes, payload_digest, language
+                 ) VALUES (
+                    ?1, 'staging', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12
+                 )",
                 params![
                     expected_digest.as_bytes().as_slice(),
                     file.content_digest().as_bytes().as_slice(),
@@ -152,6 +154,7 @@ impl WriterState {
                     fixed_usize(analysis.facts().len())?,
                     i64::from(analysis.visited_nodes()),
                     i64::from(analysis.syntax_error_nodes()),
+                    i64::from(analysis.known_parser_limitation_nodes()),
                     payload_digest.as_bytes().as_slice(),
                     file.language().as_str()
                 ],

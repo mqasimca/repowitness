@@ -79,8 +79,8 @@ A scoped engineering claim whose kind may be decision, failure, procedure, episo
 The strict Phase 0 version-1 record is accepted in ADR-0014. Its domain model,
 hostile-YAML parser, canonical digest, and deterministic writer are implemented;
 capability-contained worktree admission, trusted import, and append-only SQLite
-persistence are also implemented. The one-migration SQLite baseline contains
-the five-language artifact format, derivation and atomic publication of a
+persistence are also implemented. The versioned SQLite schema contains the
+five-language artifact format, derivation and atomic publication of a
 current-memory projection, and reviewed correspondence. Bounded Git-tree history
 import stores observations only; repository-authored text cannot approve
 itself. None of these boundaries changes the canonical record.

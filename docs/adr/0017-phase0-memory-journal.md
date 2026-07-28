@@ -177,8 +177,10 @@ shutdown ownership without creating an independent security boundary.
   current-memory retrieval under proposed ADR-0018.
 - Implemented 2026-07-28: bounded Git-tree history import observes exact
   record blobs without self-approval under proposed ADR-0021.
-- Complete the residual rewritten/pruned-history and archival/export release
-  matrix before ratification.
+- Completed 2026-07-28: rewritten and pruned history retain prior observations
+  without creating approval, while missing-object validity stays
+  indeterminate.
+- Define archival/export policy in a later decision.
 
 ## Supersession
 

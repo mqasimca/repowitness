@@ -24,16 +24,17 @@ impl RepositoryDiagnosticsReader for LocalRepositoryDiagnosticsReader {
 }
 
 fn mcp_diagnostics_output(result: LocalRepositoryDiagnosticsResult) -> DiagnosticsOutput {
-    let memory_projection = result.memory_projection().map(|memory| {
-        McpDiagnosticsMemoryProjection {
-            projection: *memory.projection(),
-            source_epoch: memory.source_epoch(),
-            snapshot_sha256: hex(memory.snapshot().as_bytes()),
-            coverage: mcp_memory_coverage(memory.coverage()),
-        }
-    });
+    let memory_projection =
+        result
+            .memory_projection()
+            .map(|memory| McpDiagnosticsMemoryProjection {
+                projection: *memory.projection(),
+                source_epoch: memory.source_epoch(),
+                snapshot_sha256: hex(memory.snapshot().as_bytes()),
+                coverage: mcp_memory_coverage(memory.coverage()),
+            });
     DiagnosticsOutput {
-        schema_version: 1,
+        schema_version: 2,
         diagnostics_profile: result.profile_version(),
         snapshot_sha256: hex(result.snapshot().as_bytes()),
         generation: result.generation().get(),
@@ -45,6 +46,8 @@ fn mcp_diagnostics_output(result: LocalRepositoryDiagnosticsResult) -> Diagnosti
             unresolved: result.index_coverage().unresolved(),
             truncated: result.index_coverage().truncated(),
         },
+        syntax_error_nodes: result.syntax_error_nodes(),
+        known_parser_limitation_nodes: result.known_parser_limitation_nodes(),
         memory_projection,
         supported_languages: result
             .supported_languages()

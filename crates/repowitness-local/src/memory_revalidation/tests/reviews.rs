@@ -283,12 +283,13 @@ fn competing_approved_targets_fail_closed_independent_of_actor_and_operation() {
     );
     assert_eq!(evidence.assurance(), MemoryRecallEvidenceAssurance::None);
     assert!(evidence.target().is_none());
+    assert!(evidence.candidates().is_empty());
 }
 
 #[test]
 fn an_obsolete_target_snapshot_review_does_not_affect_the_active_generation() {
     let (_fixture, repository, database, repository_identity, identity) =
-        exact_projection_fixture();
+        exact_commit_projection_fixture();
     let selector = review_selector(&database, repository_identity);
     assert!(append_review(
         &repository,
@@ -305,6 +306,11 @@ fn an_obsolete_target_snapshot_review_does_not_affect_the_active_generation() {
         b"pub fn current() -> bool { false }\n",
     )
     .expect("new source snapshot should be written");
+    git(&repository, &["add", "src/lib.rs"]);
+    git(
+        &repository,
+        &["commit", "--quiet", "-m", "change reviewed target"],
+    );
     index_local_repository(
         LocalIndexRequest::new(&repository, &database, &identity, 123),
         Arc::new(AtomicBool::new(false)),
@@ -331,6 +337,21 @@ fn an_obsolete_target_snapshot_review_does_not_affect_the_active_generation() {
         .expect("current-snapshot reviews should load");
     assert_eq!(reviews.decision(), &CorrespondenceReviewDecision::None);
     store.shutdown(deadline()).expect("store should shut down");
+
+    let report = revalidate_local_memory(
+        LocalMemoryRevalidationRequest::new(&repository, &database, &identity, 123),
+        Arc::new(AtomicBool::new(false)),
+    )
+    .expect("current snapshot should revalidate without the obsolete review");
+    assert_eq!(report.unresolved_records(), 0);
+    let recalled = recall_one(&database, &identity);
+    assert_eq!(
+        recalled.records()[0].effective_state(),
+        MemoryEffectiveState::Stale
+    );
+    let evidence = &recalled.records()[0].evidence()[0];
+    assert_eq!(evidence.outcome(), MemoryRecallEvidenceOutcome::Changed);
+    assert_eq!(evidence.assurance(), MemoryRecallEvidenceAssurance::None);
 
     let audit_count = Connection::open(&database)
         .expect("database should open")

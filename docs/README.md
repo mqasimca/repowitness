@@ -22,6 +22,9 @@ This directory turns the detailed research in [`plan.md`](../plan.md) into small
 | [Phase 0 dependency review (2026-07-25)](research/phase0-dependency-review-2026-07-25.md) | Need, versions, features, licenses, native/build surfaces, and verification for production dependencies | Active |
 | [Phase 0 preparation benchmark (2026-07-25)](research/phase0-preparation-benchmark-2026-07-25.md) | Pinned mini-redis environment, cold/warm local-preparation timings, resource use, correctness, and limitations | Provisional measurement |
 | [Phase 0 product benchmark (2026-07-28)](research/phase0-product-benchmark-2026-07-28.md) | Pinned persistence, reuse, retrieval, MCP, memory-management, source-change revalidation, context, resource, and latency results | Provisional measurement |
+| [Phase 0 comparative evaluation (2026-07-28)](research/phase0-comparative-evaluation-2026-07-28.md) | Controlled before/after lexical, naive-memory, and evidence-backed memory comparison | Provisional measurement |
+| [Phase 0 Codex utility evaluation (2026-07-28)](research/phase0-codex-utility-evaluation-2026-07-28.md) | Isolated before/after Codex decision, source grounding, memory use, stale-memory avoidance, and packet presentation | Provisional measurement |
+| [Phase 0 ratification review (2026-07-28)](research/phase0-ratification-review-2026-07-28.md) | Evidence-based ADR and benchmark-budget readiness recommendations | Recommendation |
 | [Strict memory YAML spike (2026-07-25)](research/strict-memory-yaml-spike-2026-07-25.md) | Bounded hostile-YAML admission, canonical JSON, semantic hashing, and candidate dependency findings | Recommendation |
 | [Benchmark manifests](../benchmarks/README.md) | Pinned corpora, tasks, change scenarios, baselines, environments, and budgets | Proposed |
 | [Research plan](../plan.md) | Full research, alternatives, sources, and detailed backlog | Reference |
@@ -37,8 +40,10 @@ compilation, CLI commands, and default-read-only or explicitly authorized
 local stdio MCP tools. The
 [product](product.md), [architecture](architecture.md), and
 [roadmap](roadmap.md) distinguish that implemented design-partner-alpha loop
-from the remaining ratification, residual release-matrix, clean-attestation,
-and comparative design-partner gates.
+and passing adversarial release matrix from the remaining ratification,
+clean-attestation, and real design-partner gate. A controlled public baseline
+comparison and an isolated Codex utility evaluation are implemented and
+reproducible.
 The complete command surface and local Codex setup are in the
 [repository README](../README.md).
 

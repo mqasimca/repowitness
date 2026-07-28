@@ -10,6 +10,9 @@ use cap_std::fs::{Dir, DirEntry, File, Metadata, OpenOptions};
 use repowitness_domain::RepositoryPath;
 use same_file::Handle;
 
+mod exact_session;
+pub(crate) use exact_session::{ExactReadSession, ExactReadSessionError};
+
 /// Default maximum size of one source file.
 pub const DEFAULT_SOURCE_FILE_BYTES: u64 = 8 * 1024 * 1024;
 /// Default maximum size of one blocking read.
@@ -182,6 +185,15 @@ impl ContainedSourceRoot {
         let mut file =
             self.open_exact_regular_file(path, limits, deadline, false, &mut is_cancelled)?;
         read_regular_file(&mut file, limits, deadline, &mut is_cancelled)
+    }
+
+    pub(crate) fn exact_read_session<'root, 'path>(
+        &'root self,
+        paths: impl IntoIterator<Item = &'path RepositoryPath>,
+        deadline: Instant,
+        mut is_cancelled: impl FnMut() -> bool,
+    ) -> Result<ExactReadSession<'root>, ExactReadSessionError> {
+        ExactReadSession::new(self, paths, deadline, &mut is_cancelled)
     }
 
     /// Reads one exact-spelling regular file that has exactly one filesystem link.

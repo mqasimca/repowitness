@@ -2,6 +2,9 @@
 /target/
 **/*.rs.bk
 
+# Vendored grammar regeneration
+/third_party/tree-sitter-typescript/node_modules/
+
 # RepoWitness local state
 .repowitness/
 *.sqlite
