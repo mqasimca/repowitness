@@ -20,24 +20,35 @@ Its defining promise is:
 
 ## Current status
 
-RepoWitness now has a tested Phase 0 Rust indexing slice:
+RepoWitness now has a tested Phase 0 Rust, Go, TypeScript, TSX, and Python
+indexing slice:
 sanitized bounded Git discovery, capability-contained no-follow source reads,
 exact SHA-256 source and manifest identities, semantics-complete artifact keys,
-bounded Tree-sitter Rust facts, aggregate coverage, and final path/content
-revalidation. The pinned mini-redis preparation probe produces stable cold/warm
-results. The accepted Phase 0 SQLite v3 schema persists prepared Rust facts
-through owned writer and reader connections, publishes immutable generations
-atomically, prevents competing process mutation owners with a deadline-bounded
-lease, performs bounded generation-scoped lexical retrieval, and creates
-validated online backups. Its double-buffered FTS5 projection rebuild uses
-bounded transactions, integrity checks, and one atomic reader-visible slot
-switch. Exact repeat indexing now loads only requested complete artifacts,
-checks independent canonical key and payload digests, validates facts against
-the current immutable source bytes, and reports analyzed-versus-reused file
-counts. The shared application publication use case stages and activates
-through a narrow port implemented by the SQLite owner. The shared `code_search`
-use case validates and hashes literal queries, maps storage-neutral candidates
-to syntax-attributed material results, and carries exact snapshot, generation,
+bounded language-specific Tree-sitter facts, aggregate coverage, and final
+path/content revalidation. The complete pinned mini-redis product-loop
+benchmark produces stable cold/warm results and now
+covers persistence, exact reuse, retrieval, default-read-only MCP, canonical
+memory write and approval, source-change revalidation, recall, and stale-memory
+context exclusion. One clean Phase 0 SQLite baseline-version-1 migration
+contains the five-language artifact format, append-only memory journal,
+memory-revalidation projection, reviewed correspondence, and exact review-event
+idempotency. It persists each artifact's exact language and prepared Rust, Go,
+TypeScript, TSX, or Python facts through owned writer and reader connections
+and publishes immutable
+source and memory generations atomically, prevents competing process mutation
+owners with a deadline-bounded lease, performs bounded generation-scoped
+retrieval, and creates validated online backups. Its double-buffered FTS5
+projection rebuild uses bounded transactions, integrity checks, and one atomic
+reader-visible slot switch. Exact repeat indexing loads only requested complete
+artifacts, checks independent canonical key and payload digests, validates facts
+against the current immutable source bytes, and reports analyzed-versus-reused
+file counts separately for all five languages. One source-state fence,
+canonical manifest, snapshot, generation, and activation cover every supported
+language; artifact identity and reuse remain language-specific. The shared
+application publication use case stages and activates through a narrow port
+implemented by the SQLite owner. The shared `code_search` use case validates
+and hashes literal queries, maps storage-neutral candidates to
+syntax-attributed material results, and carries exact snapshot, generation,
 producer, coverage, and pre-limit match counts. The shared `symbol_get` use
 case requires the complete search occurrence identity, verifies the active
 snapshot and generation, re-reads source through the contained no-follow
@@ -49,30 +60,68 @@ database path, constructs versioned configuration/schema/producer identities,
 captures canonical Git/worktree receipts around source revalidation, and
 activates only a complete generation. Its installed-binary tests cover real
 temporary Git repositories, SQLite persistence, repeat indexing, redacted
-failures, output errors, index-to-search generation replacement, exact
-declaration retrieval, and rejection of stale generations and modified source.
-The CLI exposes evidence-bearing `search` and `symbol-get`. The local stdio MCP
-server exposes the same application use cases as read-only `code_search` and
-`symbol_get` tools, fixes repository identity, root, and database at process
-startup, bounds input, output, concurrency, timeout, and cancellation, and
-keeps stdout protocol-only. Protocol and installed-binary tests cover
-initialization, exact schemas, both tools, stale selectors, cancellation,
-backpressure, and real cloned Rust repositories. Memory and context
-compilation are not production-ready yet.
+failures, output errors, mixed-language reuse and invalidation,
+index-to-search generation replacement, exact declaration retrieval for all
+five supported languages, and rejection of stale generations and modified
+source. The CLI also exposes memory revalidation/recall, context compilation,
+and repository diagnostics. The local stdio MCP server exposes the same read
+path as `context_build`, `code_search`, `diagnostics`, `memory_recall`, and
+`symbol_get`, fixes repository identity, root, and database at process startup,
+bounds input, output, concurrency, timeout, and cancellation, and keeps stdout
+protocol-only. Protocol and installed-binary tests cover initialization, exact
+schemas, all five tools, stale selectors, cancellation, backpressure, and
+configured real supported-language repositories.
 
-The latest full local verification on 2026-07-26 passed `make ci`,
-`make test-all`, all four opt-in SQLite release probes, repeated
-cancellation/race/recovery stress loops, and real-repository persistence,
-reuse, search, and MCP round-trips. The real-repository runs covered `netwhy`
-(48 paths, 22 Rust files, 698 facts) and `nvctl` (115 paths, 85 Rust files,
-1,814 facts), with zero Tree-sitter syntax-error nodes in both snapshots.
-These are verification fixtures, not ratified release benchmarks.
+The accepted memory-record domain model, strict byte parser, canonicalizer, and
+deterministic writer are implemented. A capability-contained boundary admits
+or atomically writes only the exact canonical record path, rejects links,
+aliases, special files, stale parents, and high-confidence secrets, and hashes
+the exact presentation bytes. The shared import use case scope-checks every
+record; the owned SQLite writer atomically appends or verifies immutable
+versions, normalized child rows, observation-only Git history, separately
+authorized local approvals, and exact manual review events. Re-import and
+review retries are idempotent, cancellation and failure leave no partial
+history, and online backups retain the journal. The SQLite baseline persists
+versioned Rust occurrence fingerprints and immutable current-memory
+projections.
+Revalidation evaluates approved heads, Git-DAG or exact-worktree validity,
+precision-first exact/rename/move or reviewed correspondence, ambiguity,
+conflict, and meaning-change staleness before one atomic projection activation.
+Recall returns the pinned projection with categorical freshness and coverage.
+Context compilation deterministically fuses exact declaration bytes and
+eligible current memory under a conservative byte budget, while diagnostics
+reports the matching source/projection state, capabilities, and limitations.
+The CLI exposes explicit write, approve, review, and observation-only history
+operations. Local MCP remains read-only by default and exposes the same
+`memory_manage` use case only under explicit fixed-actor startup authorization.
 
-The remaining Phase 0 milestone is deliberately narrow: attach a verified
-decision or failure, change the associated code, revalidate the memory, and
-compile an updated context pack. The indexing and evidence-retrieval foundation
-for that loop is implemented; production memory and context compilation are
-not.
+TypeScript and TSX support is syntax-only and uses separate grammar and
+artifact identities. JavaScript and MJS, TypeScript compiler semantics,
+references, module resolution, and active `tsconfig.json` interpretation remain
+unsupported.
+
+Python support is likewise syntax-only and uses an independent grammar and
+artifact identity for case-sensitive `.py` and `.pyi` paths. RepoWitness does
+not execute Python, resolve imports or environments, evaluate decorators,
+infer dynamic dispatch, or extract references and calls.
+
+Extended local verification passes `make ci`, `make test-all`, opt-in SQLite
+release probes, repeated cancellation/race/recovery stress loops, and
+production persistence, reuse, search, context, diagnostics, and MCP
+round-trips across the supported languages. Locally configured external
+repositories are confidential test inputs: their identities, paths, revisions,
+symbols, contents, and per-repository measurements are intentionally not
+recorded here. Publicly reproducible evidence comes from temporary
+mixed-language fixtures and explicitly public pinned benchmark corpora.
+
+The remaining Phase 0 milestone is deliberately narrow. The complete local
+product loop and pinned correctness scenario are implemented and pass every
+proposed numeric budget in a development run. Maintainers must still ratify or
+revise the proposed memory ADRs and benchmark budgets, finish the residual
+rewritten-history/review/publication fault matrix, rerun from a clean exact
+RepoWitness revision, and demonstrate on a real design-partner task that the
+evidence-backed memory changes a useful engineering decision relative to the
+declared baselines.
 
 ## Local verification
 
@@ -85,19 +134,27 @@ make ci
 make test-all
 ```
 
-`make ci` runs the required pull-request checks sequentially. `make test-all`
-adds the no-default-feature and release test profiles. Manual SQLite timing and
-resource probes remain opt-in through `make test-sqlite-benchmarks`.
-The read-only GitHub Actions `ci` job runs both required command sets on
-Ubuntu 24.04 for pull requests and pushes to `main`; branch protection requires
-that job before merge.
+`make ci` runs the required pull-request checks sequentially, including a
+locked build and dependency-policy audit of the standalone fuzz crate.
+`make test-all` adds the no-default-feature and release test profiles. Manual
+SQLite timing and resource probes remain opt-in through
+`make test-sqlite-benchmarks`. Executing the standalone
+[memory-record fuzz target](fuzz/README.md) is also opt-in. The read-only GitHub
+Actions `ci` job runs both required command sets on Ubuntu 24.04 for pull
+requests and pushes to `main`; branch protection requires that job before
+merge.
 
-Run the external Phase 0 preparation probe against a clean pinned mini-redis
-checkout with:
+Run the external Phase 0 product-loop benchmark against a clean pinned
+mini-redis checkout with:
 
 ```text
 ./scripts/run-phase0-benchmark /path/to/mini-redis 10
 ```
+
+The runner clones the corpus into a disposable worktree before creating memory
+or changing source. See the
+[provisional product benchmark](docs/research/phase0-product-benchmark-2026-07-28.md)
+for the latest environment, results, and remaining ratification limits.
 
 ## CLI
 
@@ -107,8 +164,8 @@ Build the binary:
 cargo build -p repowitness-cli --locked
 ```
 
-Create or update a local Rust index using a stable caller-assigned repository
-identity:
+Create or update one local supported-language index using a stable
+caller-assigned repository identity:
 
 ```text
 target/debug/repowitness index \
@@ -146,9 +203,9 @@ target/debug/repowitness search \
 Search output uses canonical byte-preserving repository paths and includes the
 query profile and digest, source snapshot, active generation, categorical
 resolution, exact returned/total match counts, fact ordinal, producer manifest,
-content and artifact digests, syntax tier, byte spans, limitations, and
-independent coverage counts. The literal profile does not expose raw FTS
-syntax.
+persisted language, content and artifact digests, syntax tier, byte spans,
+limitations, and independent coverage counts. The literal profile does not
+expose raw FTS syntax.
 
 Retrieve the exact declaration identified by one search match:
 
@@ -170,6 +227,92 @@ untrusted source bytes cannot inject terminal controls. It fails visibly if
 the selector is no longer in the active generation or the current source bytes
 no longer match the indexed content digest. Phase 0 does not return references.
 
+Rebuild the immutable current-memory projection after indexing or changing
+source:
+
+```text
+target/debug/repowitness memory-revalidate \
+  --repository-id rwi1:h:0000000000000000000000000000000000000000000000000000000000000001 \
+  --database /path/outside/the/worktree/repowitness.sqlite3 \
+  ../repository
+```
+
+Recall projected memory with either bounded literal terms or `--all`:
+
+```text
+target/debug/repowitness memory-recall \
+  --repository-id rwi1:h:0000000000000000000000000000000000000000000000000000000000000001 \
+  --database /path/outside/the/worktree/repowitness.sqlite3 \
+  --query Widget \
+  --limit 20
+```
+
+Create or replace one canonical shared record from a complete strict
+version-1 YAML input:
+
+```text
+target/debug/repowitness memory-manage write \
+  --repository-id rwi1:h:0000000000000000000000000000000000000000000000000000000000000001 \
+  --input /path/to/record.yaml \
+  ../repository
+```
+
+The input and destination must be distinct directly contained regular files.
+Create requires no parent; update and tombstone require one exact current
+parent and the next display revision. The writer rejects path aliases,
+concurrent replacement, and high-confidence credential forms without echoing
+matched values.
+
+Import reachable Git memory as observations only, then separately approve one
+exact current record with a locally asserted actor:
+
+```text
+target/debug/repowitness memory-manage import-history \
+  --repository-id rwi1:h:0000000000000000000000000000000000000000000000000000000000000001 \
+  --database /path/outside/the/worktree/repowitness.sqlite3 \
+  --actor local-reviewer \
+  ../repository
+
+target/debug/repowitness memory-manage approve \
+  --repository-id rwi1:h:0000000000000000000000000000000000000000000000000000000000000001 \
+  --database /path/outside/the/worktree/repowitness.sqlite3 \
+  --record-id rwm1:h:00000000000000000000000000000000 \
+  --actor local-reviewer \
+  ../repository
+```
+
+Repository-authored actor text never approves itself. `import-history`
+reports bounded coverage and may preserve successfully observed history while
+reporting an incomplete shallow or over-limit traversal. Use
+`memory-manage review --help` to append an approve, reject, or manual-link
+event for one exact record-evidence and target-occurrence selector.
+
+Compile exact source and eligible current memory under a conservative content
+budget:
+
+```text
+target/debug/repowitness context-build \
+  --repository-id rwi1:h:0000000000000000000000000000000000000000000000000000000000000001 \
+  --database /path/outside/the/worktree/repowitness.sqlite3 \
+  --root ../repository \
+  --intent Widget \
+  --budget 32768 \
+  --limit 20
+```
+
+The `utf8_bytes_upper_bound_v1` budget is deterministic and conservative; it is
+not an exact model-token count. If no memory projection exists, context
+compilation remains source-only and reports that omission.
+
+Inspect the exact active generation, optional matching memory projection,
+coverage, capabilities, and limitations without mutation:
+
+```text
+target/debug/repowitness diagnostics \
+  --repository-id rwi1:h:0000000000000000000000000000000000000000000000000000000000000001 \
+  --database /path/outside/the/worktree/repowitness.sqlite3
+```
+
 Serve the same active index to Codex over local stdio:
 
 ```text
@@ -179,7 +322,14 @@ target/debug/repowitness mcp-serve \
   --root ../repository
 ```
 
-The repository must be indexed first. Register the built binary with Codex:
+The repository must be indexed first. To expose the mutation tool, the
+operator must add both `--enable-memory-writes` and one fixed
+`--memory-actor <local-actor>` to `mcp-serve`. Without both options, the server
+lists only the five read tools. The enabled `memory_manage` tool cannot choose
+the repository identity, root, database, actor, host input path, timestamp,
+deadline policy, history revision, or resource limits.
+
+Register the default read-only built binary with Codex:
 
 ```text
 codex mcp add repowitness -- \
@@ -211,9 +361,11 @@ Restart the Codex client after changing configuration, then use `/mcp` in the
 terminal UI to inspect the connection. Codex CLI, the IDE extension, and the
 ChatGPT desktop app share the local Codex MCP configuration; see the current
 [Codex MCP documentation](https://learn.chatgpt.com/docs/extend/mcp). The
-server intentionally exposes only `code_search` and `symbol_get` in Phase 0.
-Call `code_search` first and pass its complete exact selector unchanged to
-`symbol_get`.
+server exposes the read-only `context_build`, `code_search`, `diagnostics`,
+`memory_recall`, and `symbol_get` tools by default. Call `code_search` first
+and pass its complete exact selector unchanged to `symbol_get` when retrieving
+a declaration directly. Enable mutation only in a trusted local configuration
+whose operator intends to grant that capability.
 
 To inspect only aggregate repository-path discovery facts without indexing:
 

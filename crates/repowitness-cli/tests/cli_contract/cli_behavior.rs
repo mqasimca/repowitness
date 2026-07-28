@@ -1,0 +1,373 @@
+#[test]
+fn help_and_version_write_to_stdout_and_succeed() {
+    let help = repowitness(&["--help"]);
+    assert!(help.status.success());
+    assert!(help.stderr.is_empty());
+    let help = String::from_utf8(help.stdout).expect("help must be UTF-8");
+    assert!(help.contains("index          Build"));
+    assert!(help.contains("--repository-id"));
+
+    let version = repowitness(&["--version"]);
+    assert!(version.status.success());
+    assert!(version.stderr.is_empty());
+    assert_eq!(
+        String::from_utf8(version.stdout).expect("version must be UTF-8"),
+        concat!("repowitness ", env!("CARGO_PKG_VERSION"), "\n")
+    );
+}
+
+#[test]
+fn invalid_commands_and_missing_commands_fail() {
+    for arguments in [
+        Vec::new(),
+        vec!["private-command"],
+        vec!["--help", "unexpected"],
+        vec!["--version", "unexpected"],
+    ] {
+        let output = repowitness(&arguments);
+        assert_eq!(output.status.code(), Some(64));
+        assert!(output.stdout.is_empty());
+        let stderr = String::from_utf8(output.stderr).expect("diagnostic must be UTF-8");
+        assert!(stderr.starts_with("error:"));
+        assert!(!stderr.contains("private-command"));
+    }
+}
+
+#[test]
+fn ambient_git_discovery_settings_do_not_change_nested_repository_resolution() {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let nested_repository_path = manifest_dir.join("src");
+    let ceiling = manifest_dir
+        .parent()
+        .expect("the CLI crate must have a workspace parent");
+    let output = Command::new(env!("CARGO_BIN_EXE_repowitness"))
+        .args(["inspect-paths".as_ref(), nested_repository_path.as_os_str()])
+        .env("GIT_CEILING_DIRECTORIES", ceiling)
+        .output()
+        .expect("the RepoWitness binary must start");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).expect("report must be UTF-8");
+    assert!(stdout.contains("status=ok\n"));
+    assert!(stdout.contains("index_created=false\n"));
+}
+
+#[test]
+fn incomplete_index_forms_are_usage_errors_without_running_work() {
+    for arguments in [
+        vec!["index"],
+        vec!["index", "../repository"],
+        vec!["index", "--repository", "../repository"],
+    ] {
+        let output = repowitness(&arguments);
+        assert_eq!(output.status.code(), Some(64));
+        assert!(output.stdout.is_empty());
+        let stderr = String::from_utf8(output.stderr).expect("diagnostic must be UTF-8");
+        assert!(stderr.starts_with("error:"));
+        assert!(!stderr.contains("../repository"));
+    }
+}
+
+#[test]
+fn index_activates_and_replaces_real_generations_without_leaking_inputs() {
+    let directory = TempDirectory::new();
+    let repository = fixture_repository(&directory);
+    let database = directory.database();
+
+    let first = index(&repository, &database, REPOSITORY_ID);
+    assert!(first.status.success());
+    assert!(first.stderr.is_empty());
+    let first = String::from_utf8(first.stdout).expect("index report must be UTF-8");
+    assert!(first.contains("status=ok\n"));
+    assert!(first.contains("operation=index\n"));
+    assert!(first.contains("generation_activated=true\n"));
+    assert!(first.contains("generation=1\n"));
+    assert!(first.contains("repository_paths=3\n"));
+    assert!(first.contains("indexed_rust_files=1\n"));
+    assert!(first.contains("indexed_go_files=1\n"));
+    assert_index_work_counts(&first, 0, 1, 0, 1);
+    assert!(first.contains("skipped_unsupported_paths=1\n"));
+    assert!(first.contains("symbol_facts=4\n"));
+    assert!(!first.contains(REPOSITORY_ID));
+    assert!(!first.contains(repository.to_string_lossy().as_ref()));
+    assert!(!first.contains(database.to_string_lossy().as_ref()));
+    assert!(database.is_file());
+
+    let first_search = assert_widget_search_contract(&database);
+    assert_symbol_get_success(
+        symbol_get_from_search(&repository, &database, REPOSITORY_ID, &first_search),
+        "rust",
+        "Widget",
+        "pub struct Widget;",
+    );
+    assert_go_search_contract(&repository, &database);
+    assert_absent_search_contract(&database);
+
+    let second = index(&repository, &database, REPOSITORY_ID);
+    assert!(second.status.success());
+    assert!(second.stderr.is_empty());
+    let second = String::from_utf8(second.stdout).expect("index report must be UTF-8");
+    assert!(second.contains("generation=2\n"));
+    assert!(second.contains("symbol_facts=4\n"));
+    assert_index_work_counts(&second, 1, 0, 1, 0);
+
+    let stale_generation =
+        symbol_get_from_search(&repository, &database, REPOSITORY_ID, &first_search);
+    assert_stale_symbol_rejected(stale_generation, &repository, None);
+
+    modify_source_and_assert_stale_rejection(&repository, &database);
+
+    let changed = index(&repository, &database, REPOSITORY_ID);
+    assert!(changed.status.success());
+    assert!(changed.stderr.is_empty());
+    let changed = String::from_utf8(changed.stdout).expect("index report must be UTF-8");
+    assert!(changed.contains("generation=3\n"));
+    assert!(changed.contains("symbol_facts=5\n"));
+    assert_index_work_counts(&changed, 0, 1, 1, 0);
+
+    assert_changed_symbol_contract(&repository, &database);
+}
+
+#[test]
+fn cli_indexes_searches_retrieves_and_reuses_typescript_and_tsx() {
+    let directory = TempDirectory::new();
+    let repository = fixture_repository(&directory);
+    fs::create_dir_all(repository.join("web"))
+        .expect("TypeScript fixture directory should be created");
+    fs::write(
+        repository.join("web/api.ts"),
+        "export function loadFrontend() {}\n",
+    )
+    .expect("TypeScript fixture should be written");
+    fs::write(
+        repository.join("web/view.tsx"),
+        "export function FrontendView() { return <main />; }\n",
+    )
+    .expect("TSX fixture should be written");
+    let status = Command::new("git")
+        .current_dir(&repository)
+        .args(["add", "--", "web/api.ts", "web/view.tsx"])
+        .status()
+        .expect("Git should start");
+    assert!(status.success());
+    let database = directory.database();
+
+    let first = index(&repository, &database, REPOSITORY_ID);
+    assert!(first.status.success());
+    assert!(first.stderr.is_empty());
+    let first = String::from_utf8(first.stdout).expect("index report must be UTF-8");
+    assert!(first.contains("repository_paths=5\n"));
+    assert!(first.contains("indexed_typescript_files=1\n"));
+    assert!(first.contains("analyzed_typescript_files=1\n"));
+    assert!(first.contains("indexed_tsx_files=1\n"));
+    assert!(first.contains("analyzed_tsx_files=1\n"));
+    assert!(first.contains("skipped_unsupported_paths=1\n"));
+    assert!(first.contains("symbol_facts=6\n"));
+
+    let mut producer_manifests = Vec::new();
+    for (query, language, name, declaration) in [
+        (
+            "loadFrontend",
+            "typescript",
+            "loadFrontend",
+            "function loadFrontend() {}",
+        ),
+        (
+            "FrontendView",
+            "tsx",
+            "FrontendView",
+            "function FrontendView() { return <main />; }",
+        ),
+    ] {
+        let searched = search(&database, REPOSITORY_ID, query, "1");
+        assert!(searched.status.success());
+        assert!(searched.stderr.is_empty());
+        let searched = String::from_utf8(searched.stdout).expect("search report must be UTF-8");
+        assert_eq!(report_value(&searched, "match_0_language"), language);
+        assert_eq!(report_value(&searched, "match_0_kind"), "function");
+        assert_eq!(report_value(&searched, "match_0_name"), name);
+        producer_manifests
+            .push(report_value(&searched, "match_0_producer_manifest_sha256").to_owned());
+        assert_symbol_get_success(
+            symbol_get_from_search(&repository, &database, REPOSITORY_ID, &searched),
+            language,
+            name,
+            declaration,
+        );
+    }
+    assert_eq!(producer_manifests.len(), 2);
+    assert_ne!(producer_manifests[0], producer_manifests[1]);
+
+    let second = index(&repository, &database, REPOSITORY_ID);
+    assert!(second.status.success());
+    assert!(second.stderr.is_empty());
+    let second = String::from_utf8(second.stdout).expect("index report must be UTF-8");
+    assert!(second.contains("reused_typescript_files=1\n"));
+    assert!(second.contains("analyzed_typescript_files=0\n"));
+    assert!(second.contains("reused_tsx_files=1\n"));
+    assert!(second.contains("analyzed_tsx_files=0\n"));
+}
+
+#[test]
+fn cli_indexes_searches_retrieves_and_reuses_python_and_stub_files() {
+    let directory = TempDirectory::new();
+    let repository = fixture_repository(&directory);
+    fs::create_dir_all(repository.join("sdk"))
+        .expect("Python fixture directory should be created");
+    fs::write(
+        repository.join("sdk/client.py"),
+        "class Client:\n    def send(self): pass\n",
+    )
+    .expect("Python fixture should be written");
+    fs::write(
+        repository.join("sdk/types.pyi"),
+        "class Response:\n    status: int\n",
+    )
+    .expect("Python stub fixture should be written");
+    let status = Command::new("git")
+        .current_dir(&repository)
+        .args(["add", "--", "sdk/client.py", "sdk/types.pyi"])
+        .status()
+        .expect("Git should start");
+    assert!(status.success());
+    let database = directory.database();
+
+    let first = index(&repository, &database, REPOSITORY_ID);
+    assert!(first.status.success());
+    assert!(first.stderr.is_empty());
+    let first = String::from_utf8(first.stdout).expect("index report must be UTF-8");
+    assert!(first.contains("repository_paths=5\n"));
+    assert!(first.contains("indexed_python_files=2\n"));
+    assert!(first.contains("analyzed_python_files=2\n"));
+    assert!(first.contains("skipped_unsupported_paths=1\n"));
+    assert!(first.contains("symbol_facts=7\n"));
+
+    for (query, name, declaration) in [
+        ("send", "send", "def send(self): pass"),
+        (
+            "Response",
+            "Response",
+            "class Response:\n    status: int",
+        ),
+    ] {
+        let searched = search(&database, REPOSITORY_ID, query, "1");
+        assert!(searched.status.success());
+        assert!(searched.stderr.is_empty());
+        let searched = String::from_utf8(searched.stdout).expect("search report must be UTF-8");
+        assert_eq!(report_value(&searched, "match_0_language"), "python");
+        assert_eq!(report_value(&searched, "match_0_name"), name);
+        assert_symbol_get_success(
+            symbol_get_from_search(&repository, &database, REPOSITORY_ID, &searched),
+            "python",
+            name,
+            declaration,
+        );
+    }
+
+    let context = repowitness_os([
+        OsStr::new("context-build"),
+        OsStr::new("--repository-id"),
+        OsStr::new(REPOSITORY_ID),
+        OsStr::new("--database"),
+        database.as_os_str(),
+        OsStr::new("--root"),
+        repository.as_os_str(),
+        OsStr::new("--intent"),
+        OsStr::new("send"),
+        OsStr::new("--budget"),
+        OsStr::new("4096"),
+        OsStr::new("--limit"),
+        OsStr::new("1"),
+    ]);
+    assert!(context.status.success());
+    assert!(context.stderr.is_empty());
+    let context = String::from_utf8(context.stdout).expect("context report must be UTF-8");
+    assert!(context.contains("context_item_0_language=python\n"));
+    assert!(context.contains(&format!(
+        "context_item_0_declaration_hex={}\n",
+        hex_bytes(b"def send(self): pass")
+    )));
+
+    let second = index(&repository, &database, REPOSITORY_ID);
+    assert!(second.status.success());
+    assert!(second.stderr.is_empty());
+    let second = String::from_utf8(second.stdout).expect("index report must be UTF-8");
+    assert!(second.contains("reused_python_files=2\n"));
+    assert!(second.contains("analyzed_python_files=0\n"));
+}
+
+fn assert_index_work_counts(
+    report: &str,
+    reused_rust: u64,
+    analyzed_rust: u64,
+    reused_go: u64,
+    analyzed_go: u64,
+) {
+    assert!(report.contains(&format!("reused_rust_files={reused_rust}\n")));
+    assert!(report.contains(&format!("analyzed_rust_files={analyzed_rust}\n")));
+    assert!(report.contains(&format!("reused_go_files={reused_go}\n")));
+    assert!(report.contains(&format!("analyzed_go_files={analyzed_go}\n")));
+}
+
+#[test]
+fn invalid_identity_and_repository_fail_without_creating_a_database_or_leaking_inputs() {
+    let directory = TempDirectory::new();
+    let database = directory.database();
+    let private_repository = directory.0.join("private-missing-repository");
+    let private_identity = "rwi1:h:PRIVATE";
+
+    let invalid_identity = index(&private_repository, &database, private_identity);
+    assert_eq!(invalid_identity.status.code(), Some(70));
+    assert!(invalid_identity.stdout.is_empty());
+    let stderr = String::from_utf8(invalid_identity.stderr).expect("diagnostic must be UTF-8");
+    assert_eq!(stderr, "error: indexing failed\n");
+    assert!(!stderr.contains(private_identity));
+    assert!(!stderr.contains("private-missing-repository"));
+    assert!(!database.exists());
+
+    let missing_repository = index(&private_repository, &database, REPOSITORY_ID);
+    assert_eq!(missing_repository.status.code(), Some(70));
+    assert!(missing_repository.stdout.is_empty());
+    let stderr = String::from_utf8(missing_repository.stderr).expect("diagnostic must be UTF-8");
+    assert_eq!(stderr, "error: indexing failed\n");
+    assert!(!stderr.contains(REPOSITORY_ID));
+    assert!(!stderr.contains("private-missing-repository"));
+    assert!(!database.exists());
+}
+
+#[test]
+fn worktree_local_database_is_rejected_before_indexing_can_create_it() {
+    let directory = TempDirectory::new();
+    let repository = fixture_repository(&directory);
+    let database = repository.join("private-index.sqlite3");
+
+    let output = index(&repository, &database, REPOSITORY_ID);
+
+    assert_eq!(output.status.code(), Some(70));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("diagnostic must be UTF-8");
+    assert_eq!(stderr, "error: indexing failed\n");
+    assert!(!stderr.contains(REPOSITORY_ID));
+    assert!(!stderr.contains("private-index.sqlite3"));
+    assert!(!database.exists());
+}
+
+#[test]
+fn path_inspection_runs_the_concrete_adapter_and_never_claims_an_index() {
+    let output = repowitness(&["inspect-paths", env!("CARGO_MANIFEST_DIR")]);
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).expect("report must be UTF-8");
+    assert!(stdout.contains("status=ok\n"));
+    assert!(stdout.contains("repository_paths="));
+    assert!(stdout.contains("index_created=false\n"));
+    assert!(!stdout.contains(env!("CARGO_MANIFEST_DIR")));
+
+    let output = repowitness(&["inspect-paths", "repowitness-path-that-does-not-exist"]);
+    assert_eq!(output.status.code(), Some(70));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("diagnostic must be UTF-8");
+    assert!(stderr.contains("repository path inspection failed"));
+    assert!(!stderr.contains("repowitness-path-that-does-not-exist"));
+}

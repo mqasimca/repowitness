@@ -5,9 +5,23 @@ use repowitness_domain::{
 use sha2::{Digest, Sha256};
 
 const RUST_SOURCE_SNAPSHOT_DOMAIN: &[u8] = b"RepoWitness\0rust-source-snapshot\0";
+const GO_AND_RUST_SOURCE_SNAPSHOT_DOMAIN: &[u8] = b"RepoWitness\0go-and-rust-source-snapshot\0";
+const SUPPORTED_LANGUAGES_SOURCE_SNAPSHOT_DOMAIN: &[u8] =
+    b"RepoWitness\0supported-languages-source-snapshot\0";
 
 /// Version of the concrete Phase 0 Rust source-snapshot encoding.
 pub const RUST_SOURCE_SNAPSHOT_VERSION: u32 = 1;
+/// Version of the mixed Go-and-Rust source-snapshot encoding.
+pub const GO_AND_RUST_SOURCE_SNAPSHOT_VERSION: u32 = 1;
+/// Version of the five-language source-snapshot encoding.
+pub const SUPPORTED_LANGUAGES_SOURCE_SNAPSHOT_VERSION: u32 = 3;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SnapshotHashProfile {
+    RustV1,
+    GoAndRustV1,
+    SupportedLanguagesV3,
+}
 
 /// Every non-file identity that affects one Phase 0 Rust source snapshot.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -19,6 +33,7 @@ pub struct RustSourceSnapshotIdentity {
     producer_manifest: ProducerManifestDigest,
     analysis_schema: AnalysisSchemaDigest,
     canonicalization_version: u32,
+    hash_profile: SnapshotHashProfile,
 }
 
 impl RustSourceSnapshotIdentity {
@@ -41,6 +56,53 @@ impl RustSourceSnapshotIdentity {
             producer_manifest,
             analysis_schema,
             canonicalization_version,
+            hash_profile: SnapshotHashProfile::RustV1,
+        }
+    }
+
+    /// Constructs a semantics-complete mixed Go-and-Rust snapshot identity.
+    #[must_use]
+    pub const fn new_go_and_rust(
+        repository: RepositoryIdentityDigest,
+        git_state: GitStateDigest,
+        worktree_state: WorktreeStateDigest,
+        configuration: ConfigurationDigest,
+        producer_manifest: ProducerManifestDigest,
+        analysis_schema: AnalysisSchemaDigest,
+        canonicalization_version: u32,
+    ) -> Self {
+        Self {
+            repository,
+            git_state,
+            worktree_state,
+            configuration,
+            producer_manifest,
+            analysis_schema,
+            canonicalization_version,
+            hash_profile: SnapshotHashProfile::GoAndRustV1,
+        }
+    }
+
+    /// Constructs a semantics-complete snapshot identity for all supported languages.
+    #[must_use]
+    pub const fn new_supported_languages(
+        repository: RepositoryIdentityDigest,
+        git_state: GitStateDigest,
+        worktree_state: WorktreeStateDigest,
+        configuration: ConfigurationDigest,
+        producer_manifest: ProducerManifestDigest,
+        analysis_schema: AnalysisSchemaDigest,
+        canonicalization_version: u32,
+    ) -> Self {
+        Self {
+            repository,
+            git_state,
+            worktree_state,
+            configuration,
+            producer_manifest,
+            analysis_schema,
+            canonicalization_version,
+            hash_profile: SnapshotHashProfile::SupportedLanguagesV3,
         }
     }
 
@@ -87,6 +149,9 @@ impl RustSourceSnapshotIdentity {
     }
 }
 
+/// Language-neutral compatibility name for a source-snapshot identity.
+pub type SourceSnapshotIdentity = RustSourceSnapshotIdentity;
+
 /// Hashes every Phase 0 Rust snapshot component in a fixed domain and order.
 #[must_use]
 pub fn hash_rust_source_snapshot(
@@ -96,6 +161,49 @@ pub fn hash_rust_source_snapshot(
     let mut hasher = Sha256::new();
     hasher.update(RUST_SOURCE_SNAPSHOT_DOMAIN);
     hasher.update(RUST_SOURCE_SNAPSHOT_VERSION.to_be_bytes());
+    hasher.update(identity.repository().as_bytes());
+    hasher.update(identity.git_state().as_bytes());
+    hasher.update(identity.worktree_state().as_bytes());
+    hasher.update(identity.configuration().as_bytes());
+    hasher.update(identity.producer_manifest().as_bytes());
+    hasher.update(identity.analysis_schema().as_bytes());
+    hasher.update(identity.canonicalization_version().to_be_bytes());
+    hasher.update(manifest.as_bytes());
+    SourceSnapshotDigest::new(hasher.finalize().into())
+}
+
+/// Hashes a snapshot using the profile selected by its validated constructor.
+#[must_use]
+pub fn hash_source_snapshot(
+    identity: RustSourceSnapshotIdentity,
+    manifest: SourceManifestDigest,
+) -> SourceSnapshotDigest {
+    match identity.hash_profile {
+        SnapshotHashProfile::RustV1 => hash_rust_source_snapshot(identity, manifest),
+        SnapshotHashProfile::GoAndRustV1 => hash_snapshot(
+            GO_AND_RUST_SOURCE_SNAPSHOT_DOMAIN,
+            GO_AND_RUST_SOURCE_SNAPSHOT_VERSION,
+            identity,
+            manifest,
+        ),
+        SnapshotHashProfile::SupportedLanguagesV3 => hash_snapshot(
+            SUPPORTED_LANGUAGES_SOURCE_SNAPSHOT_DOMAIN,
+            SUPPORTED_LANGUAGES_SOURCE_SNAPSHOT_VERSION,
+            identity,
+            manifest,
+        ),
+    }
+}
+
+fn hash_snapshot(
+    domain: &[u8],
+    version: u32,
+    identity: RustSourceSnapshotIdentity,
+    manifest: SourceManifestDigest,
+) -> SourceSnapshotDigest {
+    let mut hasher = Sha256::new();
+    hasher.update(domain);
+    hasher.update(version.to_be_bytes());
     hasher.update(identity.repository().as_bytes());
     hasher.update(identity.git_state().as_bytes());
     hasher.update(identity.worktree_state().as_bytes());

@@ -232,6 +232,16 @@ keeps an identity-checked file guard through writer startup, opens SQLite with
 no-follow semantics, revalidates after SQLite opens, and cleans up only an
 identity-matched newly reserved database after failed startup.
 
+The later [version-4 schema](../schemas/phase0-sqlite-v4.md) is a forward
+migration that preserves these accepted ownership and generation rules while
+adding Go-and-Rust artifact language under proposed
+[ADR-0015](0015-phase0-go-and-rust-indexing.md). It does not rewrite the
+accepted version-1 decision or historical migrations.
+
 ## Supersession
 
-None.
+The exact migration identity and supported pre-release upgrade chain are
+superseded by
+[ADR-0022](0022-squash-pre-release-sqlite-schema.md). The ownership,
+immutable-generation, recovery, backup, and fail-closed ledger decisions remain
+accepted.

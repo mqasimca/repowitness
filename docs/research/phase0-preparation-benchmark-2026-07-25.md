@@ -6,6 +6,10 @@
 - Corpus revision: `3d93b42bc363220f85af4fc9e1bebd35b588a4a3`
 - Benchmark manifest: [`../../benchmarks/phase0/manifest.json`](../../benchmarks/phase0/manifest.json)
 
+This historical preparation-only measurement is retained for comparison. The
+current full-loop evidence is the
+[Phase 0 product benchmark](phase0-product-benchmark-2026-07-28.md).
+
 ## Scope
 
 This is the first measurement of the implemented local preparation slice:

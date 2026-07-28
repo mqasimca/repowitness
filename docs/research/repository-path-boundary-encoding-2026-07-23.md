@@ -81,19 +81,12 @@ SQLite continues to store exact path bytes.
 
 ## Initial corpus size
 
-The initial clean Linux corpus was measured using the revisions recorded in
-the [path-identity research](path-identity-2026-07-23.md). Counts below cover
-only the canonical scalar, excluding surrounding JSON/YAML fields and optional
-display text.
-
-| Repository | Paths | Raw path bytes | Encoded scalar bytes | Longest scalar |
-|---|---:|---:|---:|---:|
-| `netwhy` | 48 | 906 | 2,148 | 81 |
-| `nvctl` | 115 | 2,727 | 6,259 | 97 |
-
-These samples support implementation testing, not final production defaults.
-Hard encoded and decoded ceilings remain mandatory even after configurable
-lower defaults are selected.
+Locally configured external corpora were used only as private smoke inputs.
+Their identities, revisions, paths, and per-repository encoding measurements
+are intentionally omitted from the public research record. Reproducible
+boundary evidence comes from committed synthetic vectors. Hard encoded and
+decoded ceilings remain mandatory even after configurable lower defaults are
+selected.
 
 ## Primary sources
 

@@ -1,5 +1,10 @@
 # Phase 0 SQLite schema version 3
 
+> Historical pre-baseline development schema. The current runtime does not
+> accept this format. It is retained only as design provenance and was
+> superseded by [ADR-0022](../adr/0022-squash-pre-release-sqlite-schema.md) and
+> the [current baseline](phase0-sqlite-baseline-v1.md).
+
 - Status: Implemented
 - Date: 2026-07-26
 - Governing decision:

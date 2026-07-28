@@ -1,7 +1,7 @@
 # Architecture
 
 - Status: Proposed
-- Last reviewed: 2026-07-26
+- Last reviewed: 2026-07-28
 
 ## Architectural objective
 
@@ -49,12 +49,14 @@ Dashed components are not part of the Phase 0 alpha.
 
 ## Implementation status
 
-The solid source-indexing and retrieval path is implemented for one local Rust
-repository:
+The solid source-indexing and retrieval path is implemented for one local
+repository containing any mixture of Rust, Go, TypeScript, TSX, and Python:
 
 ```text
-Git/worktree -> contained source reads -> Rust facts -> immutable artifacts
-    -> owned SQLite generation -> FTS5 candidates -> material result
+Git/worktree -> contained source reads -> language-specific syntax facts
+    -> immutable artifacts -> owned SQLite source generation
+    -> memory correspondence/revalidation -> immutable memory projection
+    -> exact source/current-memory retrieval -> bounded context or diagnostics
     -> CLI or local stdio MCP
 ```
 
@@ -69,16 +71,32 @@ no-follow SQLite open, post-open path revalidation, and guarded new-file
 cleanup prevent worktree database aliases or path replacement from redirecting
 writes.
 
-The implemented query path provides bounded literal `code_search` and exact
-`symbol_get`. Both return evidence-bearing application results rather than
-storage rows. The CLI and MCP adapters share these use cases, and the MCP
-server fixes the repository, source root, and database at startup.
+The implemented read path provides bounded literal `code_search`, exact
+`symbol_get`, current-projection `memory_recall`, deterministic
+`context_build`, and transactionally pinned `diagnostics`. These return
+evidence-bearing application results rather than storage rows. The CLI and MCP
+adapters share the same use cases, and the MCP server fixes the repository,
+source root, and database at startup.
 
-Memory lifecycle, logical-symbol correspondence, Git-DAG revalidation, rank
-fusion, and context-pack compilation remain architectural contracts rather
-than production paths. The strict YAML parser and canonical digest are a
-test-only spike pending acceptance of
-[ADR-0014](adr/0014-phase0-engineering-memory-record.md).
+Memory ingestion now reaches an append-only local journal: the domain model,
+strict YAML parser, canonical digest, and deterministic writer implement
+accepted [ADR-0014](adr/0014-phase0-engineering-memory-record.md);
+capability-contained worktree admission feeds a scope-checked application use
+case; and the owned SQLite writer atomically appends immutable versions,
+normalized children, observations, and trusted local approvals under the
+implemented
+[baseline schema](schemas/phase0-sqlite-baseline-v1.md). The same one-migration
+baseline contains immutable Rust occurrence fingerprints, Git-validity and
+correspondence results, conflicts, categorical effective state, an atomically
+activated current-memory projection, Python as an exact fifth persisted
+language, reviewed correspondence, and exact review-event idempotency.
+Application and local composition then recall only the pinned projection and
+compile eligible current memory with exact source under a bounded,
+evidence-bearing context contract. A contained canonical writer,
+observation-only bounded Git-history import, separately trusted local approval,
+and conflict-preserving correspondence review complete the Phase 0 local
+management path. Broader context providers and later memory workflows remain
+deferred.
 
 ## Four information planes
 
@@ -142,17 +160,21 @@ Filesystem events are hints, never the correctness source. Native events populat
 
 The current pure domain foundation implements source-manifest contract version 1 as a file-count-bounded collection of already-validated normalized path, file-type, and content-digest components. Construction rejects over-limit input before sorting, canonicalizes unique entries by normalized-path order, rejects duplicate normalized paths, and stores the result without unused `Vec` capacity.
 
-Source-snapshot contract version 1 composes that manifest with mandatory
+Source-snapshot contract version 2 composes that manifest with mandatory
 repository, complete Git, worktree/submodule, resolved configuration/policy,
 and analyzer/grammar/producer/schema identities. The application boundary now
 distinguishes a source-manifest digest from a complete source-snapshot digest
-and hashes every concrete Rust snapshot component in a versioned,
-domain-separated encoding. Analysis-artifact key contract version 1 requires
+and hashes every concrete mixed-language snapshot component in a versioned,
+domain-separated encoding. Each supported language has a separate
+semantics-complete artifact identity, while one combined source profile
+commits to all five adapters and the exact case-sensitive
+`.rs`/`.go`/`.ts`/`.tsx`/`.py`/`.pyi` selection policy. Analysis-artifact key contract
+version 1 requires
 source digest, adapter/grammar/producer identity, semantics-affecting
 configuration, extraction schema, and canonicalization version as distinct
 logical inputs. Equality and persisted digest identity change when any key
 input changes. See the
-[Phase 0 SQLite v3 schema](schemas/phase0-sqlite-v3.md).
+[Phase 0 SQLite baseline](schemas/phase0-sqlite-baseline-v1.md).
 
 The pure analysis layer plans immutable artifact reuse from a canonical
 manifest and a verified logical-key inventory. Planning preserves manifest
@@ -195,10 +217,13 @@ worktree receipts from bounded sanitized Git output, fails closed on sparse
 and gitlink scope, and compares captures around final path/content
 revalidation.
 
-The production Rust profile hashes versioned configuration and extraction
-schema manifests. Its producer identity includes pinned Tree-sitter package
-versions, the grammar node schema, and exact first-party analysis, preparation,
-canonicalization, and local source-adapter implementation bytes. The CLI
+The production Rust, Go, TypeScript, TSX, and Python profiles hash versioned
+configuration and extraction schema manifests independently. Each producer
+identity includes its pinned Tree-sitter package version, grammar node schema,
+and exact first-party analysis, preparation, canonicalization, and local
+source-adapter implementation bytes. The combined snapshot profile commits to
+all five identities without allowing cross-language or cross-dialect artifact
+reuse. The CLI
 `index` composition accepts only an explicit repository ID and SQLite path,
 shares one deadline and cancellation flag across preparation and publication,
 checkpoints after activation, and reports non-sensitive aggregates. Generation
@@ -239,7 +264,7 @@ Initial code evidence tiers are:
 
 These categories are origins with documented limits, not universal numeric probabilities.
 
-The current domain foundation implements semantic material-result contract version 1. It requires item-bounded evidence and notice collections, preserves supporting and contradictory evidence explicitly, and rejects resolved claims without support, resolved claims with contradictory evidence, unexplained ambiguity or indeterminacy, and unresolved outcomes that omit unresolved coverage. Evidence identity now has a typed structure, fixed-width byte offsets and lengths, validated half-open byte spans, explicit whole-file/span/symbol-occurrence locations, and a separate producer ID/version structure. Empty spans represent points or insertion boundaries; the adapter that owns the source bytes must also reject endpoints outside the referenced blob. The Phase 0 `code_search` application use case admits a bounded canonical literal query, records only its domain-separated digest in the claim, maps ordered Rust syntax candidates to attributed symbol-occurrence evidence, pins the result to the SQLite-returned snapshot and opaque generation, adds an explicit lexical-only limitation, reports exact pre-limit match counts, and converts index omissions plus query truncation into independent coverage categories. An empty candidate set is `unresolved`, not proof of absence. The corresponding `symbol_get` use case accepts the complete snapshot, generation, path, content, artifact, and fact-ordinal selector; requires the adapter to return that exact active context and occurrence; revalidates declaration bounds and name bytes; and returns one syntax-attributed definition with explicit no-references coverage. The local adapter reads the authoritative generation mapping rather than the disposable FTS projection, then capability-contains the source read and verifies its whole-file digest before slicing the declaration. Stale generations and modified source fail instead of retargeting evidence. Repository-path and repository-ID text encodings are fixed; remaining claim, producer, generation, notice, and MCP wire encodings stay separate from persistence.
+The current domain foundation implements semantic material-result contract version 1. It requires item-bounded evidence and notice collections, preserves supporting and contradictory evidence explicitly, and rejects resolved claims without support, resolved claims with contradictory evidence, unexplained ambiguity or indeterminacy, and unresolved outcomes that omit unresolved coverage. Evidence identity now has a typed structure, fixed-width byte offsets and lengths, validated half-open byte spans, explicit whole-file/span/symbol-occurrence locations, and a separate producer ID/version structure. Empty spans represent points or insertion boundaries; the adapter that owns the source bytes must also reject endpoints outside the referenced blob. The Phase 0 `code_search` application use case admits a bounded canonical literal query, records only its domain-separated digest in the claim, maps ordered supported-language syntax candidates to attributed symbol-occurrence evidence, pins the result to the SQLite-returned snapshot and opaque generation, adds an explicit lexical-only limitation, reports exact pre-limit match counts, and converts index omissions plus query truncation into independent coverage categories. Each occurrence carries its persisted language; that language must agree with the exact case-sensitive repository extension, and producer attribution follows the validated language instead of guessing it from the path. An empty candidate set is `unresolved`, not proof of absence. The corresponding `symbol_get` use case accepts the complete snapshot, generation, path, content, artifact, and fact-ordinal selector; requires the adapter to return that exact active context and occurrence; revalidates the path/language association, declaration bounds, and name bytes; and returns one syntax-attributed definition with explicit no-references coverage. The local adapter reads the authoritative generation mapping rather than the disposable FTS projection, then capability-contains the source read and verifies its whole-file digest before slicing the declaration. Stale generations, modified source, and inconsistent persisted language fail instead of retargeting or misattributing evidence. Repository-path and repository-ID text encodings are fixed; remaining claim, producer, generation, notice, and MCP wire encodings stay separate from persistence.
 
 ## Logical identity and correspondence
 
@@ -327,14 +352,17 @@ Phase 0 implements only the subset named in the [roadmap](roadmap.md). Compatibi
 
 Use a released, pinned MCP specification/SDK pair. MCP DTOs stay outside
 application and domain types. Local stdio is the Phase 0 transport. The current
-server pins MCP `2025-11-25` through `rmcp` 2.2.0 and exposes only
-`code_search` and `symbol_get`. Repository identity, database, and contained
-source root are fixed at process startup rather than accepted from tool
-callers. The transport rejects a protocol line over 3 MiB; code-search and
-symbol-result envelopes have separate encoded-output limits. A four-permit
-semaphore bounds admitted repository work. Each synchronous local operation
-runs on Tokio's blocking pool with a remaining deadline and cooperative
-cancellation flag, while stdout remains exclusively JSON-RPC traffic.
+server pins MCP `2025-11-25` through `rmcp` 2.2.0 and exposes
+`context_build`, `code_search`, `diagnostics`, `memory_recall`, and
+`symbol_get` by default. It adds `memory_manage` only when startup explicitly
+enables writes with one fixed validated local actor. Repository identity,
+database, contained source root, actor, and resource policy are fixed at
+process startup rather than accepted from tool callers. The transport rejects
+a protocol line over 3 MiB; every result envelope has a bounded encoded size.
+A four-permit semaphore bounds admitted repository work. Each synchronous
+local operation runs on Tokio's blocking pool with a remaining deadline and
+cooperative cancellation flag, while stdout remains exclusively JSON-RPC
+traffic.
 Product correctness does not depend on deprecated Roots, Sampling, or Logging,
 and experimental MCP Tasks remain an optional negotiated projection of
 application-owned task semantics.

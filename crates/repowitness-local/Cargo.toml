@@ -11,11 +11,16 @@ publish.workspace = true
 [dependencies]
 cap-fs-ext.workspace = true
 cap-std.workspace = true
+granit-parser.workspace = true
 repowitness-analysis.workspace = true
 repowitness-application.workspace = true
 repowitness-domain.workspace = true
 rusqlite.workspace = true
 same-file.workspace = true
+serde.workspace = true
+serde-saphyr.workspace = true
+serde_json.workspace = true
+serde_json_canonicalizer.workspace = true
 sha2.workspace = true
 
 [target.'cfg(unix)'.dependencies]
@@ -23,10 +28,6 @@ rustix.workspace = true
 
 [dev-dependencies]
 gix.workspace = true
-granit-parser.workspace = true
-serde.workspace = true
-serde-saphyr.workspace = true
-serde_json_canonicalizer.workspace = true
 
 [lints]
 workspace = true

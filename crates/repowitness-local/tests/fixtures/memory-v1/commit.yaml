@@ -1,0 +1,41 @@
+schema_version: 1
+record_id: mem_00000000000000000000000000
+display_revision: 1
+parent_revision_digests: []
+kind: decision
+title: "Keep generation publication atomic"
+body: "Readers must never observe a partially staged generation."
+scope:
+  repository_id: rwi1:h:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+  subject_evidence: 0
+provenance:
+  origin: human
+  actor_kind: local_asserted
+  actor_id: "maintainer"
+assurance: locally_approved
+lifecycle: active
+validity:
+  kind: commits
+  introduced_by:
+    - object_format: sha1
+      object_id: "1111111111111111111111111111111111111111"
+  invalidated_by: []
+evidence:
+  - kind: rust_symbol
+    source_snapshot_digest: "2222222222222222222222222222222222222222222222222222222222222222"
+    path: rwp1:h:7372632F6C69622E7273
+    content_digest: "3333333333333333333333333333333333333333333333333333333333333333"
+    artifact_digest: "4444444444444444444444444444444444444444444444444444444444444444"
+    fact_ordinal: 0
+    symbol_kind: function
+    name: "publish"
+    qualified_name: "crate::publish"
+    name_start: 3
+    name_length: 7
+    declaration_start: 0
+    declaration_length: 20
+    declaration_digest: "5555555555555555555555555555555555555555555555555555555555555555"
+    producer_id: "repowitness.rust.syntax"
+    producer_version: "phase0-rust-syntax-v1"
+relationships: []
+tombstone: false

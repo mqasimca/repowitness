@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-07-22
+- Last reviewed: 2026-07-28
 - Owners: Project maintainers
 - Scope: Memory validity, historical queries, branches, rebases, and audit history
 
@@ -105,8 +106,10 @@ Fixtures must cover:
 
 Canonical SHA-1/SHA-256 Git and dirty-worktree source receipts are implemented
 for indexing, including explicit shallow state and concurrent-mutation
-fencing. Memory introduction/invalidation ancestry, immutable memory versions,
-“as known at” queries, and indeterminate-history results are not implemented.
+fencing. Immutable memory versions, introduction/invalidation ancestry,
+branch-aware validity, shallow-history coverage, approved-head conflicts, and
+indeterminate effective states are implemented. Historical “as known at”
+queries and portable retention/export for pruned objects remain unimplemented.
 
 ## Supersession
 

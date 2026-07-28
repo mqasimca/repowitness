@@ -18,6 +18,7 @@ CARGO_DENY_VERSION ?= 0.19.4
 	docs \
 	fmt \
 	fmt-check \
+	fuzz-check \
 	help \
 	rustdoc \
 	test \
@@ -34,6 +35,7 @@ help:
 		'RepoWitness verification targets:' \
 		'  make fmt                       Format the Rust workspace' \
 		'  make fmt-check                 Check Rust formatting' \
+		'  make fuzz-check                Check the standalone fuzz crate and lockfile' \
 		'  make check                     Check all targets and features' \
 		'  make clippy                    Run Clippy with warnings denied' \
 		'  make test                      Run default workspace tests' \
@@ -54,6 +56,10 @@ fmt:
 
 fmt-check:
 	$(CARGO) fmt --all -- --check
+
+fuzz-check:
+	$(CARGO) check --manifest-path fuzz/Cargo.toml \
+		--all-targets --locked --target-dir target/fuzz-check
 
 check:
 	$(CARGO) check --workspace --all-targets --all-features --locked
@@ -96,6 +102,7 @@ deny:
 		exit 127; \
 	}
 	$(CARGO) deny --locked check
+	$(CARGO) deny --manifest-path fuzz/Cargo.toml --locked check
 
 docs:
 	./scripts/check-docs
@@ -109,6 +116,6 @@ benchmarks:
 diff-check:
 	git diff --check
 
-ci: fmt-check check clippy test test-all-features test-doc rustdoc deny deps benchmarks docs diff-check
+ci: fmt-check fuzz-check check clippy test test-all-features test-doc rustdoc deny deps benchmarks docs diff-check
 
 all: ci

@@ -2,9 +2,8 @@
 
 use core::fmt;
 
-use repowitness_domain::{
-    RepositoryPath, RepositoryPathByteCount, RepositoryPathError, RepositoryPathLimits,
-};
+pub use repowitness_domain::RepositoryPathLimits;
+use repowitness_domain::{RepositoryPath, RepositoryPathByteCount, RepositoryPathError};
 
 const PREFIX: &str = "rwp1:h:";
 const BASE16_UPPER: &[u8; 16] = b"0123456789ABCDEF";

@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 use repowitness_analysis::RustSourceAnalysis;
 use repowitness_application::{
     ImmutableRustSource, PreparedRustIndex, RustArtifactIdentity, RustIndexLimits,
-    RustIndexPreparationError, hash_analysis_artifact_key, hash_source_content,
-    prepare_rust_index_with_reuse,
+    RustIndexPreparationError, SourceArtifactIdentities, SourceLanguage,
+    hash_analysis_artifact_key, hash_source_content, prepare_source_index_with_reuse,
 };
 use repowitness_domain::{
     AnalysisArtifactDigest, AnalysisArtifactKey, GitStateDigest, WorktreeStateDigest,
@@ -25,10 +25,10 @@ use crate::git_paths::{
 use crate::source_state::{SourceStateError, capture_source_state_with_cancel};
 use crate::sqlite::SqliteStoreError;
 
-/// Default wall-clock deadline for complete local Rust index preparation.
+/// Default wall-clock deadline for complete local source index preparation.
 pub const DEFAULT_LOCAL_RUST_INDEX_DEADLINE: Duration = Duration::from_secs(30);
 
-/// All stage-specific and end-to-end limits for local Rust preparation.
+/// All stage-specific and end-to-end limits for local source preparation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct LocalRustIndexLimits {
     deadline: Duration,
@@ -90,14 +90,18 @@ impl Default for LocalRustIndexLimits {
     }
 }
 
-/// A fully prepared local Rust index plus explicit discovery coverage.
+/// A fully prepared local source index plus explicit discovery coverage.
 pub struct LocalRustIndexPreparation {
     prepared: PreparedRustIndex,
     git_state: GitStateDigest,
     worktree_state: WorktreeStateDigest,
     discovered_paths: u64,
     selected_rust_files: u64,
-    skipped_non_rust_paths: u64,
+    selected_go_files: u64,
+    selected_typescript_files: u64,
+    selected_tsx_files: u64,
+    selected_python_files: u64,
+    skipped_unsupported_paths: u64,
 }
 
 impl LocalRustIndexPreparation {
@@ -137,10 +141,43 @@ impl LocalRustIndexPreparation {
         self.selected_rust_files
     }
 
-    /// Returns paths explicitly skipped by the Phase 0 Rust-only adapter.
+    /// Returns the number of selected case-sensitive `.go` paths.
+    #[must_use]
+    pub const fn selected_go_files(&self) -> u64 {
+        self.selected_go_files
+    }
+
+    /// Returns the number of selected case-sensitive `.ts` paths.
+    #[must_use]
+    pub const fn selected_typescript_files(&self) -> u64 {
+        self.selected_typescript_files
+    }
+
+    /// Returns the number of selected case-sensitive `.tsx` paths.
+    #[must_use]
+    pub const fn selected_tsx_files(&self) -> u64 {
+        self.selected_tsx_files
+    }
+
+    /// Returns the number of selected case-sensitive `.py` and `.pyi` paths.
+    #[must_use]
+    pub const fn selected_python_files(&self) -> u64 {
+        self.selected_python_files
+    }
+
+    /// Returns paths explicitly skipped by the supported-language adapters.
+    #[must_use]
+    pub const fn skipped_unsupported_paths(&self) -> u64 {
+        self.skipped_unsupported_paths
+    }
+
+    /// Returns paths skipped by the selected compatibility policy.
+    ///
+    /// For Rust-only entry points this retains its original meaning. Mixed
+    /// entry points return unsupported-language paths.
     #[must_use]
     pub const fn skipped_non_rust_paths(&self) -> u64 {
-        self.skipped_non_rust_paths
+        self.skipped_unsupported_paths
     }
 }
 
@@ -153,7 +190,11 @@ impl fmt::Debug for LocalRustIndexPreparation {
             .field("worktree_state", &self.worktree_state)
             .field("discovered_paths", &self.discovered_paths)
             .field("selected_rust_files", &self.selected_rust_files)
-            .field("skipped_non_rust_paths", &self.skipped_non_rust_paths)
+            .field("selected_go_files", &self.selected_go_files)
+            .field("selected_typescript_files", &self.selected_typescript_files)
+            .field("selected_tsx_files", &self.selected_tsx_files)
+            .field("selected_python_files", &self.selected_python_files)
+            .field("skipped_unsupported_paths", &self.skipped_unsupported_paths)
             .finish()
     }
 }
@@ -182,7 +223,7 @@ pub enum LocalRustIndexError {
         /// Stable redacted contained-source failure.
         source: ContainedSourceError,
     },
-    /// A selected Rust source could not be opened or read.
+    /// A selected source could not be opened or read.
     SourceRead {
         /// One-based selected-file ordinal.
         ordinal: u64,
@@ -233,11 +274,11 @@ impl fmt::Display for LocalRustIndexError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::DeadlineNotRepresentable => {
-                formatter.write_str("local Rust index deadline is not representable")
+                formatter.write_str("local source index deadline is not representable")
             }
-            Self::Cancelled => formatter.write_str("local Rust index preparation was cancelled"),
+            Self::Cancelled => formatter.write_str("local source index preparation was cancelled"),
             Self::DeadlineExceeded => {
-                formatter.write_str("local Rust index preparation exceeded its deadline")
+                formatter.write_str("local source index preparation exceeded its deadline")
             }
             Self::Discovery { .. } => formatter.write_str("repository path discovery failed"),
             Self::SourceState { .. } => {
@@ -247,26 +288,26 @@ impl fmt::Display for LocalRustIndexError {
                 formatter.write_str("repository source capability could not be opened")
             }
             Self::SourceRead { ordinal, .. } => {
-                write!(formatter, "Rust source ordinal {ordinal} could not be read")
+                write!(formatter, "source ordinal {ordinal} could not be read")
             }
             Self::ExcludedFileAlias => {
                 formatter.write_str("repository path aliases an excluded external file")
             }
             Self::SourceByteCountOverflowed => {
-                formatter.write_str("selected Rust source byte count overflowed")
+                formatter.write_str("selected source byte count overflowed")
             }
             Self::SourceByteLimitExceeded { limit } => {
                 write!(
                     formatter,
-                    "selected Rust source bytes exceed the limit of {limit}"
+                    "selected source bytes exceed the limit of {limit}"
                 )
             }
             Self::DerivedReadLimits { .. } => {
                 formatter.write_str("remaining source-read limits could not be represented")
             }
-            Self::Preparation { .. } => formatter.write_str("Rust index preparation failed"),
+            Self::Preparation { .. } => formatter.write_str("source index preparation failed"),
             Self::ArtifactReuse { .. } => {
-                formatter.write_str("reusable Rust artifact loading failed")
+                formatter.write_str("reusable source artifact loading failed")
             }
             Self::StalePathSet => {
                 formatter.write_str("repository path set changed during preparation")
@@ -274,13 +315,13 @@ impl fmt::Display for LocalRustIndexError {
             Self::StaleSourceContent { ordinal } => {
                 write!(
                     formatter,
-                    "Rust source ordinal {ordinal} changed during preparation"
+                    "source ordinal {ordinal} changed during preparation"
                 )
             }
             Self::RevalidationRead { ordinal, .. } => {
                 write!(
                     formatter,
-                    "Rust source ordinal {ordinal} could not be revalidated"
+                    "source ordinal {ordinal} could not be revalidated"
                 )
             }
         }
@@ -320,13 +361,32 @@ pub fn prepare_local_rust_index(
     prepare_local_rust_index_with_hook(requested_root, identity, limits, cancelled, || {})
 }
 
-pub(crate) fn prepare_local_rust_index_excluding_identity_with_reuse(
+/// Runs the local mixed supported-language discovery-to-facts vertical slice.
+pub fn prepare_local_source_index(
     requested_root: &Path,
-    identity: RustArtifactIdentity,
+    identities: SourceArtifactIdentities,
+    limits: LocalRustIndexLimits,
+    cancelled: &AtomicBool,
+) -> Result<LocalRustIndexPreparation, LocalRustIndexError> {
+    prepare_local_source_index_with_exclusion_reuse_and_hook(
+        requested_root,
+        identities,
+        limits,
+        cancelled,
+        None,
+        |_, _, _| Ok(BTreeMap::new()),
+        || {},
+    )
+}
+
+pub(crate) fn prepare_local_source_index_excluding_identity_with_reuse(
+    requested_root: &Path,
+    identities: SourceArtifactIdentities,
     limits: LocalRustIndexLimits,
     cancelled: &AtomicBool,
     excluded_identity: Option<&FileIdentity>,
     load_reusable: impl FnMut(
+        SourceLanguage,
         &[AnalysisArtifactDigest],
         Instant,
     ) -> Result<
@@ -334,9 +394,9 @@ pub(crate) fn prepare_local_rust_index_excluding_identity_with_reuse(
         SqliteStoreError,
     >,
 ) -> Result<LocalRustIndexPreparation, LocalRustIndexError> {
-    prepare_local_rust_index_with_exclusion_reuse_and_hook(
+    prepare_local_source_index_with_exclusion_reuse_and_hook(
         requested_root,
-        identity,
+        identities,
         limits,
         cancelled,
         excluded_identity,
@@ -394,8 +454,83 @@ fn prepare_local_rust_index_with_exclusion_reuse_and_hook(
         BTreeMap<AnalysisArtifactDigest, RustSourceAnalysis>,
         SqliteStoreError,
     >,
+    before_revalidation: impl FnMut(),
+) -> Result<LocalRustIndexPreparation, LocalRustIndexError> {
+    prepare_local_index_with_exclusion_reuse_and_hook(
+        LocalPreparationContext {
+            requested_root,
+            identities: SourceArtifactIdentities::new(
+                identity, identity, identity, identity, identity,
+            ),
+            selection: SelectionPolicy::RustOnly,
+            limits,
+            cancelled,
+            excluded_identity,
+        },
+        |_, requested, deadline| load_reusable(requested, deadline),
+        before_revalidation,
+    )
+}
+
+fn prepare_local_source_index_with_exclusion_reuse_and_hook(
+    requested_root: &Path,
+    identities: SourceArtifactIdentities,
+    limits: LocalRustIndexLimits,
+    cancelled: &AtomicBool,
+    excluded_identity: Option<&FileIdentity>,
+    load_reusable: impl FnMut(
+        SourceLanguage,
+        &[AnalysisArtifactDigest],
+        Instant,
+    ) -> Result<
+        BTreeMap<AnalysisArtifactDigest, RustSourceAnalysis>,
+        SqliteStoreError,
+    >,
+    before_revalidation: impl FnMut(),
+) -> Result<LocalRustIndexPreparation, LocalRustIndexError> {
+    prepare_local_index_with_exclusion_reuse_and_hook(
+        LocalPreparationContext {
+            requested_root,
+            identities,
+            selection: SelectionPolicy::SupportedLanguages,
+            limits,
+            cancelled,
+            excluded_identity,
+        },
+        load_reusable,
+        before_revalidation,
+    )
+}
+
+struct LocalPreparationContext<'a> {
+    requested_root: &'a Path,
+    identities: SourceArtifactIdentities,
+    selection: SelectionPolicy,
+    limits: LocalRustIndexLimits,
+    cancelled: &'a AtomicBool,
+    excluded_identity: Option<&'a FileIdentity>,
+}
+
+fn prepare_local_index_with_exclusion_reuse_and_hook(
+    context: LocalPreparationContext<'_>,
+    mut load_reusable: impl FnMut(
+        SourceLanguage,
+        &[AnalysisArtifactDigest],
+        Instant,
+    ) -> Result<
+        BTreeMap<AnalysisArtifactDigest, RustSourceAnalysis>,
+        SqliteStoreError,
+    >,
     mut before_revalidation: impl FnMut(),
 ) -> Result<LocalRustIndexPreparation, LocalRustIndexError> {
+    let LocalPreparationContext {
+        requested_root,
+        identities,
+        selection,
+        limits,
+        cancelled,
+        excluded_identity,
+    } = context;
     if limits.deadline().is_zero() {
         return Err(LocalRustIndexError::DeadlineExceeded);
     }
@@ -421,20 +556,14 @@ fn prepare_local_rust_index_with_exclusion_reuse_and_hook(
         cancelled,
         deadline,
     )?;
-    let selected = read_selected_rust_sources(&root, &discovered, limits, cancelled, deadline)?;
+    let selected =
+        read_selected_sources(&root, &discovered, selection, limits, cancelled, deadline)?;
     let requested_artifacts =
-        requested_artifact_digests(&selected.sources, identity, cancelled, deadline)?;
-    let reusable =
-        load_reusable(&requested_artifacts, deadline).map_err(|source| match source {
-            SqliteStoreError::Cancelled => LocalRustIndexError::Cancelled,
-            SqliteStoreError::DeadlineExceeded | SqliteStoreError::ReplyTimeout => {
-                LocalRustIndexError::DeadlineExceeded
-            }
-            source => LocalRustIndexError::ArtifactReuse { source },
-        })?;
-    let prepared = prepare_rust_index_with_reuse(
+        requested_artifact_digests(&selected.sources, identities, cancelled, deadline)?;
+    let reusable = load_reusable_artifacts(&requested_artifacts, deadline, &mut load_reusable)?;
+    let prepared = prepare_source_index_with_reuse(
         selected.sources,
-        identity,
+        identities,
         limits.preparation(),
         &reusable,
         cancelled,
@@ -463,611 +592,33 @@ fn prepare_local_rust_index_with_exclusion_reuse_and_hook(
         });
     }
     let git_state = source_state_after.git_state();
-    let worktree_state = source_state_after.worktree_state(prepared.manifest_digest());
+    let worktree_state = match selection {
+        SelectionPolicy::RustOnly => source_state_after.worktree_state(prepared.manifest_digest()),
+        SelectionPolicy::SupportedLanguages => {
+            source_state_after.source_worktree_state(prepared.manifest_digest())
+        }
+    };
 
     let discovered_paths = discovered.stats().path_count();
-    let skipped_non_rust_paths = discovered_paths
-        .checked_sub(selected.count)
+    let selected_files = selected.counts.total()?;
+    let skipped_unsupported_paths = discovered_paths
+        .checked_sub(selected_files)
         .ok_or(LocalRustIndexError::SourceByteCountOverflowed)?;
     Ok(LocalRustIndexPreparation {
         prepared,
         git_state,
         worktree_state,
         discovered_paths,
-        selected_rust_files: selected.count,
-        skipped_non_rust_paths,
+        selected_rust_files: selected.counts.rust,
+        selected_go_files: selected.counts.go,
+        selected_typescript_files: selected.counts.typescript,
+        selected_tsx_files: selected.counts.tsx,
+        selected_python_files: selected.counts.python,
+        skipped_unsupported_paths,
     })
 }
 
-fn requested_artifact_digests(
-    sources: &[ImmutableRustSource],
-    identity: RustArtifactIdentity,
-    cancelled: &AtomicBool,
-    deadline: Instant,
-) -> Result<Box<[AnalysisArtifactDigest]>, LocalRustIndexError> {
-    let mut requested = BTreeSet::new();
-    for source in sources {
-        check_control(cancelled, deadline)?;
-        let key = AnalysisArtifactKey::new(
-            hash_source_content(source.content()),
-            identity.producer_manifest(),
-            identity.configuration(),
-            identity.schema(),
-            identity.canonicalization_version(),
-        );
-        requested.insert(hash_analysis_artifact_key(&key));
-    }
-    Ok(requested.into_iter().collect())
-}
-
-fn reject_excluded_file_aliases(
-    root: &ContainedSourceRoot,
-    discovered: &DiscoveredRepositoryPaths,
-    excluded_identity: Option<&FileIdentity>,
-    limits: LocalRustIndexLimits,
-    cancelled: &AtomicBool,
-    deadline: Instant,
-) -> Result<(), LocalRustIndexError> {
-    let Some(excluded_identity) = excluded_identity else {
-        return Ok(());
-    };
-    for path in discovered.paths() {
-        check_control(cancelled, deadline)?;
-        let aliases = root.aliases_identity(
-            path,
-            excluded_identity,
-            limits.deadline(),
-            deadline,
-            &mut || cancelled.load(Ordering::Relaxed),
-        );
-        match aliases {
-            Ok(true) => return Err(LocalRustIndexError::ExcludedFileAlias),
-            Ok(false) => {}
-            Err(ContainedSourceError::Cancelled) => {
-                return Err(LocalRustIndexError::Cancelled);
-            }
-            Err(ContainedSourceError::DeadlineExceeded { .. }) => {
-                return Err(LocalRustIndexError::DeadlineExceeded);
-            }
-            Err(_) => {}
-        }
-    }
-    Ok(())
-}
-
-fn capture_source_state_for_index(
-    worktree_root: &Path,
-    limits: GitPathDiscoveryLimits,
-    cancelled: &AtomicBool,
-    deadline: Instant,
-) -> Result<crate::CapturedSourceState, LocalRustIndexError> {
-    let limits = capped_discovery_limits(limits, deadline)?;
-    capture_source_state_with_cancel(worktree_root, limits, || cancelled.load(Ordering::Relaxed))
-        .map_err(|source| match source {
-            SourceStateError::Git {
-                source: GitPathDiscoveryError::Cancelled,
-            } => LocalRustIndexError::Cancelled,
-            SourceStateError::Git {
-                source: GitPathDiscoveryError::DeadlineExceeded { .. },
-            } => LocalRustIndexError::DeadlineExceeded,
-            source => LocalRustIndexError::SourceState { source },
-        })
-}
-
-struct SelectedRustSources {
-    sources: Vec<ImmutableRustSource>,
-    count: u64,
-}
-
-fn read_selected_rust_sources(
-    root: &ContainedSourceRoot,
-    discovered: &DiscoveredRepositoryPaths,
-    limits: LocalRustIndexLimits,
-    cancelled: &AtomicBool,
-    deadline: Instant,
-) -> Result<SelectedRustSources, LocalRustIndexError> {
-    let rust_paths = discovered
-        .paths()
-        .iter()
-        .filter(|path| is_rust_source_path(path.as_bytes()))
-        .collect::<Vec<_>>();
-    let count = u64::try_from(rust_paths.len())
-        .map_err(|_| LocalRustIndexError::SourceByteCountOverflowed)?;
-    if count > limits.preparation().max_files() {
-        return Err(LocalRustIndexError::Preparation {
-            source: RustIndexPreparationError::FileLimitExceeded {
-                limit: limits.preparation().max_files(),
-            },
-        });
-    }
-
-    let mut sources = Vec::with_capacity(rust_paths.len());
-    let mut total_source_bytes = 0_u64;
-    for (index, path) in rust_paths.into_iter().enumerate() {
-        check_control(cancelled, deadline)?;
-        let ordinal = stable_ordinal(index)?;
-        let read_limits = capped_source_read_limits(limits.source_read(), deadline)?;
-        let content = read_source(root, path, read_limits, cancelled, ordinal)?;
-        total_source_bytes = total_source_bytes
-            .checked_add(
-                u64::try_from(content.len())
-                    .map_err(|_| LocalRustIndexError::SourceByteCountOverflowed)?,
-            )
-            .ok_or(LocalRustIndexError::SourceByteCountOverflowed)?;
-        if total_source_bytes > limits.preparation().max_total_source_bytes() {
-            return Err(LocalRustIndexError::SourceByteLimitExceeded {
-                limit: limits.preparation().max_total_source_bytes(),
-            });
-        }
-        sources.push(ImmutableRustSource::new(path.clone(), content));
-    }
-    Ok(SelectedRustSources { sources, count })
-}
-
-fn read_source(
-    root: &ContainedSourceRoot,
-    path: &repowitness_domain::RepositoryPath,
-    limits: SourceReadLimits,
-    cancelled: &AtomicBool,
-    ordinal: u64,
-) -> Result<Box<[u8]>, LocalRustIndexError> {
-    root.read_with_cancel(path, limits, || cancelled.load(Ordering::Relaxed))
-        .map_err(|source| match source {
-            ContainedSourceError::Cancelled => LocalRustIndexError::Cancelled,
-            ContainedSourceError::DeadlineExceeded { .. } => LocalRustIndexError::DeadlineExceeded,
-            source => LocalRustIndexError::SourceRead { ordinal, source },
-        })
-}
-
-fn discover_paths(
-    worktree_root: &Path,
-    limits: GitPathDiscoveryLimits,
-    cancelled: &AtomicBool,
-    deadline: Instant,
-) -> Result<DiscoveredRepositoryPaths, LocalRustIndexError> {
-    let limits = capped_discovery_limits(limits, deadline)?;
-    discover_repository_paths_with_cancel(worktree_root, limits, || {
-        cancelled.load(Ordering::Relaxed)
-    })
-    .map_err(|source| match source {
-        GitPathDiscoveryError::Cancelled => LocalRustIndexError::Cancelled,
-        GitPathDiscoveryError::DeadlineExceeded { .. } => LocalRustIndexError::DeadlineExceeded,
-        source => LocalRustIndexError::Discovery { source },
-    })
-}
-
-fn revalidate_path_set(
-    worktree_root: &Path,
-    original: &DiscoveredRepositoryPaths,
-    discovery_limits: GitPathDiscoveryLimits,
-    cancelled: &AtomicBool,
-    deadline: Instant,
-) -> Result<(), LocalRustIndexError> {
-    let current = discover_paths(worktree_root, discovery_limits, cancelled, deadline)?;
-    if current.paths() != original.paths() {
-        return Err(LocalRustIndexError::StalePathSet);
-    }
-    Ok(())
-}
-
-fn revalidate_content(
-    root: &ContainedSourceRoot,
-    prepared: &PreparedRustIndex,
-    source_limits: SourceReadLimits,
-    cancelled: &AtomicBool,
-    deadline: Instant,
-) -> Result<(), LocalRustIndexError> {
-    for (index, file) in prepared.files().iter().enumerate() {
-        check_control(cancelled, deadline)?;
-        let ordinal = stable_ordinal(index)?;
-        let read_limits = capped_source_read_limits(source_limits, deadline)?;
-        let content = root
-            .read_with_cancel(file.path(), read_limits, || {
-                cancelled.load(Ordering::Relaxed)
-            })
-            .map_err(|source| match source {
-                ContainedSourceError::Cancelled => LocalRustIndexError::Cancelled,
-                ContainedSourceError::DeadlineExceeded { .. } => {
-                    LocalRustIndexError::DeadlineExceeded
-                }
-                source => LocalRustIndexError::RevalidationRead { ordinal, source },
-            })?;
-        if hash_source_content(&content) != file.content_digest() {
-            return Err(LocalRustIndexError::StaleSourceContent { ordinal });
-        }
-    }
-    Ok(())
-}
-
-fn capped_discovery_limits(
-    limits: GitPathDiscoveryLimits,
-    deadline: Instant,
-) -> Result<GitPathDiscoveryLimits, LocalRustIndexError> {
-    let remaining = remaining(deadline)?;
-    Ok(GitPathDiscoveryLimits::new(
-        limits.deadline().min(remaining),
-        limits.output_bytes(),
-        limits.paths(),
-        limits.repository_path(),
-    ))
-}
-
-fn capped_source_read_limits(
-    limits: SourceReadLimits,
-    deadline: Instant,
-) -> Result<SourceReadLimits, LocalRustIndexError> {
-    let remaining = remaining(deadline)?;
-    SourceReadLimits::try_new(
-        limits.deadline().min(remaining),
-        limits.file_bytes(),
-        limits.read_chunk_bytes(),
-    )
-    .map_err(|source| LocalRustIndexError::DerivedReadLimits { source })
-}
-
-fn remaining(deadline: Instant) -> Result<Duration, LocalRustIndexError> {
-    let remaining = deadline.saturating_duration_since(Instant::now());
-    if remaining.is_zero() {
-        return Err(LocalRustIndexError::DeadlineExceeded);
-    }
-    Ok(remaining)
-}
-
-fn stable_ordinal(index: usize) -> Result<u64, LocalRustIndexError> {
-    u64::try_from(index)
-        .ok()
-        .and_then(|value| value.checked_add(1))
-        .ok_or(LocalRustIndexError::SourceByteCountOverflowed)
-}
-
-fn check_control(cancelled: &AtomicBool, deadline: Instant) -> Result<(), LocalRustIndexError> {
-    if cancelled.load(Ordering::Relaxed) {
-        return Err(LocalRustIndexError::Cancelled);
-    }
-    if Instant::now() >= deadline {
-        return Err(LocalRustIndexError::DeadlineExceeded);
-    }
-    Ok(())
-}
-
-fn is_rust_source_path(path: &[u8]) -> bool {
-    path.ends_with(b".rs")
-}
+include!("rust_index/source_io.rs");
 
 #[cfg(test)]
-mod tests {
-    use std::ffi::OsString;
-    use std::fs;
-    use std::path::PathBuf;
-    use std::process::{Command, Stdio};
-    use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
-
-    use repowitness_analysis::RustAnalysisLimits;
-    use repowitness_domain::{AnalysisSchemaDigest, ConfigurationDigest, ProducerManifestDigest};
-
-    use super::*;
-
-    static NEXT_FIXTURE_ID: AtomicU64 = AtomicU64::new(0);
-
-    struct TempRepository {
-        root: PathBuf,
-    }
-
-    impl TempRepository {
-        fn new() -> Self {
-            let fixture_id = NEXT_FIXTURE_ID.fetch_add(1, AtomicOrdering::Relaxed);
-            let root = std::env::temp_dir().join(format!(
-                "repowitness-local-rust-index-{}-{fixture_id}",
-                std::process::id()
-            ));
-            fs::create_dir(&root).expect("fixture directory must be created");
-            let repository = Self { root };
-            repository.git(&["init", "--quiet", "--initial-branch=main"]);
-            repository
-        }
-
-        fn root(&self) -> &Path {
-            &self.root
-        }
-
-        fn write(&self, relative: &str, content: &[u8]) {
-            let path = self.root.join(relative);
-            if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent).expect("fixture parent must be created");
-            }
-            fs::write(path, content).expect("fixture source must be written");
-        }
-
-        fn git(&self, arguments: &[&str]) {
-            let status = Command::new("git")
-                .arg("--no-pager")
-                .arg("-C")
-                .arg(&self.root)
-                .args(arguments)
-                .env("GIT_CONFIG_NOSYSTEM", "1")
-                .env("GIT_CONFIG_GLOBAL", null_device())
-                .env("GIT_TERMINAL_PROMPT", "0")
-                .env("GCM_INTERACTIVE", "never")
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status()
-                .expect("fixture Git command must start");
-            assert!(status.success(), "fixture Git command failed: {status}");
-        }
-
-        fn commit_all(&self, message: &str) {
-            self.git(&["add", "--all"]);
-            self.git(&[
-                "-c",
-                "user.name=RepoWitness Test",
-                "-c",
-                "user.email=repowitness@example.invalid",
-                "commit",
-                "--quiet",
-                "-m",
-                message,
-            ]);
-        }
-
-        fn commit_empty(&self, message: &str) {
-            self.git(&[
-                "-c",
-                "user.name=RepoWitness Test",
-                "-c",
-                "user.email=repowitness@example.invalid",
-                "commit",
-                "--quiet",
-                "--allow-empty",
-                "-m",
-                message,
-            ]);
-        }
-    }
-
-    impl Drop for TempRepository {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.root);
-        }
-    }
-
-    fn null_device() -> OsString {
-        if cfg!(windows) {
-            OsString::from("NUL")
-        } else {
-            OsString::from("/dev/null")
-        }
-    }
-
-    fn identity() -> RustArtifactIdentity {
-        RustArtifactIdentity::new(
-            ProducerManifestDigest::new([1; 32]),
-            ConfigurationDigest::new([2; 32]),
-            AnalysisSchemaDigest::new([3; 32]),
-            1,
-        )
-    }
-
-    #[test]
-    fn local_vertical_slice_discovers_reads_analyzes_and_revalidates() {
-        let repository = TempRepository::new();
-        repository.write("src/lib.rs", b"pub struct Visible;\n");
-        repository.write("README.txt", b"not Rust\n");
-        repository.write("upper.RS", b"fn upper() {}\n");
-        let cancelled = AtomicBool::new(false);
-
-        let prepared = prepare_local_rust_index(
-            repository.root(),
-            identity(),
-            LocalRustIndexLimits::default(),
-            &cancelled,
-        )
-        .expect("stable fixture repository must prepare");
-
-        assert_eq!(prepared.discovered_paths(), 3);
-        assert_eq!(prepared.selected_rust_files(), 1);
-        assert_eq!(prepared.skipped_non_rust_paths(), 2);
-        assert_eq!(prepared.prepared().files().len(), 1);
-        assert_eq!(prepared.prepared().total_facts(), 1);
-        assert_eq!(
-            prepared.prepared().files()[0].path().as_bytes(),
-            b"src/lib.rs"
-        );
-
-        let repeated = prepare_local_rust_index(
-            repository.root(),
-            identity(),
-            LocalRustIndexLimits::default(),
-            &cancelled,
-        )
-        .expect("unchanged fixture repository must prepare identically");
-        assert_eq!(repeated.git_state(), prepared.git_state());
-        assert_eq!(repeated.worktree_state(), prepared.worktree_state());
-
-        repository.write("src/lib.rs", b"pub struct Changed;\n");
-        let changed = prepare_local_rust_index(
-            repository.root(),
-            identity(),
-            LocalRustIndexLimits::default(),
-            &cancelled,
-        )
-        .expect("new stable source state must prepare");
-        assert_eq!(changed.git_state(), prepared.git_state());
-        assert_ne!(changed.worktree_state(), prepared.worktree_state());
-    }
-
-    #[test]
-    fn aggregate_limits_cancellation_and_deadline_fail_closed() {
-        let repository = TempRepository::new();
-        repository.write("a.rs", b"fn a() {}\n");
-        let cancelled = AtomicBool::new(true);
-        assert!(matches!(
-            prepare_local_rust_index(
-                repository.root(),
-                identity(),
-                LocalRustIndexLimits::default(),
-                &cancelled,
-            ),
-            Err(LocalRustIndexError::Cancelled)
-        ));
-
-        let not_cancelled = AtomicBool::new(false);
-        let zero_deadline = LocalRustIndexLimits::new(
-            Duration::ZERO,
-            GitPathDiscoveryLimits::default(),
-            SourceReadLimits::default(),
-            RustIndexLimits::default(),
-        );
-        assert!(matches!(
-            prepare_local_rust_index(repository.root(), identity(), zero_deadline, &not_cancelled,),
-            Err(LocalRustIndexError::DeadlineExceeded)
-        ));
-
-        let byte_limited = RustIndexLimits::try_new(10, 1, 100, RustAnalysisLimits::default())
-            .expect("fixture aggregate limits must be valid");
-        let limits = LocalRustIndexLimits::new(
-            Duration::from_secs(5),
-            GitPathDiscoveryLimits::default(),
-            SourceReadLimits::default(),
-            byte_limited,
-        );
-        assert!(matches!(
-            prepare_local_rust_index(repository.root(), identity(), limits, &not_cancelled,),
-            Err(LocalRustIndexError::SourceByteLimitExceeded { limit: 1 })
-        ));
-    }
-
-    #[test]
-    fn path_and_content_mutation_are_rejected_by_final_revalidation() {
-        let path_repository = TempRepository::new();
-        path_repository.write("stable.rs", b"fn stable() {}\n");
-        let cancelled = AtomicBool::new(false);
-        let path_error = prepare_local_rust_index_with_hook(
-            path_repository.root(),
-            identity(),
-            LocalRustIndexLimits::default(),
-            &cancelled,
-            || path_repository.write("added.rs", b"fn added() {}\n"),
-        )
-        .expect_err("a changed path set must fail revalidation");
-        assert!(matches!(path_error, LocalRustIndexError::StalePathSet));
-
-        let content_repository = TempRepository::new();
-        content_repository.write("stable.rs", b"fn before() {}\n");
-        let content_error = prepare_local_rust_index_with_hook(
-            content_repository.root(),
-            identity(),
-            LocalRustIndexLimits::default(),
-            &cancelled,
-            || content_repository.write("stable.rs", b"fn after() {}\n"),
-        )
-        .expect_err("changed source bytes must fail revalidation");
-        assert!(matches!(
-            content_error,
-            LocalRustIndexError::StaleSourceContent { ordinal: 1 }
-        ));
-    }
-
-    #[test]
-    fn index_status_and_head_mutations_are_rejected_by_the_source_state_fence() {
-        let cancelled = AtomicBool::new(false);
-
-        let index_repository = TempRepository::new();
-        index_repository.write("stable.rs", b"fn stable() {}\n");
-        let index_error = prepare_local_rust_index_with_hook(
-            index_repository.root(),
-            identity(),
-            LocalRustIndexLimits::default(),
-            &cancelled,
-            || index_repository.git(&["add", "stable.rs"]),
-        )
-        .expect_err("an index mutation must fail the source-state fence");
-        assert!(matches!(
-            index_error,
-            LocalRustIndexError::SourceState {
-                source: SourceStateError::ConcurrentSourceChange
-            }
-        ));
-
-        let status_repository = TempRepository::new();
-        status_repository.write("stable.rs", b"fn stable() {}\n");
-        status_repository.write("README.md", b"before\n");
-        status_repository.commit_all("initial");
-        let status_error = prepare_local_rust_index_with_hook(
-            status_repository.root(),
-            identity(),
-            LocalRustIndexLimits::default(),
-            &cancelled,
-            || status_repository.write("README.md", b"after\n"),
-        )
-        .expect_err("a tracked non-Rust status mutation must fail the source-state fence");
-        assert!(matches!(
-            status_error,
-            LocalRustIndexError::SourceState {
-                source: SourceStateError::ConcurrentSourceChange
-            }
-        ));
-
-        let head_repository = TempRepository::new();
-        head_repository.write("stable.rs", b"fn stable() {}\n");
-        head_repository.commit_all("initial");
-        let head_error = prepare_local_rust_index_with_hook(
-            head_repository.root(),
-            identity(),
-            LocalRustIndexLimits::default(),
-            &cancelled,
-            || head_repository.commit_empty("move head"),
-        )
-        .expect_err("a HEAD mutation must fail the source-state fence");
-        assert!(matches!(
-            head_error,
-            LocalRustIndexError::SourceState {
-                source: SourceStateError::ConcurrentSourceChange
-            }
-        ));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn selected_symlink_sources_are_rejected_without_leaking_targets() {
-        use std::os::unix::fs::symlink;
-
-        let repository = TempRepository::new();
-        let outside = repository
-            .root()
-            .parent()
-            .expect("fixture has a parent")
-            .join(format!(
-                "repowitness-private-target-{}",
-                NEXT_FIXTURE_ID.fetch_add(1, AtomicOrdering::Relaxed)
-            ));
-        fs::write(&outside, b"fn private_target() {}\n").expect("outside fixture must be written");
-        symlink(&outside, repository.root().join("linked.rs"))
-            .expect("source symlink must be created");
-        let cancelled = AtomicBool::new(false);
-
-        let error = prepare_local_rust_index(
-            repository.root(),
-            identity(),
-            LocalRustIndexLimits::default(),
-            &cancelled,
-        )
-        .expect_err("source symlink must fail closed");
-        let _ = fs::remove_file(&outside);
-
-        assert!(matches!(
-            error,
-            LocalRustIndexError::SourceRead { ordinal: 1, .. }
-        ));
-        assert!(!error.to_string().contains("private-target"));
-        assert!(!format!("{error:?}").contains("private-target"));
-    }
-
-    #[test]
-    fn rust_path_filter_is_case_sensitive_and_byte_based() {
-        assert!(is_rust_source_path(b"src/lib.rs"));
-        assert!(!is_rust_source_path(b"src/lib.RS"));
-        assert!(!is_rust_source_path(b"src/rs"));
-        assert!(is_rust_source_path(b"non-utf8-\xFF.rs"));
-    }
-}
+mod tests;

@@ -21,9 +21,11 @@ resolved transitive graph.
 - Code/build shape: pure Rust library; no build script, proc macro, or native
   library. Architecture-specific implementations are upstream internals behind
   the safe digest API.
-- Scope: `repowitness-application` hashes canonical source, snapshot, and
-  artifact identities; `repowitness-local` hashes exact migration text. Domain
-  digest values remain dependency free and do not expose RustCrypto types.
+- Scope: `repowitness-analysis` hashes exact and name-elided declaration
+  fingerprints; `repowitness-application` hashes canonical source, snapshot,
+  and artifact identities; `repowitness-local` hashes exact migration and
+  memory-presentation bytes. Domain digest values remain dependency free and do
+  not expose RustCrypto types.
 - Lockfile impact: the exact `sha2` line was already present through the
   dev-only `gix` oracle; RepoWitness now uses it in the production application
   graph.
@@ -94,6 +96,33 @@ resolved transitive graph.
   dependencies; no source is copied into RepoWitness.
 - Scope: `repowitness-analysis` only. Grammar version changes alter the
   producer manifest and invalidate artifact reuse.
+
+## `tree-sitter-python` 0.25.0
+
+- Need: bounded syntax-only declaration extraction for Python and Python stub
+  files without executing repository code.
+- Package:
+  [`tree-sitter-python`](https://docs.rs/tree-sitter-python/0.25.0/tree_sitter_python/),
+  maintained in the official
+  [`tree-sitter/tree-sitter-python`](https://github.com/tree-sitter/tree-sitter-python)
+  repository.
+- License: MIT.
+- Declared MSRV: not published. The exact package builds and tests with the
+  pinned workspace toolchain; no lower support claim is inferred.
+- Features: none.
+- Code/build shape: the package build script compiles the generated Python
+  parser C source through `cc`. Runtime exposure is the small
+  `tree-sitter-language` interface plus the embedded node schema. Upstream owns
+  the generated grammar, FFI, native code, and build script; RepoWitness adds
+  no first-party unsafe boundary.
+- Maintenance and integrity: version 0.25.0 is published by the official
+  grammar owners and its repository, license, and node schema agree with the
+  registry package inspected on 2026-07-27. The exact version is lockfile
+  pinned and covered by the existing source, license, advisory, and build
+  policy.
+- Scope: `repowitness-analysis` only. Grammar and node-schema bytes enter the
+  Python producer manifest, so any version change invalidates Python artifact
+  reuse without changing other language identities.
 
 ## `cap-std` and `cap-fs-ext` 4.0.2
 
@@ -277,3 +306,18 @@ ban, and source checks pass.
 The detailed behavior and the reasons not to promote this stack yet are in
 the
 [strict-memory report](strict-memory-yaml-spike-2026-07-25.md).
+
+## Standalone fuzz dependency
+
+The opt-in fuzz workspace pins
+[`libfuzzer-sys`](https://github.com/rust-fuzz/libfuzzer/tree/0.4.13)
+0.4.13 to supply the LLVM libFuzzer runtime used by `cargo-fuzz`. It is outside
+the shipped workspace, enables its default `link_libfuzzer` feature, depends on
+`arbitrary`, and compiles the bundled native runtime through `cc` in a build
+script. Its declared license is `(MIT OR Apache-2.0) AND NCSA`; `deny.toml`
+therefore admits NCSA only for this exact version.
+
+The fuzz workspace has a separate committed lockfile. Required CI performs a
+stable locked compile of its target and applies the advisory, license, ban, and
+source policy to that graph. Running a coverage-guided campaign remains an
+explicit nightly, opt-in check.

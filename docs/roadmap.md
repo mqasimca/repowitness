@@ -1,7 +1,7 @@
 # Roadmap
 
 - Status: Proposed
-- Last reviewed: 2026-07-26
+- Last reviewed: 2026-07-28
 
 ## Sequencing rule
 
@@ -9,7 +9,7 @@ RepoWitness must prove its differentiating evidence-and-memory loop before becom
 
 Every milestone has a versioned benchmark manifest naming its corpora and commits, task set, hardware/OS, resolved configuration, metrics, and numeric pass/fail budgets. Thresholds are agreed before optimizing the feature they gate.
 
-## Phase 0 — one-language evidence-and-memory alpha
+## Phase 0 — supported-language evidence-and-memory alpha
 
 ### Goal
 
@@ -17,7 +17,12 @@ Prove that RepoWitness can connect a source change to memory revalidation and a 
 
 ### Deliver
 
-- Rust as the first indexed language unless design-partner evidence changes the choice.
+- Rust, Go, TypeScript, TSX, and Python in one atomic source generation,
+  following the
+  named design-partner evidence recorded in
+  [ADR-0015](adr/0015-phase0-go-and-rust-indexing.md) and
+  [ADR-0016](adr/0016-phase0-typescript-and-tsx-indexing.md), extended by
+  [ADR-0020](adr/0020-phase0-python-indexing.md).
 - One repository and active worktree backed by SQLite.
 - Minimal tree-sitter indexing, FTS5 search, exact source manifests, content-addressed analysis artifacts, immutable generations, and content-digested evidence.
 - CLI and stdio MCP access to `code_search`, `symbol_get`, minimal `context_build`, `memory_recall`, `memory_manage`, and `diagnostics`.
@@ -41,24 +46,29 @@ Prove that RepoWitness can connect a source change to memory revalidation and a 
 
 ### Explicitly deferred
 
-Additional languages, SCIP, PostgreSQL, remote MCP, persisted tasks, automatic memory extraction, runtime telemetry, UI, extension execution, raw ranking weights, vectors, and general `query_graph` compatibility.
+Languages beyond Rust, Go, TypeScript, TSX, and Python, SCIP, PostgreSQL,
+remote MCP, persisted tasks, automatic memory extraction, runtime telemetry,
+UI, extension execution, raw ranking weights, vectors, and general
+`query_graph` compatibility.
 
 The output is a design-partner alpha, not a general public beta.
 
-### Progress through 2026-07-26
+### Progress through 2026-07-28
 
 | Phase 0 area | State | Verified result |
 |---|---|---|
 | Rust workspace and engineering baseline | Implemented | Six packages, enforced dependency policy, pinned Rust/MSRV and dependencies, formatting, Clippy, docs, lockfile, license/advisory/source checks, Make targets, and required Ubuntu PR CI |
 | Repository and source identity | Implemented | Sanitized bounded Git discovery, canonical Git/worktree receipts, exact byte paths, capability-contained no-follow reads, final stability fence, and fail-closed sparse/gitlink scope |
-| Rust analysis and incremental reuse | Implemented | Bounded Tree-sitter facts, canonical manifests/snapshots/artifact keys, independent payload digests, exact reuse validation, and clean-versus-incremental equivalence |
-| SQLite publication and recovery | Implemented | Versioned migrations, owned connections, immutable generations, atomic activation, FTS5 projection switching, startup recovery, checkpoints, online backup, mutation lease, and database file-identity guards |
-| Evidence retrieval | Implemented | Bounded literal `code_search`, exact digest-verified `symbol_get`, explicit evidence, limitations, match counts, and coverage |
-| CLI and local stdio MCP | Implemented | `index`, `search`, `symbol-get`, `mcp-serve`, and `inspect-paths`; MCP exposes the same two read-only application use cases |
-| Engineering-memory format | Spike only | Strict hostile-YAML and canonical-digest tests pass; ADR-0014 remains proposed and no production memory parser or store exists |
-| Correspondence and memory revalidation | Not implemented | Logical relinking, ambiguity review, Git-DAG validity, tombstones, audit projection, and staleness remain |
-| Context compiler and remaining tools | Not implemented | Rank fusion, token allocation, `context_build`, memory tools, and diagnostics remain |
-| Phase 0 evaluation and release gate | Partial | Pinned preparation measurements, crash/recovery probes, and two neighboring real-repository end-to-end runs pass; ratified full-corpus retrieval/context/memory budgets and a design-partner outcome remain |
+| Rust, Go, TypeScript, TSX, and Python analysis and incremental reuse | Implemented | Bounded language-specific Tree-sitter facts, one canonical mixed snapshot, five independent artifact identities and payload digests, exact per-language/dialect reuse validation, and clean-versus-incremental equivalence |
+| SQLite publication and recovery | Implemented | One clean baseline-version-1 migration and exact ledger row, explicit non-mutating rejection of retired development versions 1–8, persisted exact artifact language, Rust occurrence fingerprints, reviewed correspondence, owned connections, immutable source and memory generations, atomic activation, FTS5 projection switching, startup recovery, checkpoints, online backup, mutation lease, and database file-identity guards |
+| Evidence retrieval | Implemented | Bounded literal `code_search`, exact digest-verified `symbol_get`, persisted language, language-specific producer attribution, explicit limitations, match counts, and coverage |
+| CLI and local stdio MCP | Implemented | CLI commands cover indexing, exact retrieval, canonical memory write/approval/history/review, memory revalidation/recall, context compilation, diagnostics, and path inspection; MCP exposes five read-only tools by default and adds fixed-actor `memory_manage` only under explicit startup authorization |
+| Engineering-memory format | Implemented | Accepted version-1 pure domain values, strict hostile-YAML parser, bounded canonicalizer and deterministic writer, exact golden vectors, independent mutation/property oracle, release resource probes, and a coverage-guided fuzz target |
+| Engineering-memory import and persistence | Implemented | Capability-contained worktree admission and canonical writes, scope-checked import, observation-only bounded Git history, separately trusted approvals, immutable SQLite journal rows, and rebuildable current projections pass rollback, reopen, corruption, idempotency, and online-backup tests |
+| Correspondence and memory revalidation | Implemented | Versioned Rust fingerprints, exact/same-path-rename/exact-Git-move correspondence, explicit ambiguity and staleness, Git-DAG/worktree validity, head conflicts, idempotent approve/reject/manual-link audit events, deterministic conflict aggregation, and atomic projection activation are implemented |
+| Context compiler and read tools | Implemented | Deterministic reciprocal-rank fusion, conservative byte-budget admission, exact source expansion, current-memory exclusion rules, `context_build`, `memory_recall`, and transactionally pinned diagnostics are shared by CLI and MCP with explicit coverage, omissions, limits, cancellation, and source-only fallback |
+| Memory management | Implemented | CLI `memory-manage` writes canonical records, approves exact current revisions, records exact manual review, and imports reachable Git history as observations only; opt-in MCP shares the use case without accepting host paths, actor, repository identity, or resource policy |
+| Phase 0 evaluation and release gate | Partial | The public pinned product-loop benchmark passes all proposed correctness and numeric ceilings in a dirty development worktree; crash/recovery, adversarial, and four requested neighboring-repository runs pass, while explicit ADR/budget ratification, residual release-matrix cases, clean-revision attestation, and a comparative design-partner outcome remain |
 
 ## Phase 1 — trustworthy local core
 
@@ -68,7 +78,7 @@ The output is a design-partner alpha, not a general public beta.
 - Expand the first-language graph to references, imports, calls, tests, architecture, trace, and impact.
 - Add versioned configuration, monotonic policy merging, `config explain`, and `doctor`.
 - Add bounded, schema-tested incumbent compatibility aliases.
-- Add a second language only for a named user need.
+- Add another language only for a named user need.
 
 Exit when crash consistency, identity precision/ambiguity, cross-platform behavior, query/resource budgets, and explicit compatibility fixtures pass.
 
@@ -87,7 +97,9 @@ Exit when precise overlays improve navigation without hiding syntax coverage, co
 
 - Complete team-memory synchronization and local personal memory.
 - Add remaining memory kinds and lifecycle policies.
-- Add manual correspondence review, historical “as known at” queries, task checkpoints, verification, and MCP Tasks.
+- Expand correspondence review to multi-parent and archival workflows; add
+  historical “as known at” queries, task checkpoints, verification, and MCP
+  Tasks.
 - Test poisoning, secrets, concurrent Git edits, rewritten history, conflict preservation, and projection rebuilds.
 
 Exit when longitudinal tests show fewer repeated failures and less stale-memory use than source-only and naive text-memory baselines, with no cross-scope leakage. This is the first recommended public beta.
@@ -121,30 +133,28 @@ Prioritize these independently using measured demand:
 
 ## Immediate backlog
 
-1. Review and either accept, revise, or reject proposed
-   [ADR-0014](adr/0014-phase0-engineering-memory-record.md). Do not promote the
-   test-only YAML stack before that decision and its hostile-input, fuzz,
-   dependency, and resource gates pass.
-2. Implement the accepted bounded version-1 team-memory record, canonical
-   writer, Git import, immutable SQLite projection, tombstones, audit history,
-   and deterministic rebuild without weakening ADR-0005 or ADR-0007.
-3. Implement precision-first occurrence correspondence, explicit ambiguity,
-   manual review, Git-DAG validity, and memory staleness with durable
-   regression fixtures for rename, move, semantic edit, split/merge, shallow
-   history, and rewritten history.
-4. Implement deterministic retrieval fusion and the minimal token-budgeted
-   context compiler, then expose the remaining Phase 0 memory/context tools
-   through the shared application boundary, CLI, and local stdio MCP.
-5. Extend the pinned mini-redis runner through persistence, exact reuse,
-   retrieval, MCP, source-change revalidation, and context compilation.
-   Ratify correctness, latency, RSS, database/WAL, and result-size budgets
-   before claiming the Phase 0 exit gate.
-6. Keep production reconciliation separate from watcher hints, finish the
+1. Review the implemented contracts and evidence for proposed
+   [ADR-0017](adr/0017-phase0-memory-journal.md),
+   [ADR-0018](adr/0018-phase0-memory-revalidation.md),
+   [ADR-0019](adr/0019-phase0-context-compilation-and-diagnostics.md), and
+   [ADR-0021](adr/0021-phase0-memory-management-and-review.md). Accept, revise,
+   or reject them explicitly. The current database contract is the single
+   baseline-version-1 migration accepted by
+   [ADR-0022](adr/0022-squash-pre-release-sqlite-schema.md).
+2. Finish the residual adversarial matrix for rewritten or missing Git
+   history, obsolete review snapshots, competing reviewed targets,
+   split/merge abstention, and fault injection at every canonical-file and
+   SQLite publication stage.
+3. Rerun the complete pinned
+   [product-loop benchmark](research/phase0-product-benchmark-2026-07-28.md)
+   from a clean exact RepoWitness revision, then explicitly ratify or revise
+   correctness, latency, RSS, database/WAL, and result-size budgets.
+4. Compare RepoWitness with the declared lexical/source-only and
+   naive-memory-text baselines on one real design-partner task, and record
+   whether evidence or recalled failure changes a useful engineering decision.
+5. Keep production reconciliation separate from watcher hints, finish the
    active-`gix` cancellation/performance and Windows path/containment spikes,
    and retain fail-closed sparse and recursive-submodule behavior until their
    coverage contracts are accepted.
-7. Run the complete Phase 0 identity, crash/recovery, retrieval, MCP,
-   memory-revalidation, context-quality, and Rust go/no-go gates on the pinned
-   corpus and at least one real design-partner task before expanding scope.
 
 See the dated [architecture research](research/architecture-2026-07-22.md) for the spike definitions and [`plan.md`](../plan.md) for the broader product research record.

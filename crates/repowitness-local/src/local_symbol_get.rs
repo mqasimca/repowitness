@@ -13,9 +13,10 @@ use std::{
 
 use repowitness_application::{
     CodeSearchPortOutputError, RepositoryIdentityTextError, RepositoryIdentityTextV1,
-    RepositoryPathTextByteLimit, RepositoryPathTextError, RepositoryPathTextV1, SymbolGetCandidate,
-    SymbolGetError, SymbolGetLimits, SymbolGetPort, SymbolGetPortRequest, SymbolGetPortResult,
-    SymbolGetRequest, SymbolGetResult, SymbolGetSelector, hash_source_content, symbol_get,
+    RepositoryPathTextByteLimit, RepositoryPathTextError, RepositoryPathTextV1,
+    SourceArtifactEvidence, SymbolGetCandidate, SymbolGetError, SymbolGetLimits, SymbolGetPort,
+    SymbolGetPortRequest, SymbolGetPortResult, SymbolGetRequest, SymbolGetResult,
+    SymbolGetSelector, hash_source_content, symbol_get,
 };
 use repowitness_domain::{
     AnalysisArtifactDigest, RepositoryPathLimits, SourceContentDigest, SourceSnapshotDigest,
@@ -264,9 +265,9 @@ impl Error for LocalSymbolGetError {
     }
 }
 
-struct LocalSymbolPort<'a> {
-    reader: &'a OwnedSqliteReader,
-    root: &'a ContainedSourceRoot,
+pub(crate) struct LocalSymbolPort<'a> {
+    pub(crate) reader: &'a OwnedSqliteReader,
+    pub(crate) root: &'a ContainedSourceRoot,
 }
 
 impl SymbolGetPort for LocalSymbolPort<'_> {
@@ -290,14 +291,14 @@ impl SymbolGetPort for LocalSymbolPort<'_> {
                 request.deadline(),
             )
             .map_err(LocalSymbolPortError::Database)?;
-        let (snapshot, generation, producer_manifest, index_coverage, hit) = results.into_parts();
+        let (snapshot, generation, _snapshot_producer_manifest, index_coverage, hit) =
+            results.into_parts();
         let candidate = hit
             .map(|hit| verified_candidate(self.root, hit, request))
             .transpose()?;
         Ok(SymbolGetPortResult::new(
             snapshot,
             generation,
-            producer_manifest,
             index_coverage,
             candidate,
         ))
@@ -332,14 +333,15 @@ fn verified_candidate(
     let declaration = declaration_bytes(&source, hit.declaration_span())?;
     let occurrence = repowitness_application::RustSymbolOccurrence::try_new(
         hit.fact_ordinal(),
-        hit.artifact_digest(),
+        SourceArtifactEvidence::new(hit.artifact_digest(), hit.producer_manifest()),
         hit.kind(),
         hit.name().to_owned(),
         hit.qualified_name().to_owned(),
         hit.name_span(),
         hit.declaration_span(),
     )
-    .map_err(LocalSymbolPortError::InvalidOccurrence)?;
+    .map_err(LocalSymbolPortError::InvalidOccurrence)?
+    .with_language(hit.language());
     Ok(SymbolGetCandidate::new(
         hit.path().clone(),
         hit.content_digest(),
@@ -443,6 +445,14 @@ pub fn get_local_rust_symbol(
         (Err(source), _) => Err(LocalSymbolGetError::Get(source)),
         (Ok(_), Err(source)) => Err(LocalSymbolGetError::Shutdown(source)),
     }
+}
+
+/// Retrieves one exact declaration from the active local supported-language index.
+pub fn get_local_symbol(
+    request: LocalSymbolGetRequest<'_>,
+    cancelled: Arc<AtomicBool>,
+) -> Result<LocalSymbolGetResult, LocalSymbolGetError> {
+    get_local_rust_symbol(request, cancelled)
 }
 
 fn check_facade_control(

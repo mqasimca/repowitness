@@ -161,13 +161,13 @@ pub enum PublishRustIndexError<PortError> {
 impl<PortError> fmt::Display for PublishRustIndexError<PortError> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
-            Self::Stage(_) => "Rust index staging failed",
-            Self::Activate(_) => "Rust index activation failed",
+            Self::Stage(_) => "source index staging failed",
+            Self::Activate(_) => "source index activation failed",
         })
     }
 }
 
-/// Stages, validates, and atomically activates one prepared Rust generation.
+/// Stages, validates, and atomically activates one prepared source generation.
 pub fn publish_rust_index<Port>(
     port: &Port,
     request: PublishRustIndexRequest,

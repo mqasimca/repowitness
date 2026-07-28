@@ -160,6 +160,14 @@ pub fn search_local_rust_index(
     }
 }
 
+/// Searches the active local supported-language index.
+pub fn search_local_index(
+    request: LocalCodeSearchRequest<'_>,
+    cancelled: Arc<AtomicBool>,
+) -> Result<LocalCodeSearchResult, LocalCodeSearchError> {
+    search_local_rust_index(request, cancelled)
+}
+
 fn check_facade_control(
     cancelled: &AtomicBool,
     deadline: Instant,

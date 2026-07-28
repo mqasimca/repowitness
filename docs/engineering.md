@@ -1,7 +1,7 @@
 # Engineering standard
 
 - Status: Active
-- Last reviewed: 2026-07-26
+- Last reviewed: 2026-07-28
 
 This document defines the default implementation and review standard. Exceptions require an ADR with motivation, scope, owner, tests, and a review or removal date.
 
@@ -24,12 +24,15 @@ Implemented specialized coverage includes deterministic/property-style domain
 tests, hostile path and Git fixtures, clean-versus-incremental equivalence,
 SQLite migrations, corruption detection, recovery, activation, checkpoint,
 backup, process-termination and file-identity races, installed CLI contracts,
-and local stdio MCP contracts. Manual SQLite resource/timing probes remain
-opt-in and are not release budgets.
+local stdio MCP contracts, and strict-memory hostile-input, golden,
+property/mutation, output-bound, resource, and coverage-guided fuzz checks.
+Manual SQLite resource/timing probes and longer memory resource/fuzz campaigns
+remain opt-in and are not release budgets.
 
-Cross-platform CI, Miri, Loom, sanitizers, fuzzing, coverage, `cargo-vet`,
-SemVer checks, packaging smoke tests, and latest-dependency automation remain
-release/scheduled requirements rather than completed local infrastructure.
+Cross-platform CI, Miri, Loom, sanitizer-backed fuzzing, general coverage,
+`cargo-vet`, SemVer checks, packaging smoke tests, and latest-dependency
+automation remain release/scheduled requirements rather than completed local
+infrastructure.
 
 ## Toolchain and workspace
 
@@ -126,6 +129,14 @@ Enforce the six-package dependency direction accepted in [ADR-0008](adr/0008-lay
   remove only that still-identity-matched new file after closing SQLite and
   file handles. Never apply failed-startup cleanup to a pre-existing database
   or a path whose identity changed.
+- Before persistent connection configuration such as switching journal mode,
+  require a pre-existing database to carry the RepoWitness application ID and
+  an exact supported migration ledger. Never adopt an existing unmarked SQLite
+  file as a new RepoWitness database.
+- The pre-release local format has one clean baseline-version-1 migration and
+  one ledger row. Reject retired development versions 1 through 8 without
+  modifying them or creating journal sidecars; never reset them automatically
+  because local approvals and review events may not be reconstructable.
 - Startup recovery admits at most 4,096 incomplete generations, selects at
   most one extra identity to detect overflow before mutation, and runs under
   the caller's cancellation flag and absolute deadline through SQLite's
@@ -137,8 +148,13 @@ Enforce the six-package dependency direction accepted in [ADR-0008](adr/0008-lay
 - Build into immutable staging generations and activate atomically.
 - Keep migrations separate from request handling.
 - Migrations are restartable and transactional when supported; back up before destructive transformation.
-- Test upgrades from every supported schema version, interruption, backup/restore, and projection rebuild.
+- Test fresh baseline creation, exact reopen, retired-version rejection,
+  interruption, backup/restore, and projection rebuild. Once a compatible
+  version 2 exists, test upgrades from every supported version.
 - Use the SQLite online backup API for live backups. Never treat copying the main file without its WAL as a valid online backup.
+- Reserve partial-backup and sidecar paths without clobbering, reject occupied
+  sidecar namespaces, and let SQLite remove its own temporary journal state.
+  Cleanup never unlinks an unowned journal, WAL, or shared-memory path.
 - Never host or synchronize the live database on a shared network filesystem.
 - Keep the default database under the platform user-state directory. Warn if an explicit worktree-local database is tracked or indexed.
 
@@ -163,7 +179,9 @@ Enforce the six-package dependency direction accepted in [ADR-0008](adr/0008-lay
   check for RustSec advisories, allowed licenses, banned or duplicate
   packages, and trusted sources. Include development and build dependencies in
   license checks and development dependencies in duplicate-version checks; a
-  test-only oracle is still supply-chain input.
+  test-only oracle is still supply-chain input. Check every committed Rust
+  lockfile, including standalone fuzz or tooling workspaces excluded from the
+  production workspace.
 - Advisory or policy exceptions name an owner, exploitability rationale, compensating controls, and review/removal date. An ignore without those fields is not acceptable.
 - Introduce [`cargo-vet`](https://mozilla.github.io/cargo-vet/) before release-critical or native third-party code ships, unless an ADR records an equivalent source-review process. Initial exemptions are explicit debt and are ratcheted down.
 - Do not run a second lockfile advisory scanner merely for duplicate output. Use [`cargo-audit`](https://github.com/rustsec/rustsec/tree/main/cargo-audit) separately only when auditing a built artifact or deployment is a defined release requirement.
@@ -220,6 +238,13 @@ Watcher integration tests must deliberately drop, duplicate, reorder, and coales
 
 `cargo test` remains the authoritative default runner and doctest runner. If `cargo-nextest` is adopted for timeouts, slow-test reporting, or CI partitioning, retain a separate `cargo test --doc` job. CI jobs and relevant test groups have explicit timeouts.
 
+Locally configured external repositories are confidential smoke-test inputs.
+Their names, paths, revisions, symbols, source contents, and per-repository
+measurements must not appear in repository files, snapshots, screenshots, or
+default logs. Public validation records may state generic pass/fail coverage.
+Reproducible correctness and performance claims use synthetic committed
+fixtures or an explicitly public, pinned corpus.
+
 The ignored real-repository path probe resolves relative inputs from the
 workspace root and exercises the same production-shaped local adapter as the
 diagnostic CLI. The adapter invokes Git without a shell, bounds its deadline,
@@ -255,22 +280,26 @@ The command requires both identity and database path, uses the same bounded
 local preparation and application publication use case as integration tests,
 rejects a database inside the indexed worktree, and emits no repository,
 database, identity, source, or symbol text. CLI contract tests use temporary
-Git repositories to prove activation, repeat indexing, failure cleanup,
-redaction, and output-failure behavior. The installed `search` and `symbol-get`
-contract additionally proves that the complete occurrence selector emitted by
-search retrieves the exact declaration, while an obsolete generation or
-source changed after indexing fails without leaking its path, identity, or
-digest.
+mixed Rust, Go, TypeScript, TSX, and Python Git repositories to prove one atomic
+generation, language-specific analyzed/reused counts, one-language
+invalidation, failure cleanup, redaction, and output-failure behavior. The
+installed `search` and `symbol-get` contract additionally proves that complete
+occurrence selectors retrieve exact declarations from all five languages with
+persisted language, while an obsolete generation or source changed after
+indexing fails without leaking its path, identity, or digest.
 
 The MCP server contract is tested at three levels: wire DTO and bounded-line
 unit tests; in-process SDK initialization, schema, tool, semaphore,
 cancellation, and encoded-output tests; and an installed-binary stdio
-round-trip. The black-box test indexes a temporary Git worktree, negotiates MCP
-`2025-11-25`, lists exactly `code_search` and `symbol_get`, retrieves an exact
-declaration, reindexes, and proves the old generation selector fails. Stdout is
-parsed only as JSON-RPC and shutdown must leave stderr empty. A durable ignored
-variant exercises the same index-to-exact-retrieval path against a configured
-real Rust worktree:
+round-trip. The black-box test indexes a temporary five-language worktree,
+negotiates MCP `2025-11-25`, lists exactly `context_build`, `code_search`,
+`diagnostics`, `memory_recall`, and `symbol_get`, retrieves exact declarations
+from every language, reindexes, and proves the old generation selector fails.
+Focused protocol tests cover the context, memory, and diagnostic schemas,
+read-only annotations, cancellation, backpressure, and encoded-output bounds.
+Stdout is parsed only as JSON-RPC and shutdown must leave stderr empty. A
+durable ignored variant exercises the same index-to-exact-retrieval path
+against a configured real supported-language worktree:
 
 ```text
 REPOWITNESS_REAL_REPOSITORY=../repository \
@@ -290,11 +319,25 @@ REPOWITNESS_REAL_REPOSITORY=../repository \
   configured_repository_prepares_and_revalidates_every_rust_source --nocapture
 ```
 
-On 2026-07-25 the path probe passed all four neighboring Git worktrees (1,273
-paths total). The complete Rust probe passed the two Rust worktrees with 107
-files, 1,496,402 source bytes, 2,512 facts, and zero syntax-error nodes. These
-are correctness exercises, not committed performance corpora or release
-budgets.
+The path and complete Rust probes have passed against locally configured
+external worktrees without modifying them. These are private smoke checks, not
+committed performance corpora or release budgets; their input identities and
+per-repository results remain local.
+
+The complete pinned Phase 0 product-loop benchmark uses a clean external
+mini-redis checkout and a disposable clone:
+
+```text
+./scripts/run-phase0-benchmark /path/to/mini-redis 5
+```
+
+It covers release SQLite publication, exact unchanged and one-file
+incremental reuse, all required evidence targets, repeated query latency,
+canonical memory write and local approval, current/stale revalidation and
+context eligibility, default-read-only stdio MCP, database/WAL size, result
+size, and peak RSS. A dirty development run is provisional evidence; release
+attestation requires an exact clean RepoWitness revision and explicit
+ratification of the manifest budgets.
 
 The production SQLite end-to-end probe adds schema migration, bounded staging,
 atomic activation, an owned read connection, one evidence-bearing lexical
@@ -308,16 +351,12 @@ REPOWITNESS_REAL_REPOSITORY=../repository \
   configured_repository_persists_activates_and_searches_every_prepared_rust_fact
 ```
 
-On 2026-07-26 the expanded persistence, search, exact retrieval, and projection
-rebuild probe passed this workspace and both neighboring Rust worktrees
-(`netwhy` and `nvctl`) without modifying any repository. A repository without
-Rust declarations is outside this probe's stated precondition.
-
-On the same date, the installed-binary MCP probe passed both neighboring Rust
-worktrees using the relative `../netwhy` and `../nvctl` inputs. Each run wrote
-only a temporary SQLite database and completed initialization, tool discovery,
-bounded search, exact selector transfer, declaration retrieval, and clean EOF
-shutdown.
+The expanded SQLite and installed-binary MCP probes have also passed against
+locally configured supported-language worktrees. They exercise immutable
+publication, unchanged reuse, bounded search, exact retrieval, source-only
+context, diagnostics, retired-generation rejection, database integrity, clean
+shutdown, disposable-artifact cleanup, and input-worktree preservation. Their
+repository identities and individual observations remain local.
 
 When non-trivial Cargo features exist, test default, no-default, all-features, and selected production configurations. Use a bounded `cargo-hack` matrix rather than an unbounded feature powerset.
 
@@ -352,8 +391,8 @@ The affected change also runs the applicable specialized checks:
 - SQLite migration, mutation-lease contention, transaction, generation, and recovery tests;
 - SQLite runtime-version/compile-option, WAL checkpoint, and online backup tests;
 - clean-versus-incremental golden equivalence;
-- artifact-key and canonical payload-integrity validation, including legacy
-  backfill and corruption rejection;
+- artifact-key and canonical payload-integrity validation, including nullable
+  payload reanalysis and corruption rejection;
 - package dependency-policy and MCP boundary DTO checks;
 - dependency advisory, license, and source-policy checks;
 - applicable Linux, macOS, Windows, pinned-toolchain, and MSRV jobs.

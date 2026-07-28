@@ -216,22 +216,18 @@ case variants, and Unicode forms. Cross-platform integration tests should use
 real Git repositories and worktrees rather than assuming that a mocked
 `PathBuf` reproduces filesystem behavior.
 
-## Initial real-repository exercise
+## Initial external-worktree exercise
 
-On 2026-07-23, the opt-in local-adapter probe enumerated cached and untracked
-non-ignored paths with NUL-delimited `git ls-files` output and validated each
-record through `RepositoryPath`. The probe used Git 2.55.0 on Linux
-7.1.4-1-cachyos x86_64, a 30-second deadline, a 64 MiB captured-output bound,
-and explicit path-count, path-byte, and component-count bounds. It did not log
-path contents.
+An opt-in local-adapter probe enumerated cached and untracked non-ignored paths
+with NUL-delimited `git ls-files` output and validated each record through
+`RepositoryPath`. It used a bounded deadline, captured-output limit, path-count
+limit, path-byte limit, and component-count limit, and did not log path
+contents.
 
-| Repository revision | Worktree | Paths | Total path bytes | Longest path | Most components |
-|---|---:|---:|---:|---:|---:|
-| `netwhy` at `7be823742d9a3906a6a1cd3e60fb9bd216e3a60c` | Clean | 48 | 906 | 37 | 4 |
-| `nvctl` at `116744fb5f32e683e7b8140415149b07aecd4c3d` | Clean | 115 | 2,727 | 45 | 4 |
-
-Both repositories passed exact-byte round-trip validation. This is a corpus
-smoke test, not evidence for final default limits, arbitrary-byte filenames,
+Clean locally configured external worktrees passed exact-byte round-trip
+validation. Their identities, paths, revisions, and per-repository measurements
+are intentionally omitted from this public research record. This private smoke
+test is not evidence for final default limits, arbitrary-byte filenames,
 Windows host conversion, contained filesystem opens, sparse indexes,
 submodules, or a production `gix` versus Git CLI choice.
 
@@ -289,10 +285,10 @@ repository identity once per index stage. Both adapters must also return entry
 type or mode with each path: the path-only diagnostic sees a gitlink, but a
 source manifest must not treat that submodule boundary as a regular file.
 
-The ignored real-repository differential test also passed against the two clean
-sibling worktrees used by the earlier probe: 48 cached paths in `netwhy` and
-115 in `nvctl`. This verifies those worktrees only; it does not replace
-reproducible adversarial fixtures.
+The ignored real-repository differential test also passed against clean,
+locally configured external worktrees. Their identities and measurements
+remain local; the smoke result does not replace reproducible adversarial
+fixtures.
 
 The minimal umbrella `gix` feature set still resolves 145 packages in
 all-target Cargo metadata. Its graph includes object-database and

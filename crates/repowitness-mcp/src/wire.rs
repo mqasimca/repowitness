@@ -5,27 +5,67 @@ use std::{
 };
 
 use repowitness_application::{
-    CodeSearchQuery, DEFAULT_CODE_SEARCH_RESULTS, MAX_CODE_SEARCH_RESULTS,
+    CodeSearchQuery, DEFAULT_CODE_SEARCH_RESULTS, MAX_CODE_SEARCH_RESULTS, RepositoryPathLimits,
+    RepositoryPathTextByteLimit, RepositoryPathTextV1,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// MCP tool name for bounded lexical Rust-symbol search.
+mod context_build;
+mod diagnostics;
+mod memory_manage;
+mod memory_recall;
+
+pub use context_build::{
+    ContextBuildInput, ContextBuildOutput, ContextBuildServiceRequest, McpContextCoverage,
+    McpContextItem, McpContextMemoryItem, McpContextMemoryProjection, McpContextOmission,
+    McpContextSourceItem,
+};
+pub use diagnostics::{
+    DiagnosticsInput, DiagnosticsOutput, DiagnosticsServiceRequest, McpDiagnosticsMemoryProjection,
+};
+pub use memory_manage::{
+    MemoryManageInput, MemoryManageOperation, MemoryManageOutput, MemoryManageReceipt,
+    MemoryManageReviewDecision, MemoryManageServiceRequest,
+};
+pub use memory_recall::{
+    McpMemoryCandidate, McpMemoryCoverage, McpMemoryEvidence, McpMemoryOccurrence,
+    McpMemoryProducer, McpMemoryRecord, McpMemoryTarget, McpSelectedMemory, MemoryRecallInput,
+    MemoryRecallOutput, MemoryRecallServiceRequest, MemoryRecallServiceSelection,
+};
+
+/// MCP tool name for bounded lexical supported-language symbol search.
 pub const CODE_SEARCH_TOOL_NAME: &str = "code_search";
+/// MCP tool name for deterministic bounded context compilation.
+pub const CONTEXT_BUILD_TOOL_NAME: &str = "context_build";
+/// MCP tool name for transactionally pinned read-only repository diagnostics.
+pub const DIAGNOSTICS_TOOL_NAME: &str = "diagnostics";
+/// MCP tool name for generation-pinned engineering-memory retrieval.
+pub const MEMORY_RECALL_TOOL_NAME: &str = "memory_recall";
+/// MCP tool name for explicitly authorized local engineering-memory mutation.
+pub const MEMORY_MANAGE_TOOL_NAME: &str = "memory_manage";
 /// MCP tool name for exact verified declaration retrieval.
 pub const SYMBOL_GET_TOOL_NAME: &str = "symbol_get";
 
 pub(crate) const DEFAULT_MCP_TIMEOUT_MS: u64 = 5_000;
 pub(crate) const MAX_MCP_TIMEOUT_MS: u64 = 30_000;
-pub(crate) const MAX_PATH_TEXT_BYTES: usize = 2_097_160;
+const MAX_PATH_BYTES: u64 = 1_048_576;
+const MAX_PATH_COMPONENTS: u64 = 1_048_576;
+const MAX_PATH_TEXT_BYTES: u64 = 7 + (MAX_PATH_BYTES * 2);
+/// Largest integer that is exact in every supported MCP JSON implementation.
+pub const MAX_MCP_INTEROPERABLE_INTEGER: u64 = 9_007_199_254_740_991;
 pub(crate) const MAX_MCP_SEARCH_OUTPUT_BYTES: usize = 3 * 1024 * 1024;
+pub(crate) const MAX_MCP_CONTEXT_OUTPUT_BYTES: usize = 24 * 1024 * 1024;
+pub(crate) const MAX_MCP_DIAGNOSTICS_OUTPUT_BYTES: usize = 256 * 1024;
+pub(crate) const MAX_MCP_MEMORY_RECALL_OUTPUT_BYTES: usize = 20 * 1024 * 1024;
+pub(crate) const MAX_MCP_MEMORY_MANAGE_OUTPUT_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_MCP_SYMBOL_OUTPUT_BYTES: usize = 40 * 1024 * 1024;
 
 /// Version-1 wire input for `code_search`.
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CodeSearchInput {
-    /// Literal Rust symbol terms. FTS syntax is never accepted.
+    /// Literal Rust, Go, TypeScript, TSX, or Python symbol terms. FTS syntax is never accepted.
     pub query: String,
     /// Maximum returned candidates, from 1 through 100.
     pub max_results: Option<u16>,
@@ -153,6 +193,9 @@ impl SymbolGetInput {
         if !is_canonical_path_text(&self.path) {
             return Err("path must be bounded canonical rwp1:h: text");
         }
+        if self.fact_ordinal > MAX_MCP_INTEROPERABLE_INTEGER {
+            return Err("fact_ordinal exceeds the interoperable integer range");
+        }
         let timeout = validate_timeout(self.timeout_ms)?;
         Ok(SymbolGetServiceRequest {
             snapshot_sha256: self.snapshot_sha256,
@@ -246,6 +289,14 @@ impl fmt::Debug for SymbolGetServiceRequest {
 pub enum RepositoryServiceError {
     /// Local code search failed without a usable result.
     CodeSearch,
+    /// Context compilation failed without a usable result.
+    ContextBuild,
+    /// Repository diagnostics failed without a usable result.
+    Diagnostics,
+    /// Memory recall failed without a usable result.
+    MemoryRecall,
+    /// Authorized local memory management failed without a usable result.
+    MemoryManage,
     /// Exact symbol retrieval failed without a usable result.
     SymbolGet,
 }
@@ -254,6 +305,10 @@ impl fmt::Display for RepositoryServiceError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
             Self::CodeSearch => "code search failed",
+            Self::ContextBuild => "context build failed",
+            Self::Diagnostics => "repository diagnostics failed",
+            Self::MemoryRecall => "memory recall failed",
+            Self::MemoryManage => "memory management failed",
             Self::SymbolGet => "symbol retrieval failed",
         })
     }
@@ -272,6 +327,36 @@ pub trait RepositoryService: Send + Sync + 'static {
         request: CodeSearchServiceRequest,
         cancelled: Arc<AtomicBool>,
     ) -> Result<CodeSearchOutput, RepositoryServiceError>;
+
+    /// Compiles one bounded evidence-bearing context pack.
+    fn context_build(
+        &self,
+        request: ContextBuildServiceRequest,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<ContextBuildOutput, RepositoryServiceError>;
+
+    /// Reads one transactionally pinned active repository state.
+    fn diagnostics(
+        &self,
+        request: DiagnosticsServiceRequest,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<DiagnosticsOutput, RepositoryServiceError>;
+
+    /// Recalls bounded records from the complete active memory projection.
+    fn memory_recall(
+        &self,
+        request: MemoryRecallServiceRequest,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<MemoryRecallOutput, RepositoryServiceError>;
+
+    /// Performs one explicitly authorized, path-confined memory mutation.
+    fn memory_manage(
+        &self,
+        _request: MemoryManageServiceRequest,
+        _cancelled: Arc<AtomicBool>,
+    ) -> Result<MemoryManageOutput, RepositoryServiceError> {
+        Err(RepositoryServiceError::MemoryManage)
+    }
 
     /// Retrieves one exact, verified source declaration.
     fn symbol_get(
@@ -305,7 +390,7 @@ pub struct McpSpan {
     pub end: u64,
 }
 
-/// One attributed Rust-symbol match in a `code_search` response.
+/// One attributed supported-language symbol match in a `code_search` response.
 #[derive(Clone, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct McpSearchMatch {
@@ -321,7 +406,9 @@ pub struct McpSearchMatch {
     pub producer_manifest_sha256: String,
     /// Evidence strength; currently `syntax`.
     pub evidence_tier: String,
-    /// Rust declaration kind.
+    /// Persisted source language: `rust`, `go`, `typescript`, or `tsx`.
+    pub language: String,
+    /// Language-specific declaration kind.
     pub kind: String,
     /// Unqualified declaration name.
     pub name: String,
@@ -333,7 +420,7 @@ pub struct McpSearchMatch {
     pub declaration_span: McpSpan,
 }
 
-/// Version-1 structured response for `code_search`.
+/// Version-3 structured response for `code_search`.
 #[derive(Clone, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CodeSearchOutput {
@@ -375,7 +462,7 @@ pub struct SymbolSelectorOutput {
     pub fact_ordinal: u64,
 }
 
-/// One exact verified Rust declaration.
+/// One exact verified supported-language declaration.
 #[derive(Clone, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct McpSymbol {
@@ -383,7 +470,9 @@ pub struct McpSymbol {
     pub producer_manifest_sha256: String,
     /// Evidence strength; currently `syntax`.
     pub evidence_tier: String,
-    /// Rust declaration kind.
+    /// Persisted source language: `rust`, `go`, `typescript`, or `tsx`.
+    pub language: String,
+    /// Language-specific declaration kind.
     pub kind: String,
     /// Unqualified declaration name.
     pub name: String,
@@ -399,7 +488,7 @@ pub struct McpSymbol {
     pub declaration_hex: String,
 }
 
-/// Version-1 structured response for `symbol_get`.
+/// Version-3 structured response for `symbol_get`.
 #[derive(Clone, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SymbolGetOutput {
@@ -439,15 +528,12 @@ fn is_lowercase_sha256(value: &str) -> bool {
 }
 
 fn is_canonical_path_text(value: &str) -> bool {
-    let Some(encoded) = value.strip_prefix("rwp1:h:") else {
-        return false;
-    };
-    !encoded.is_empty()
-        && value.len() <= MAX_PATH_TEXT_BYTES
-        && encoded.len().is_multiple_of(2)
-        && encoded
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'A'..=b'F').contains(&byte))
+    RepositoryPathTextV1::decode(
+        value,
+        RepositoryPathTextByteLimit::new(MAX_PATH_TEXT_BYTES),
+        RepositoryPathLimits::new(MAX_PATH_BYTES, MAX_PATH_COMPONENTS),
+    )
+    .is_ok()
 }
 
 #[cfg(test)]
@@ -525,6 +611,19 @@ mod tests {
         assert!(input.validate().is_err());
         let mut input = valid();
         input.path = "rwp1:h:A".to_owned();
+        assert!(input.validate().is_err());
+        for path in [
+            "rwp1:h:00",
+            "rwp1:h:2F737263",
+            "rwp1:h:7372632F2E2E2F6C69622E7273",
+            "rwp1:h:7372632F2E6769742F636F6E666967",
+        ] {
+            let mut input = valid();
+            input.path = path.to_owned();
+            assert!(input.validate().is_err());
+        }
+        let mut input = valid();
+        input.fact_ordinal = MAX_MCP_INTEROPERABLE_INTEGER + 1;
         assert!(input.validate().is_err());
     }
 }

@@ -3,13 +3,22 @@
 ## Scope and current state
 
 - These instructions apply to the entire repository. Add a nested `AGENTS.md` only when a subtree gains genuinely different commands or rules.
-- RepoWitness is in early Phase 0 implementation with a tested local Rust
-  indexing and evidence-retrieval vertical slice. The workspace includes a
-  usable CLI, local stdio MCP server, and implemented SQLite v3 schema with
-  migrations from versions 1 and 2. Production engineering memory,
-  correspondence/revalidation, context compilation, and a stable public API do
-  not exist yet; verify the current command surface in `README.md` and the
-  implementation boundary in `docs/roadmap.md`.
+- RepoWitness is in Phase 0 design-partner-alpha implementation with tested
+  local Rust, Go, TypeScript, TSX, and Python indexing, evidence retrieval, and
+  memory revalidation. The workspace includes a usable CLI, local stdio MCP
+  server, and one clean SQLite baseline-version-1 migration. Retired
+  development schema versions 1 through 8 are rejected without mutation. The
+  accepted version-1 engineering-memory format, contained
+  canonical writer, observation-only Git-history import, separately trusted
+  local approval, append-only journal, manual correspondence review, immutable
+  projection, precision-first Rust revalidation, recall, context compilation,
+  and diagnostics exist. The MCP server remains read-only by default and adds
+  `memory_manage` only under an explicit fixed-actor startup capability. The
+  pinned product-loop benchmark passes the proposed budgets in development;
+  explicit ADR/budget ratification, residual release-matrix cases, a real
+  design-partner outcome, and a stable public API remain. Verify the current
+  command surface in `README.md` and the implementation boundary in
+  `docs/roadmap.md`.
 - Preserve the user's working tree. Do not commit, push, tag, publish, open a pull request, or rewrite Git history unless the user explicitly asks.
 - RepoWitness uses the MIT License and the clean-room/provenance policy in [`CONTRIBUTING.md`](CONTRIBUTING.md). Do not copy or port upstream source, tests, fixtures, generated code, or substantial documentation without prior maintainer approval and recorded provenance, version, license compatibility, notices, and rationale. Independent research and behavioral comparison are allowed.
 
@@ -35,12 +44,22 @@ Accepted ADRs control the decisions they cover. Focused product, architecture, e
 - Inspect `git status --short` before editing and again before handoff. Existing changes belong to the user unless the current task clearly created them.
 - For a non-trivial change, state assumptions and make a short plan before implementation. Resolve architecture uncertainty through an ADR or named spike instead of silently choosing a permanent contract.
 - When research is requested or a claim is date-sensitive, verify it from current primary sources: official specifications/docs, upstream repositories, or original papers. Record material findings and dates in the appropriate research or decision document.
+- Treat locally configured external repositories as confidential test inputs.
+  Do not record their names, paths, revisions, symbol names, source contents,
+  per-repository measurements, or screenshots in repository files or default
+  logs. Public validation records may state generic pass/fail coverage;
+  reproducible evidence must use synthetic fixtures or an explicitly public,
+  pinned corpus.
 
 ## Product and architecture guardrails
 
 - Protect the differentiating loop: source change -> atomic code-fact update -> memory revalidation -> evidence-backed context pack.
-- Phase 0 proves one Rust-language vertical slice. Do not add PostgreSQL, remote MCP, vectors, general graph queries, plugin execution, runtime telemetry, a UI, or broad language support unless the task explicitly changes scope and the roadmap/ADR is updated.
-- ADR-0004 through ADR-0008 and ADR-0010 through ADR-0013 are accepted implementation contracts. Do not silently weaken or bypass their identity, temporal-validity, generation-publication, Git-memory, path, source-state, SQLite-generation, or dependency-direction decisions; supersede a decision through a new ADR when necessary.
+- The Phase 0 source slice supports only built-in Rust, Go, TypeScript, TSX,
+  and Python adapters under accepted ADR-0015, ADR-0016, and ADR-0020. Do not
+  add another language, PostgreSQL, remote MCP, vectors, general graph queries,
+  plugin execution, runtime telemetry, or a UI unless the task explicitly
+  changes scope and the roadmap/ADR is updated.
+- ADR-0004 through ADR-0008, ADR-0010 through ADR-0016, ADR-0020, and ADR-0022 are accepted implementation contracts. Do not silently weaken or bypass their identity, temporal-validity, generation-publication, Git-memory, path, source-state, SQLite-generation, memory-format, or dependency-direction decisions; supersede a decision through a new ADR when necessary.
 - Enforce ADR-0008's dependency direction:
 
   ```text

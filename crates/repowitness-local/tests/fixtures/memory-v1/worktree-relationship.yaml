@@ -1,0 +1,43 @@
+schema_version: 1
+record_id: mem_7ZZZZZZZZZZZZZZZZZZZZZZZZZ
+display_revision: 9
+parent_revision_digests:
+  - "6666666666666666666666666666666666666666666666666666666666666666"
+  - "7777777777777777777777777777777777777777777777777777777777777777"
+kind: failure
+title: "Avoid publishing stale worktree evidence"
+body: "Revalidate the exact dirty-worktree snapshot before recall."
+scope:
+  repository_id: rwi1:h:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+  subject_evidence: 0
+provenance:
+  origin: human
+  actor_kind: local_asserted
+  actor_id: "reviewer"
+assurance: locally_approved
+lifecycle: needs_review
+validity:
+  kind: worktree
+  source_snapshot_digest: "8888888888888888888888888888888888888888888888888888888888888888"
+evidence:
+  - kind: rust_symbol
+    source_snapshot_digest: "8888888888888888888888888888888888888888888888888888888888888888"
+    path: rwp1:h:7372632F6C69622E7273
+    content_digest: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    artifact_digest: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    fact_ordinal: 7
+    symbol_kind: method
+    name: "revalidate"
+    qualified_name: "crate::Memory::revalidate"
+    name_start: 8
+    name_length: 10
+    declaration_start: 0
+    declaration_length: 32
+    declaration_digest: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    producer_id: "repowitness.rust.syntax"
+    producer_version: "phase0-rust-syntax-v1"
+relationships:
+  - kind: contradicts
+    record_id: mem_00000000000000000000000000
+    revision_digest: "9999999999999999999999999999999999999999999999999999999999999999"
+tombstone: false
