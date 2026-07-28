@@ -31,6 +31,11 @@ const WRITE_LEASE_NAME: &str = ".repowitness-write.lock";
 const WRITE_LEASE_RETRY_DELAY: Duration = Duration::from_millis(10);
 static NEXT_TEMPORARY: AtomicU64 = AtomicU64::new(0);
 
+#[cfg(unix)]
+type DirectorySyncHandle = std::os::fd::OwnedFd;
+#[cfg(not(unix))]
+type DirectorySyncHandle = std::fs::File;
+
 /// Receipt for one canonical Git-memory file publication.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct LocalMemoryWriteReceipt {
@@ -297,6 +302,7 @@ fn publish(
     deadline: Instant,
 ) -> Result<(), LocalMemoryManageError> {
     check_control(cancelled, deadline)?;
+    let directory_sync = open_directory_sync_handle(records)?;
     let (temporary, mut file) = create_temporary(records)?;
     let outcome = (|| {
         file.write_all(canonical)
@@ -332,7 +338,7 @@ fn publish(
                 .remove_file(&temporary)
                 .map_err(|_| LocalMemoryManageError::FilePublicationFailed)?;
         }
-        sync_directory(records)?;
+        sync_directory(&directory_sync)?;
         Ok(())
     })();
     if outcome.is_err() {
@@ -395,10 +401,41 @@ fn target_name(record_id: repowitness_domain::MemoryRecordId) -> OsString {
     ))
 }
 
-fn sync_directory(directory: &Dir) -> Result<(), LocalMemoryManageError> {
+#[cfg(unix)]
+fn open_directory_sync_handle(
+    directory: &Dir,
+) -> Result<DirectorySyncHandle, LocalMemoryManageError> {
+    rustix::fs::openat(
+        directory,
+        ".",
+        rustix::fs::OFlags::RDONLY
+            | rustix::fs::OFlags::DIRECTORY
+            | rustix::fs::OFlags::NOFOLLOW
+            | rustix::fs::OFlags::CLOEXEC,
+        rustix::fs::Mode::empty(),
+    )
+    .map_err(|_| LocalMemoryManageError::FilePublicationFailed)
+}
+
+#[cfg(not(unix))]
+fn open_directory_sync_handle(
+    directory: &Dir,
+) -> Result<DirectorySyncHandle, LocalMemoryManageError> {
     directory
         .try_clone()
-        .and_then(|clone| clone.into_std_file().sync_all())
+        .map(Dir::into_std_file)
+        .map_err(|_| LocalMemoryManageError::FilePublicationFailed)
+}
+
+#[cfg(unix)]
+fn sync_directory(directory: &DirectorySyncHandle) -> Result<(), LocalMemoryManageError> {
+    rustix::fs::fsync(directory).map_err(|_| LocalMemoryManageError::FilePublicationFailed)
+}
+
+#[cfg(not(unix))]
+fn sync_directory(directory: &DirectorySyncHandle) -> Result<(), LocalMemoryManageError> {
+    directory
+        .sync_all()
         .map_err(|_| LocalMemoryManageError::FilePublicationFailed)
 }
 
@@ -417,4 +454,44 @@ fn has_one_link(metadata: &Metadata) -> bool {
 #[cfg(not(any(unix, windows)))]
 fn has_one_link(_metadata: &Metadata) -> bool {
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct TestDirectory(std::path::PathBuf);
+
+    impl TestDirectory {
+        fn new() -> Self {
+            let ordinal = NEXT_TEMPORARY.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "repowitness-memory-directory-sync-{}-{ordinal}",
+                std::process::id()
+            ));
+            std::fs::create_dir(&path).expect("test directory should be created");
+            Self(path)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn contained_directory_sync_uses_a_sync_capable_handle() {
+        let fixture = TestDirectory::new();
+        let directory = Dir::open_ambient_dir(fixture.path(), ambient_authority())
+            .expect("contained directory should open");
+        let sync_handle =
+            open_directory_sync_handle(&directory).expect("sync-capable directory should open");
+
+        sync_directory(&sync_handle).expect("directory synchronization should succeed");
+    }
 }

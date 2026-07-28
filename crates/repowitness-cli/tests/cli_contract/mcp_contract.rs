@@ -91,7 +91,15 @@ fn mcp_memory_manage_is_process_level_default_deny_and_explicitly_enabled() {
             }
         }),
     );
-    let written = &written["result"]["structuredContent"];
+    assert_eq!(written["id"], serde_json::json!(22));
+    assert_eq!(
+        written["result"]["isError"],
+        serde_json::json!(false),
+        "memory write returned a tool error"
+    );
+    let written = written["result"]["structuredContent"]
+        .as_object()
+        .expect("successful memory write must include structured content");
     assert_eq!(written["schema_version"], serde_json::json!(1));
     assert_eq!(
         written["receipt"]["operation"],
