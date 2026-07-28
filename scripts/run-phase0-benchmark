@@ -2,6 +2,7 @@
 set -eu
 
 EXPECTED_REVISION=3d93b42bc363220f85af4fc9e1bebd35b588a4a3
+MAX_PEAK_RSS_KIB=262144
 
 if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
     echo "usage: ./scripts/run-phase0-benchmark <mini-redis-repository> [runs]" >&2
@@ -22,7 +23,22 @@ if [ -n "$(git -C "$CORPUS_ROOT" status --porcelain --untracked-files=all)" ]; t
     exit 65
 fi
 
-cargo build --release --locked -p repowitness-local --example phase0_index_probe
+BENCHMARK_TEMP=$(mktemp -d "${TMPDIR:-/tmp}/repowitness-phase0.XXXXXXXX")
+cleanup() {
+    rm -rf "$BENCHMARK_TEMP"
+}
+trap cleanup EXIT HUP INT TERM
+
+WORK_REPOSITORY=$BENCHMARK_TEMP/mini-redis
+DATABASE=$BENCHMARK_TEMP/index.sqlite3
+TIME_OUTPUT=$BENCHMARK_TEMP/time.txt
+git clone --quiet --no-local "$CORPUS_ROOT" "$WORK_REPOSITORY"
+git -C "$WORK_REPOSITORY" checkout --quiet --detach "$EXPECTED_REVISION"
+printf '%s\n' '.code-memory/' >>"$WORK_REPOSITORY/.git/info/exclude"
+
+cargo build --release --locked \
+    -p repowitness-local --example phase0_product_probe \
+    -p repowitness-cli --bin repowitness
 
 echo "observed_at_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo "repowitness_revision=$(git rev-parse --verify HEAD 2>/dev/null || echo uncommitted-worktree)"
@@ -33,14 +49,88 @@ else
 fi
 echo "corpus_revision=$ACTUAL_REVISION"
 echo "rust_toolchain=$(rustc --version)"
-echo "operating_system=$(uname -srvmo)"
-echo "logical_cpu_count=$(getconf _NPROCESSORS_ONLN)"
-if command -v lscpu >/dev/null 2>&1; then
-    lscpu | sed -n 's/^Model name:[[:space:]]*/cpu_model=/p'
-fi
-df -PT "$CORPUS_ROOT" | awk 'NR == 2 { print "filesystem_type=" $2 }'
-if [ -r /proc/meminfo ]; then
-    awk '/^MemTotal:/ { printf "memory_mib=%d\n", $2 / 1024 }' /proc/meminfo
+echo "operating_system=$(uname -srm)"
+
+if LOGICAL_CPU_COUNT=$(getconf _NPROCESSORS_ONLN 2>/dev/null); then
+    echo "logical_cpu_count=$LOGICAL_CPU_COUNT"
+elif LOGICAL_CPU_COUNT=$(sysctl -n hw.logicalcpu 2>/dev/null); then
+    echo "logical_cpu_count=$LOGICAL_CPU_COUNT"
+else
+    echo "logical_cpu_count=unavailable"
 fi
 
-target/release/examples/phase0_index_probe "$CORPUS_ROOT" "$RUNS"
+if command -v lscpu >/dev/null 2>&1; then
+    lscpu | sed -n 's/^Model name:[[:space:]]*/cpu_model=/p'
+elif CPU_MODEL=$(sysctl -n machdep.cpu.brand_string 2>/dev/null); then
+    echo "cpu_model=$CPU_MODEL"
+else
+    echo "cpu_model=unavailable"
+fi
+
+if [ -r /proc/meminfo ]; then
+    awk '/^MemTotal:/ { printf "memory_mib=%d\n", $2 / 1024 }' /proc/meminfo
+elif MEMORY_BYTES=$(sysctl -n hw.memsize 2>/dev/null); then
+    awk -v bytes="$MEMORY_BYTES" 'BEGIN { printf "memory_mib=%d\n", bytes / 1048576 }'
+else
+    echo "memory_mib=unavailable"
+fi
+
+case "$(uname -s)" in
+    Darwin)
+        FILESYSTEM_DEVICE=$(df "$BENCHMARK_TEMP" | awk 'NR == 2 { print $1 }')
+        FILESYSTEM_TYPE=$(mount | awk -v device="$FILESYSTEM_DEVICE" '
+            $1 == device {
+                split($0, sections, "(")
+                split(sections[2], details, ",")
+                print details[1]
+                exit
+            }
+        ')
+        ;;
+    Linux)
+        FILESYSTEM_TYPE=$(df -PT "$BENCHMARK_TEMP" | awk 'NR == 2 { print $2 }')
+        ;;
+    *)
+        FILESYSTEM_TYPE=
+        ;;
+esac
+if [ -n "$FILESYSTEM_TYPE" ]; then
+    echo "filesystem_type=$FILESYSTEM_TYPE"
+else
+    echo "filesystem_type=unavailable"
+fi
+
+PROBE=target/release/examples/phase0_product_probe
+CLI=target/release/repowitness
+case "$(uname -s)" in
+    Darwin)
+        if ! /usr/bin/time -l "$PROBE" "$WORK_REPOSITORY" "$DATABASE" "$CLI" "$RUNS" \
+            2>"$TIME_OUTPUT"; then
+            sed -n '1,120p' "$TIME_OUTPUT" >&2
+            exit 1
+        fi
+        PEAK_RSS_KIB=$(awk '/maximum resident set size/ { print int($1 / 1024); exit }' "$TIME_OUTPUT")
+        ;;
+    Linux)
+        if ! /usr/bin/time -f 'peak_rss_kib=%M' "$PROBE" \
+            "$WORK_REPOSITORY" "$DATABASE" "$CLI" "$RUNS" 2>"$TIME_OUTPUT"; then
+            sed -n '1,120p' "$TIME_OUTPUT" >&2
+            exit 1
+        fi
+        PEAK_RSS_KIB=$(sed -n 's/^peak_rss_kib=//p' "$TIME_OUTPUT")
+        ;;
+    *)
+        "$PROBE" "$WORK_REPOSITORY" "$DATABASE" "$CLI" "$RUNS"
+        PEAK_RSS_KIB=
+        ;;
+esac
+
+if [ -n "$PEAK_RSS_KIB" ]; then
+    echo "peak_rss_kib=$PEAK_RSS_KIB"
+    if [ "$PEAK_RSS_KIB" -gt "$MAX_PEAK_RSS_KIB" ]; then
+        echo "error: peak RSS exceeded the proposed Phase 0 budget" >&2
+        exit 1
+    fi
+else
+    echo "peak_rss_kib=unavailable"
+fi

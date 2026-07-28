@@ -1,30 +1,39 @@
 use repowitness_analysis::{
-    RUST_ANALYSIS_PROFILE_VERSION, TREE_SITTER_RUNTIME_VERSION, TREE_SITTER_RUST_GRAMMAR_VERSION,
-    rust_analyzer_implementation_fingerprint_input, rust_grammar_fingerprint_input,
+    RUST_ANALYSIS_PROFILE_VERSION, RUST_CORRESPONDENCE_PROFILE_ID,
+    RUST_CORRESPONDENCE_PROFILE_VERSION, TREE_SITTER_RUNTIME_VERSION,
+    TREE_SITTER_RUST_GRAMMAR_VERSION, rust_analyzer_implementation_fingerprint_input,
+    rust_analyzer_traversal_fingerprint_input,
+    rust_correspondence_implementation_fingerprint_input, rust_grammar_fingerprint_input,
 };
-use repowitness_domain::{AnalysisSchemaDigest, ConfigurationDigest, ProducerManifestDigest};
+use repowitness_domain::{
+    AnalysisSchemaDigest, ConfigurationDigest, CorrespondenceProfileDigest, ProducerManifestDigest,
+};
 use sha2::{Digest, Sha256};
 
-use crate::RustArtifactIdentity;
+use crate::{
+    RustArtifactIdentity, rust_index::source_preparation_implementation_fingerprint_inputs,
+};
 
 const PRODUCER_MANIFEST_DOMAIN: &[u8] = b"RepoWitness\0phase0-rust-producer-manifest\0";
 const CONFIGURATION_DOMAIN: &[u8] = b"RepoWitness\0phase0-rust-configuration\0";
 const ANALYSIS_SCHEMA_DOMAIN: &[u8] = b"RepoWitness\0phase0-rust-analysis-schema\0";
+const CORRESPONDENCE_PROFILE_DOMAIN: &[u8] = b"RepoWitness\0phase0-rust-correspondence-profile\0";
 const PHASE0_RUST_CONFIGURATION: &[u8] = b"rust-paths=case-sensitive-dot-rs\0\
 git-scope=tracked-and-nonignored-untracked\0\
 sparse-worktree=reject\0gitlinks=reject\0syntax-errors=retain";
 const PHASE0_RUST_ANALYSIS_SCHEMA: &[u8] = b"path-bytes\0content-digest-sha256\0\
 artifact-digest-sha256\0symbol-kind\0name-utf8\0qualified-name-utf8\0\
-name-span-u64\0declaration-span-u64\0visited-nodes-u32\0syntax-error-nodes-u32";
+name-span-u64\0declaration-span-u64\0declaration-digest-sha256\0\
+rust-name-elided-v1-sha256\0visited-nodes-u32\0syntax-error-nodes-u32";
 
 /// Version of the canonical Phase 0 Rust producer-manifest encoding.
-pub const PHASE0_RUST_PRODUCER_MANIFEST_VERSION: u32 = 1;
+pub const PHASE0_RUST_PRODUCER_MANIFEST_VERSION: u32 = 3;
 /// Version of the resolved, non-configurable Phase 0 Rust policy.
 pub const PHASE0_RUST_CONFIGURATION_VERSION: u32 = 1;
 /// Version of the persisted Phase 0 Rust extraction schema.
-pub const PHASE0_RUST_ANALYSIS_SCHEMA_VERSION: u32 = 1;
+pub const PHASE0_RUST_ANALYSIS_SCHEMA_VERSION: u32 = 2;
 /// Version of canonical persisted Rust fact encodings.
-pub const PHASE0_RUST_CANONICALIZATION_VERSION: u32 = 1;
+pub const PHASE0_RUST_CANONICALIZATION_VERSION: u32 = 2;
 
 /// Constructs the complete production identity for the Phase 0 Rust analyzer.
 ///
@@ -40,6 +49,20 @@ pub fn phase0_rust_artifact_identity() -> RustArtifactIdentity {
     )
 }
 
+/// Identifies the complete pure Phase 0 Rust correspondence implementation.
+#[must_use]
+pub fn phase0_rust_correspondence_profile_digest() -> CorrespondenceProfileDigest {
+    let mut hasher = Sha256::new();
+    hasher.update(CORRESPONDENCE_PROFILE_DOMAIN);
+    update_length_prefixed(&mut hasher, RUST_CORRESPONDENCE_PROFILE_ID.as_bytes());
+    hasher.update(RUST_CORRESPONDENCE_PROFILE_VERSION.to_be_bytes());
+    update_length_prefixed(
+        &mut hasher,
+        rust_correspondence_implementation_fingerprint_input(),
+    );
+    CorrespondenceProfileDigest::new(hasher.finalize().into())
+}
+
 fn producer_manifest_digest() -> ProducerManifestDigest {
     let mut hasher = Sha256::new();
     hasher.update(PRODUCER_MANIFEST_DOMAIN);
@@ -52,8 +75,18 @@ fn producer_manifest_digest() -> ProducerManifestDigest {
         &mut hasher,
         rust_analyzer_implementation_fingerprint_input(),
     );
+    update_length_prefixed(&mut hasher, rust_analyzer_traversal_fingerprint_input());
     update_length_prefixed(&mut hasher, rust_grammar_fingerprint_input());
+    update_length_prefixed(
+        &mut hasher,
+        rust_correspondence_implementation_fingerprint_input(),
+    );
+    update_length_prefixed(&mut hasher, RUST_CORRESPONDENCE_PROFILE_ID.as_bytes());
+    hasher.update(RUST_CORRESPONDENCE_PROFILE_VERSION.to_be_bytes());
     update_length_prefixed(&mut hasher, include_bytes!("rust_index.rs"));
+    for input in source_preparation_implementation_fingerprint_inputs() {
+        update_length_prefixed(&mut hasher, input);
+    }
     update_length_prefixed(&mut hasher, include_bytes!("canonical_digest.rs"));
     update_length_prefixed(&mut hasher, include_bytes!("rust_profile.rs"));
     ProducerManifestDigest::new(hasher.finalize().into())
@@ -86,7 +119,7 @@ mod tests {
     use super::{
         PHASE0_RUST_ANALYSIS_SCHEMA_VERSION, PHASE0_RUST_CANONICALIZATION_VERSION,
         PHASE0_RUST_CONFIGURATION_VERSION, PHASE0_RUST_PRODUCER_MANIFEST_VERSION,
-        phase0_rust_artifact_identity,
+        phase0_rust_artifact_identity, phase0_rust_correspondence_profile_digest,
     };
 
     #[test]
@@ -107,8 +140,13 @@ mod tests {
             first.canonicalization_version(),
             PHASE0_RUST_CANONICALIZATION_VERSION
         );
-        assert_eq!(PHASE0_RUST_PRODUCER_MANIFEST_VERSION, 1);
+        assert_eq!(PHASE0_RUST_PRODUCER_MANIFEST_VERSION, 3);
         assert_eq!(PHASE0_RUST_CONFIGURATION_VERSION, 1);
-        assert_eq!(PHASE0_RUST_ANALYSIS_SCHEMA_VERSION, 1);
+        assert_eq!(PHASE0_RUST_ANALYSIS_SCHEMA_VERSION, 2);
+        assert_eq!(PHASE0_RUST_CANONICALIZATION_VERSION, 2);
+        assert_ne!(
+            phase0_rust_correspondence_profile_digest().as_bytes(),
+            &[0; 32]
+        );
     }
 }

@@ -1,7 +1,7 @@
 # Product
 
 - Status: Draft
-- Last reviewed: 2026-07-26
+- Last reviewed: 2026-07-28
 
 ## Definition
 
@@ -88,9 +88,10 @@ This enables:
 
 ## Phase 0 product slice
 
-The first design-partner alpha proves one complete loop with one language:
+The first design-partner alpha proves one complete loop with one atomic Rust,
+Go, TypeScript, TSX, and Python source profile:
 
-1. Index a Rust repository into SQLite.
+1. Index any mixture of the five supported languages into SQLite.
 2. Retrieve evidence and build a compact context pack.
 3. Attach a manually approved decision or failure to a logical symbol.
 4. Rename or meaningfully change the symbol.
@@ -98,46 +99,85 @@ The first design-partner alpha proves one complete loop with one language:
 6. Rebuild the context pack and expose the changed validity.
 7. Compare a real task with lexical/source-only retrieval and with RepoWitness.
 
-The alpha deliberately excludes additional languages, PostgreSQL, remote MCP, automatic memory extraction, persisted tasks, runtime telemetry, UI, plugin execution, vector retrieval, raw ranking weights, and general graph-query compatibility.
+The alpha deliberately excludes languages beyond Rust, Go, TypeScript, TSX,
+and Python, PostgreSQL, remote MCP, automatic memory extraction, persisted
+tasks, runtime telemetry, UI, plugin execution, vector retrieval, raw ranking
+weights, and general graph-query compatibility.
 
 ### Implemented and verified
 
-As of 2026-07-26, the source-to-evidence half of the Phase 0 loop is
-implemented:
+As of 2026-07-28, the Phase 0 source-to-revalidated-context path and its local
+memory-management foundation are implemented:
 
 - bounded sanitized-Git discovery and canonical Git/worktree receipts;
-- capability-contained, no-follow Rust source reads with final identity and
-  content revalidation;
-- deterministic Tree-sitter Rust symbol extraction, canonical manifests,
-  source snapshots, artifact keys, and exact clean-versus-incremental reuse;
+- capability-contained, no-follow supported-language source reads with final
+  identity and content revalidation;
+- deterministic language-specific Tree-sitter symbol extraction, one mixed
+  canonical manifest and source snapshot, independent Rust, Go, TypeScript,
+  TSX, and Python artifact keys, and exact clean-versus-incremental reuse;
 - owned SQLite connections, immutable generations, atomic activation,
   bounded/cancellable startup recovery, double-buffered FTS5, checkpoints, and
   validated online backup;
 - evidence-bearing literal `code_search` and exact digest-verified
   `symbol_get` application use cases;
-- `index`, `search`, `symbol-get`, `mcp-serve`, and `inspect-paths` CLI
-  commands, with the two read-only retrieval tools exposed over local stdio
-  MCP; and
+- `index`, `search`, `symbol-get`, `memory-manage`, `memory-revalidate`,
+  `memory-recall`, `context-build`, `diagnostics`, `mcp-serve`, and
+  `inspect-paths` CLI commands, with five read-only
+  retrieval/context/diagnostic tools exposed by default over local stdio MCP
+  and an explicitly enabled, fixed-actor `memory_manage` mutation tool;
+- the accepted bounded version-1 memory domain, hostile-YAML parser,
+  canonicalizer, deterministic writer, and capability-contained exact-file
+  worktree admission;
+- a scope-checked import use case and owned-writer SQLite baseline journal with
+  immutable versions, normalized evidence, tombstones, separately trusted
+  idempotent observation/approval audit events, rollback, reopen, corruption
+  detection, and online-backup coverage;
+- contained canonical record create/update/tombstone writes, fixed
+  high-confidence secret rejection, bounded observation-only reachable-Git
+  history import, and explicit local approval;
+- one clean SQLite baseline-version-1 migration containing occurrence
+  fingerprints, immutable current-memory projection, idempotent manual
+  correspondence review, precision-first Rust correspondence, Git-DAG/worktree validity,
+  conflicts, categorical staleness and review states, bounded current-memory
+  recall, and atomic projection activation;
+- deterministic reciprocal-rank context compilation from exact source and
+  eligible current memory, conservative byte-budget admission, explicit
+  omissions, transactionally pinned diagnostics, and source-only fallback;
+- a public pinned-corpus product-loop runner covering persistence, exact reuse,
+  retrieval, default-read-only MCP, canonical write/approval, current-memory
+  context, one-file invalidation, stale recall, and stale-memory exclusion; and
 - regression coverage for cancellation, deadlines, limits, hostile Git and
   path state, stale generations, source mutation, process termination,
   database alias/replacement races, recovery overflow, migration, backup, and
   clean-versus-incremental equivalence.
 
-The slice has been exercised on the pinned mini-redis preparation corpus, this
-workspace, temporary adversarial repositories, and two neighboring cloned Rust
-repositories. These runs establish implementation behavior, not the full
-Phase 0 product exit criteria.
+The slice has been exercised on the pinned mini-redis product benchmark, this
+workspace, temporary adversarial and mixed-language repositories, and
+neighboring real repositories. The development benchmark passes every proposed
+numeric ceiling, but these runs do not ratify the manifest or establish the
+real design-partner outcome required by the Phase 0 exit criteria.
 
-### Not implemented yet
+TypeScript and TSX are distinct syntax-only dialects. The implemented profile
+does not evaluate TypeScript types, `tsconfig.json`, package/module resolution,
+references, call sites, or active build targets, and it does not select
+JavaScript or MJS files.
 
-The source-change-to-memory-revalidation loop is still incomplete. Production
-team-memory parsing and persistence, logical-symbol correspondence, Git-DAG
-memory validity, staleness/review workflows, deterministic context
-compilation, `context_build`, `memory_recall`, `memory_manage`, and
-`diagnostics` remain. The strict memory YAML implementation is test-only and
-[ADR-0014](adr/0014-phase0-engineering-memory-record.md) remains proposed.
-No public-beta or production-readiness claim follows from the completed
-indexing and retrieval slice.
+Python is a separate syntax-only language for case-sensitive `.py` and `.pyi`
+paths. The implemented profile does not execute repository code, load Python
+environments, resolve imports or types, evaluate decorators, infer dynamic
+dispatch, or extract references and calls.
+
+### Remaining product gates
+
+The local product loop is implemented, but the Phase 0 release gate is not yet
+ratified. Maintainers must accept, revise, or reject proposed ADR-0017 through
+ADR-0019 and ADR-0021; finish the residual rewritten-history,
+obsolete-snapshot, competing-review, and publication-fault matrix; rerun the
+pinned benchmark from a clean exact RepoWitness revision; ratify or revise its
+retrieval/resource budgets; and record a real design-partner task whose
+engineering decision improves relative to the declared baselines. A stable
+public API also remains deferred. No public-beta or production-readiness claim
+follows from the implemented design-partner-alpha loop.
 
 ## Non-goals for the first public beta
 

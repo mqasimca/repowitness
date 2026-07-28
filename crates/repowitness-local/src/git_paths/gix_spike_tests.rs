@@ -376,12 +376,11 @@ fn special_file_worktree_marker_is_rejected_before_git_runs() {
     use std::os::unix::net::UnixListener;
 
     let repository = TempRepository::new(None);
-    let requested_root = repository.auxiliary().join("requested");
-    fs::create_dir_all(&requested_root).expect("requested fixture directory must be created");
+    let requested_root = repository.auxiliary();
     let _listener = UnixListener::bind(requested_root.join(".git"))
         .expect("special worktree marker fixture must be created");
 
-    let error = discover_repository_paths(&requested_root, GitPathDiscoveryLimits::default())
+    let error = discover_repository_paths(requested_root, GitPathDiscoveryLimits::default())
         .expect_err("a special-file worktree marker must fail before Git runs");
 
     assert!(matches!(
@@ -391,6 +390,10 @@ fn special_file_worktree_marker_is_rejected_before_git_runs() {
 }
 
 #[cfg(unix)]
+#[cfg_attr(
+    target_vendor = "apple",
+    ignore = "Apple filesystems reject the byte-invalid fixture name"
+)]
 #[test]
 fn gix_and_sanitized_git_preserve_non_utf8_index_paths_exactly() {
     use std::os::unix::ffi::OsStringExt;

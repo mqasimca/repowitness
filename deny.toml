@@ -19,6 +19,7 @@ confidence-threshold = 0.8
 exceptions = [
     { allow = ["BSD-3-Clause"], crate = "encoding_rs@0.8.35" },
     { allow = ["Zlib"], crate = "foldhash@0.2.0" },
+    { allow = ["NCSA"], crate = "libfuzzer-sys@0.4.13" },
     { allow = ["Unicode-3.0"], crate = "unicode-ident@1.0.24" },
     { allow = ["Apache-2.0 WITH LLVM-exception"], crate = "winx@0.36.4" },
     { allow = ["Zlib"], crate = "zlib-rs@0.6.6" },

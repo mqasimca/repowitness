@@ -124,6 +124,22 @@ define_sha256_digest!(
     CanonicalMemoryDigest,
     "A SHA-256 identity for validated canonical memory semantics."
 );
+define_sha256_digest!(
+    MemoryPresentationDigest,
+    "A SHA-256 receipt for the exact admitted memory-file presentation bytes."
+);
+define_sha256_digest!(
+    DeclarationDigest,
+    "A SHA-256 identity for exact source declaration bytes."
+);
+define_sha256_digest!(
+    CorrespondenceFingerprintDigest,
+    "A SHA-256 identity for one versioned occurrence-correspondence fingerprint."
+);
+define_sha256_digest!(
+    CorrespondenceProfileDigest,
+    "A SHA-256 identity for one complete versioned correspondence profile."
+);
 
 #[cfg(test)]
 mod tests {

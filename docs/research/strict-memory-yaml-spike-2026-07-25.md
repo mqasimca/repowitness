@@ -100,6 +100,69 @@ passes the complete hostile-input, golden, fuzz, MSRV, dependency, and resource
 suite. RFC 8785's verified negative-zero erratum is another reason for version
 1 to admit no floating-point values.
 
+## 2026-07-27 pre-acceptance contract review
+
+The proposed ADR was reviewed against ADR-0004, ADR-0005, ADR-0007, ADR-0011,
+and ADR-0013. It remains proposed, but now fixes ambiguities that would have
+made a released version 1 unsafe to reinterpret:
+
+- record IDs are uniformly random opaque 128-bit values with an exact
+  Crockford Base32 bit mapping and no time input;
+- repository-authored assurance and lifecycle are separated from effective
+  local approval and retrieval eligibility;
+- trusted recorded-time/audit metadata is explicitly outside repository YAML;
+- every digest encoding, integer/collection/output bound, tagged union, symbol
+  kind, relationship, and tombstone rule is explicit; and
+- the SHA-256 input frame now fixes its version and length widths and byte
+  order.
+
+The proposed
+[Phase 0 memory schema](../schemas/phase0-memory-v1.md) records the exact
+candidate profile. A separate full-shape, test-only harness verifies commit and
+worktree/relationship generated YAML, RFC 8785 canonical JSON, framed digests,
+record-ID vectors, every mutable semantic component, set/evidence ordering,
+presentation invariance, hostile YAML rejection, deterministic mutation smoke
+coverage, independent input/canonical bounds, cross-field validation, and
+redacted diagnostics. The original small spike remains useful as an independent
+regression for the parser stack.
+
+This evidence does not accept the ADR or promote the dependencies. Explicit
+maintainer acceptance plus the roadmap's fuzz, resource, dependency, and
+production implementation gates still remain.
+
+## 2026-07-27 synthetic resource measurements
+
+The test-only full-shape harness includes two ignored release-mode probes. They
+were built once and then run as the isolated test binary three times per
+scenario on:
+
+- hardware model `Mac16,7`, Apple arm64, 24 GiB RAM, and 14 logical CPUs;
+- macOS 26.5.2 build 25F84; and
+- Rust/Cargo 1.97.1 with the locked release dependency graph.
+
+The first draft probe canonicalized each record twice and XORed an even number
+of alternating digest prefixes, yielding a misleading zero checksum. That
+measurement was discarded. The corrected probe performs exactly one strict
+parse/validation, canonical serialization, and framed SHA-256 operation per
+record and accumulates a wrapping 64-bit digest-prefix checksum.
+
+| Scenario | Work per run | Isolated real time | Maximum resident set | Peak memory footprint |
+|---|---:|---:|---:|---:|
+| Alternating complete commit/worktree vectors | 10,000 records; 15,190,000 input bytes; 14,850,000 canonical bytes | 0.87–0.88 s | 4,358,144–4,374,528 bytes | 2,343,224–2,359,608 bytes |
+| Exact 64 KiB input bound, padded only with YAML whitespace | 1,000 records; 65,536,000 input bytes; 1,343,000 canonical bytes | 0.39–0.57 s | 4,194,304–4,276,224 bytes | 2,163,000–2,244,920 bytes |
+
+All six isolated runs completed with zero swaps, page faults, or block I/O.
+Their deterministic checksums were `360585392808813880` and
+`3558501863875213256` respectively.
+
+These are preliminary adapter measurements, not release budgets. The ordinary
+vectors are representative small records, while the maximum-input case is
+mostly whitespace rather than maximum semantic content. Cargo, Git-history
+import, file admission, audit projection, concurrency, adversarial
+canonical-output expansion, and realistic divergent histories are not
+measured. Ratified memory-history resource budgets and continuous fuzzing
+therefore remain open production gates.
+
 Primary sources:
 
 - [serde-saphyr upstream](https://github.com/bourumir-wyngs/serde-saphyr)

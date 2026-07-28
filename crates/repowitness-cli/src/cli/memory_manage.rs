@@ -1,0 +1,238 @@
+enum MemoryManageInvocation {
+    Write {
+        repository_root: PathBuf,
+        repository_identity: OsString,
+        input: PathBuf,
+    },
+    Approve {
+        repository_root: PathBuf,
+        database: PathBuf,
+        repository_identity: OsString,
+        record_id: OsString,
+        actor: OsString,
+    },
+    Review {
+        repository_root: PathBuf,
+        database: PathBuf,
+        repository_identity: OsString,
+        record_id: OsString,
+        revision: OsString,
+        evidence_ordinal: u8,
+        operation: MemoryCorrespondenceReviewOperation,
+        target_path: OsString,
+        target_artifact: OsString,
+        target_fact_ordinal: u64,
+        actor: OsString,
+    },
+    ImportHistory {
+        repository_root: PathBuf,
+        database: PathBuf,
+        repository_identity: OsString,
+        actor: OsString,
+    },
+}
+
+enum CliMemoryManageReport {
+    Write {
+        revision: String,
+        created: bool,
+        canonical_bytes: u64,
+    },
+    Approve {
+        revision: String,
+        version_inserted: bool,
+        observation_inserted: bool,
+        approval_inserted: bool,
+    },
+    Review {
+        inserted: bool,
+    },
+    ImportHistory {
+        commits_inspected: u32,
+        records_inspected: u32,
+        imported_versions: u32,
+        appended_observations: u32,
+        total_record_bytes: u64,
+        git_processes: u32,
+        history_complete: bool,
+    },
+}
+
+fn manage_local_memory(
+    invocation: &MemoryManageInvocation,
+) -> Result<CliMemoryManageReport, String> {
+    let now = current_unix_ms()?;
+    let cancelled = Arc::new(AtomicBool::new(false));
+    match invocation {
+        MemoryManageInvocation::Write { .. } => manage_local_memory_write(invocation, cancelled),
+        MemoryManageInvocation::Approve { .. } => {
+            manage_local_memory_approve(invocation, now, cancelled)
+        }
+        MemoryManageInvocation::Review { .. } => {
+            manage_local_memory_review(invocation, now, cancelled)
+        }
+        MemoryManageInvocation::ImportHistory { .. } => {
+            manage_local_memory_history(invocation, now, cancelled)
+        }
+    }
+}
+
+fn manage_local_memory_write(
+    invocation: &MemoryManageInvocation,
+    cancelled: Arc<AtomicBool>,
+) -> Result<CliMemoryManageReport, String> {
+    let MemoryManageInvocation::Write {
+        repository_root,
+        repository_identity,
+        input,
+    } = invocation
+    else {
+        unreachable!("write dispatcher supplied another operation");
+    };
+    let repository_identity = manage_utf8(repository_identity)?;
+    write_local_memory(
+        LocalMemoryWriteRequest::new(repository_root, input, repository_identity),
+        cancelled,
+    )
+    .map(|receipt| CliMemoryManageReport::Write {
+        revision: hex(receipt.revision().as_bytes()),
+        created: receipt.created(),
+        canonical_bytes: receipt.canonical_bytes(),
+    })
+    .map_err(|error| error.to_string())
+}
+
+fn manage_local_memory_approve(
+    invocation: &MemoryManageInvocation,
+    now: u64,
+    cancelled: Arc<AtomicBool>,
+) -> Result<CliMemoryManageReport, String> {
+    let MemoryManageInvocation::Approve {
+        repository_root,
+        database,
+        repository_identity,
+        record_id,
+        actor,
+    } = invocation
+    else {
+        unreachable!("approval dispatcher supplied another operation");
+    };
+    let repository_identity = manage_utf8(repository_identity)?;
+    let record_id = manage_utf8(record_id)?;
+    let actor = manage_utf8(actor)?;
+    approve_local_memory(
+        LocalMemoryApprovalRequest::new(
+            repository_root,
+            database,
+            repository_identity,
+            record_id,
+            actor,
+            now,
+            now,
+        ),
+        cancelled,
+    )
+    .map(|receipt| CliMemoryManageReport::Approve {
+        revision: hex(receipt.revision().as_bytes()),
+        version_inserted: receipt.version_inserted(),
+        observation_inserted: receipt.observation_inserted(),
+        approval_inserted: receipt.approval_inserted(),
+    })
+    .map_err(|error| error.to_string())
+}
+
+fn manage_local_memory_review(
+    invocation: &MemoryManageInvocation,
+    now: u64,
+    cancelled: Arc<AtomicBool>,
+) -> Result<CliMemoryManageReport, String> {
+    let MemoryManageInvocation::Review {
+        repository_root,
+        database,
+        repository_identity,
+        record_id,
+        revision,
+        evidence_ordinal,
+        operation,
+        target_path,
+        target_artifact,
+        target_fact_ordinal,
+        actor,
+    } = invocation
+    else {
+        unreachable!("review dispatcher supplied another operation");
+    };
+    let repository_identity = manage_utf8(repository_identity)?;
+    let record_id = manage_utf8(record_id)?;
+    let revision = manage_utf8(revision)?;
+    let target_path = manage_utf8(target_path)?;
+    let target_artifact = manage_utf8(target_artifact)?;
+    let actor = manage_utf8(actor)?;
+    review_local_memory_correspondence(
+        LocalMemoryCorrespondenceReviewRequest::new(
+            repository_root,
+            database,
+            repository_identity,
+            record_id,
+            revision,
+            *evidence_ordinal,
+            *operation,
+            target_path,
+            target_artifact,
+            *target_fact_ordinal,
+            actor,
+            now,
+            now,
+        ),
+        cancelled,
+    )
+    .map(|receipt| CliMemoryManageReport::Review {
+        inserted: receipt.inserted(),
+    })
+    .map_err(|error| error.to_string())
+}
+
+fn manage_local_memory_history(
+    invocation: &MemoryManageInvocation,
+    now: u64,
+    cancelled: Arc<AtomicBool>,
+) -> Result<CliMemoryManageReport, String> {
+    let MemoryManageInvocation::ImportHistory {
+        repository_root,
+        database,
+        repository_identity,
+        actor,
+    } = invocation
+    else {
+        unreachable!("history dispatcher supplied another operation");
+    };
+    let repository_identity = manage_utf8(repository_identity)?;
+    let actor = manage_utf8(actor)?;
+    import_local_memory_history(
+        LocalMemoryHistoryImportRequest::new(
+            repository_root,
+            database,
+            repository_identity,
+            actor,
+            now,
+            now,
+        ),
+        cancelled,
+    )
+    .map(|report| CliMemoryManageReport::ImportHistory {
+        commits_inspected: report.commits_inspected(),
+        records_inspected: report.records_inspected(),
+        imported_versions: report.imported_versions(),
+        appended_observations: report.appended_observations(),
+        total_record_bytes: report.total_record_bytes(),
+        git_processes: report.git_processes(),
+        history_complete: report.history_complete(),
+    })
+    .map_err(|error| error.to_string())
+}
+
+fn manage_utf8(value: &OsStr) -> Result<&str, String> {
+    value
+        .to_str()
+        .ok_or_else(|| "memory management text is not valid UTF-8".to_owned())
+}

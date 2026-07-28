@@ -1,6 +1,6 @@
 use std::{
     ffi::OsString,
-    fs::{self, OpenOptions},
+    fs::{self, File, OpenOptions},
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -16,7 +16,12 @@ use rusqlite::{
     backup::{Backup, StepResult},
 };
 
-use super::{SqliteStoreError, open_index_reader};
+use crate::contained_source::FileIdentity;
+
+use super::{SqliteStoreError, open_index_reader, validate_database_file};
+
+#[cfg(test)]
+mod tests;
 
 const MAX_BACKUP_PAGES_PER_STEP: u32 = 4_096;
 const MAX_BACKUP_STEPS: u32 = 1_000_000;
@@ -144,6 +149,12 @@ fn run_backup(
         OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
     .map_err(|_| SqliteStoreError::BackupFailed)?;
+    let journal_mode: String = destination
+        .pragma_update_and_check(None, "journal_mode", "MEMORY", |row| row.get(0))
+        .map_err(|_| SqliteStoreError::BackupFailed)?;
+    if journal_mode != "memory" {
+        return Err(SqliteStoreError::BackupFailed);
+    }
     let backup =
         Backup::new(&source, &mut destination).map_err(|_| SqliteStoreError::BackupFailed)?;
     let pages_per_step =
@@ -171,11 +182,21 @@ fn run_backup(
     }
     let progress = backup.progress();
     drop(backup);
+    let journal_mode: String = destination
+        .pragma_update_and_check(None, "journal_mode", "DELETE", |row| row.get(0))
+        .map_err(|_| SqliteStoreError::BackupFailed)?;
+    if journal_mode != "delete" {
+        return Err(SqliteStoreError::BackupFailed);
+    }
     drop(destination);
     drop(source);
     check_control(cancelled, deadline)?;
+    temporary.ensure_sidecars_absent()?;
+    temporary.verify_exclusive_path()?;
     validate_backup(temporary.path())?;
     check_control(cancelled, deadline)?;
+    temporary.ensure_sidecars_absent()?;
+    temporary.verify_exclusive_path()?;
     fs::hard_link(temporary.path(), destination_path)
         .map_err(|_| SqliteStoreError::BackupDestinationUnavailable)?;
     temporary
@@ -230,28 +251,69 @@ fn temporary_backup_path(destination: &Path) -> Result<PathBuf, SqliteStoreError
 
 struct TemporaryBackup {
     path: PathBuf,
+    file: Option<File>,
+    identity: FileIdentity,
     armed: bool,
 }
 
 impl TemporaryBackup {
     fn reserve(path: PathBuf) -> Result<Self, SqliteStoreError> {
-        OpenOptions::new()
+        let file = OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(&path)
             .map_err(|_| SqliteStoreError::BackupDestinationUnavailable)?;
-        Ok(Self { path, armed: true })
+        validate_database_file(&file)
+            .map_err(|_| SqliteStoreError::BackupDestinationUnavailable)?;
+        let identity = FileIdentity::from_file(
+            file.try_clone()
+                .map_err(|_| SqliteStoreError::BackupDestinationUnavailable)?,
+        )
+        .map_err(|_| SqliteStoreError::BackupDestinationUnavailable)?;
+        let temporary = Self {
+            path,
+            file: Some(file),
+            identity,
+            armed: true,
+        };
+        temporary.ensure_sidecars_absent()?;
+        Ok(temporary)
     }
 
     fn path(&self) -> &Path {
         &self.path
     }
 
-    fn remove(&mut self) -> std::io::Result<()> {
-        remove_if_present(&self.path)?;
+    fn ensure_sidecars_absent(&self) -> Result<(), SqliteStoreError> {
         for suffix in ["-journal", "-wal", "-shm"] {
-            remove_if_present(&path_with_suffix(&self.path, suffix))?;
+            match fs::symlink_metadata(path_with_suffix(&self.path, suffix)) {
+                Ok(_) => return Err(SqliteStoreError::BackupDestinationUnavailable),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(_) => return Err(SqliteStoreError::BackupDestinationUnavailable),
+            }
         }
+        Ok(())
+    }
+
+    fn verify_exclusive_path(&self) -> Result<(), SqliteStoreError> {
+        let file = self.file.as_ref().ok_or(SqliteStoreError::BackupFailed)?;
+        validate_database_file(file).map_err(|_| SqliteStoreError::BackupFailed)?;
+        self.verify_path()
+    }
+
+    fn verify_path(&self) -> Result<(), SqliteStoreError> {
+        let current = FileIdentity::from_path(&self.path)
+            .map_err(|_| SqliteStoreError::BackupCleanupFailed)?;
+        if current != self.identity {
+            return Err(SqliteStoreError::BackupCleanupFailed);
+        }
+        Ok(())
+    }
+
+    fn remove(&mut self) -> Result<(), SqliteStoreError> {
+        self.verify_path()?;
+        drop(self.file.take());
+        fs::remove_file(&self.path).map_err(|_| SqliteStoreError::BackupCleanupFailed)?;
         self.armed = false;
         Ok(())
     }
@@ -269,14 +331,6 @@ fn path_with_suffix(path: &Path, suffix: &str) -> PathBuf {
     let mut value = path.as_os_str().to_os_string();
     value.push(suffix);
     PathBuf::from(value)
-}
-
-fn remove_if_present(path: &Path) -> std::io::Result<()> {
-    match fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error),
-    }
 }
 
 fn check_control(cancelled: &AtomicBool, deadline: Instant) -> Result<(), SqliteStoreError> {

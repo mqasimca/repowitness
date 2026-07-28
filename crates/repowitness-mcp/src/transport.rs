@@ -141,6 +141,54 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn eof_terminated_lines_obey_the_same_inclusive_limit() {
+        let mut reader = BoundedLineReader::try_new(b"1234".as_slice(), 4).expect("positive limit");
+        let mut output = Vec::new();
+        reader
+            .read_to_end(&mut output)
+            .await
+            .expect("exact EOF-terminated line fits");
+        assert_eq!(output, b"1234");
+
+        let mut reader =
+            BoundedLineReader::try_new(b"12345".as_slice(), 4).expect("positive limit");
+        let mut output = Vec::new();
+        assert_eq!(
+            reader
+                .read_to_end(&mut output)
+                .await
+                .expect_err("oversized EOF-terminated line fails")
+                .kind(),
+            io::ErrorKind::InvalidData
+        );
+    }
+
+    #[tokio::test]
+    async fn limits_hold_across_internal_read_chunks() {
+        let exact = vec![b'x'; READ_CHUNK_BYTES + 17];
+        let mut reader =
+            BoundedLineReader::try_new(exact.as_slice(), exact.len()).expect("positive limit");
+        let mut output = Vec::new();
+        reader
+            .read_to_end(&mut output)
+            .await
+            .expect("multi-chunk exact line fits");
+        assert_eq!(output, exact);
+
+        let oversized = vec![b'x'; READ_CHUNK_BYTES + 18];
+        let mut reader =
+            BoundedLineReader::try_new(oversized.as_slice(), exact.len()).expect("positive limit");
+        assert_eq!(
+            reader
+                .read_to_end(&mut Vec::new())
+                .await
+                .expect_err("multi-chunk oversized line fails")
+                .kind(),
+            io::ErrorKind::InvalidData
+        );
+    }
+
     #[test]
     fn zero_limit_is_rejected() {
         assert!(BoundedLineReader::try_new(&b""[..], 0).is_err());

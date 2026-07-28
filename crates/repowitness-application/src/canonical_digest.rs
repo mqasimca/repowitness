@@ -1,4 +1,6 @@
-use repowitness_analysis::RustSourceAnalysis;
+use repowitness_analysis::{
+    RUST_CORRESPONDENCE_PROFILE_ID, RUST_CORRESPONDENCE_PROFILE_VERSION, RustSourceAnalysis,
+};
 use repowitness_domain::{
     AnalysisArtifactDigest, AnalysisArtifactKey, AnalysisArtifactKeyVersion,
     AnalysisArtifactPayloadDigest, AnalysisSchemaDigest, ConfigurationDigest,
@@ -11,8 +13,10 @@ const ARTIFACT_KEY_DOMAIN: &[u8] = b"RepoWitness\0analysis-artifact-key\0";
 const ARTIFACT_PAYLOAD_DOMAIN: &[u8] = b"RepoWitness\0analysis-artifact-payload\0";
 const SOURCE_MANIFEST_DOMAIN: &[u8] = b"RepoWitness\0source-manifest\0";
 
-/// Canonical version of the persisted analysis-artifact payload encoding.
-pub const ANALYSIS_ARTIFACT_PAYLOAD_VERSION: u32 = 1;
+const LEGACY_ANALYSIS_ARTIFACT_PAYLOAD_VERSION: u32 = 1;
+/// Current canonical version of the persisted analysis-artifact payload
+/// encoding.
+pub const ANALYSIS_ARTIFACT_PAYLOAD_VERSION: u32 = 2;
 
 /// Concrete logical key whose components have canonical fixed-width identities.
 pub type CanonicalAnalysisArtifactKey = AnalysisArtifactKey<
@@ -53,19 +57,34 @@ pub fn hash_analysis_artifact_payload(
     analysis: &RustSourceAnalysis,
 ) -> AnalysisArtifactPayloadDigest {
     let mut hasher = Sha256::new();
+    let has_correspondence = analysis
+        .facts()
+        .iter()
+        .any(|fact| fact.correspondence().is_some());
     hasher.update(ARTIFACT_PAYLOAD_DOMAIN);
-    hasher.update(ANALYSIS_ARTIFACT_PAYLOAD_VERSION.to_be_bytes());
+    hasher.update(
+        if has_correspondence {
+            ANALYSIS_ARTIFACT_PAYLOAD_VERSION
+        } else {
+            LEGACY_ANALYSIS_ARTIFACT_PAYLOAD_VERSION
+        }
+        .to_be_bytes(),
+    );
+    if has_correspondence {
+        update_length_prefixed(&mut hasher, RUST_CORRESPONDENCE_PROFILE_ID.as_bytes());
+        hasher.update(RUST_CORRESPONDENCE_PROFILE_VERSION.to_be_bytes());
+    }
     hasher.update(analysis.visited_nodes().to_be_bytes());
     hasher.update(analysis.syntax_error_nodes().to_be_bytes());
     hasher.update(
         u64::try_from(analysis.facts().len())
-            .expect("bounded Rust fact count fits in u64")
+            .expect("bounded source fact count fits in u64")
             .to_be_bytes(),
     );
     for (ordinal, fact) in analysis.facts().iter().enumerate() {
         hasher.update(
             u64::try_from(ordinal)
-                .expect("bounded Rust fact ordinal fits in u64")
+                .expect("bounded source fact ordinal fits in u64")
                 .to_be_bytes(),
         );
         update_length_prefixed(&mut hasher, fact.kind().as_str().as_bytes());
@@ -75,6 +94,15 @@ pub fn hash_analysis_artifact_payload(
         hasher.update(fact.name_span().end().get().to_be_bytes());
         hasher.update(fact.declaration_span().start().get().to_be_bytes());
         hasher.update(fact.declaration_span().end().get().to_be_bytes());
+        if has_correspondence {
+            if let Some(fingerprint) = fact.correspondence() {
+                hasher.update([1]);
+                hasher.update(fingerprint.declaration().as_bytes());
+                hasher.update(fingerprint.name_elided().as_bytes());
+            } else {
+                hasher.update([0]);
+            }
+        }
     }
     AnalysisArtifactPayloadDigest::new(hasher.finalize().into())
 }
@@ -115,7 +143,10 @@ mod tests {
         time::{Duration, Instant},
     };
 
-    use repowitness_analysis::{RustAnalysisControl, RustAnalysisLimits, RustSourceAnalyzer};
+    use repowitness_analysis::{
+        RustAnalysisControl, RustAnalysisLimits, RustSourceAnalysis, RustSourceAnalyzer,
+        RustSymbolFact,
+    };
     use repowitness_domain::{
         AnalysisArtifactKey, AnalysisSchemaDigest, ConfigurationDigest, ProducerManifestDigest,
         RepositoryPath, RepositoryPathLimits, SourceContentDigest, SourceFileKind, SourceFileLimit,
@@ -191,6 +222,32 @@ mod tests {
 
         assert_eq!(
             hash_analysis_artifact_payload(&analysis).into_bytes(),
+            [
+                0x94, 0x01, 0xB6, 0xA0, 0x5C, 0xF8, 0x8C, 0x10, 0x42, 0x58, 0xA6, 0x79, 0x60, 0x0A,
+                0x69, 0x3B, 0xE6, 0x92, 0xA7, 0x8E, 0x9E, 0xB9, 0x31, 0xA0, 0x3A, 0x65, 0x51, 0x26,
+                0xDE, 0x1C, 0x2E, 0xD4,
+            ]
+        );
+
+        let fact = &analysis.facts()[0];
+        let legacy_fact = RustSymbolFact::try_new(
+            fact.kind(),
+            fact.name().to_owned(),
+            fact.qualified_name().to_owned(),
+            fact.name_span(),
+            fact.declaration_span(),
+            RustAnalysisLimits::DEFAULT,
+        )
+        .expect("legacy fact remains structurally valid");
+        let legacy = RustSourceAnalysis::try_from_parts(
+            vec![legacy_fact],
+            analysis.visited_nodes(),
+            analysis.syntax_error_nodes(),
+            RustAnalysisLimits::DEFAULT,
+        )
+        .expect("legacy analysis remains structurally valid");
+        assert_eq!(
+            hash_analysis_artifact_payload(&legacy).into_bytes(),
             [
                 0x6B, 0x9A, 0x3D, 0x92, 0xCE, 0xDF, 0x99, 0x7D, 0xB5, 0x71, 0x6E, 0x70, 0xB2, 0xB6,
                 0xC3, 0x6E, 0x1E, 0x5C, 0xE8, 0x9F, 0x11, 0xA1, 0x9D, 0x49, 0x5D, 0x98, 0xFB, 0xBA,

@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-07-22
+- Last reviewed: 2026-07-28
 - Owners: Project maintainers
 - Scope: Symbol identity, refactor tracking, memory attachment, and impact analysis
 
@@ -102,10 +103,12 @@ Evaluate identity features individually and as an ensemble. A change to an algor
 ## Implementation status
 
 The current Rust slice implements exact revision-specific symbol occurrences,
-source/content/artifact identity, attributed syntax evidence, and exact
-occurrence retrieval. Durable logical-symbol assignment, correspondence
-storage and scoring, rename/move/split/merge matching, manual review, and
-memory relinking are not implemented.
+source/content/artifact identity, attributed syntax evidence, exact occurrence
+retrieval, versioned correspondence fingerprints, precision-first
+rename/exact-move matching, immutable correspondence audit, manual review, and
+memory relinking. Durable logical-symbol assignment and automatic
+split/merge/container-move correspondence remain unimplemented; those cases
+abstain or require explicit review.
 
 ## Supersession
 

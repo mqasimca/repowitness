@@ -20,10 +20,10 @@ use repowitness_domain::{
 };
 use sha2::{Digest, Sha256};
 
-use crate::RustIndexCoverage;
+use crate::{RustIndexCoverage, SourceLanguage};
 
-/// Version of the literal Rust-symbol search profile.
-pub const CODE_SEARCH_PROFILE_VERSION: u16 = 1;
+/// Version of the literal supported-language symbol search profile.
+pub const CODE_SEARCH_PROFILE_VERSION: u16 = 3;
 /// Default maximum number of returned candidates.
 pub const DEFAULT_CODE_SEARCH_RESULTS: u16 = 20;
 /// Default aggregate byte bound for returned candidate data.
@@ -263,11 +263,45 @@ impl fmt::Display for CodeSearchPortOutputError {
 
 impl Error for CodeSearchPortOutputError {}
 
+/// Exact persisted artifact attribution carried by one syntax occurrence.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SourceArtifactEvidence {
+    artifact_digest: AnalysisArtifactDigest,
+    producer_manifest: ProducerManifestDigest,
+}
+
+impl SourceArtifactEvidence {
+    /// Constructs exact artifact and producer attribution read from persistence.
+    #[must_use]
+    pub const fn new(
+        artifact_digest: AnalysisArtifactDigest,
+        producer_manifest: ProducerManifestDigest,
+    ) -> Self {
+        Self {
+            artifact_digest,
+            producer_manifest,
+        }
+    }
+
+    /// Returns the semantics-complete artifact digest.
+    #[must_use]
+    pub const fn artifact_digest(self) -> AnalysisArtifactDigest {
+        self.artifact_digest
+    }
+
+    /// Returns the syntax producer that created the artifact.
+    #[must_use]
+    pub const fn producer_manifest(self) -> ProducerManifestDigest {
+        self.producer_manifest
+    }
+}
+
 /// Validated identity and display data for one syntax symbol occurrence.
 #[derive(Clone, Eq, PartialEq)]
 pub struct RustSymbolOccurrence {
+    language: SourceLanguage,
     fact_ordinal: u64,
-    artifact_digest: AnalysisArtifactDigest,
+    artifact: SourceArtifactEvidence,
     kind: RustSymbolKind,
     name: String,
     qualified_name: String,
@@ -279,7 +313,7 @@ impl RustSymbolOccurrence {
     /// Constructs one occurrence after enforcing extractor-compatible bounds.
     pub fn try_new(
         fact_ordinal: u64,
-        artifact_digest: AnalysisArtifactDigest,
+        artifact: SourceArtifactEvidence,
         kind: RustSymbolKind,
         name: String,
         qualified_name: String,
@@ -299,14 +333,28 @@ impl RustSymbolOccurrence {
             return Err(CodeSearchPortOutputError::InvalidCandidate);
         }
         Ok(Self {
+            language: SourceLanguage::Rust,
             fact_ordinal,
-            artifact_digest,
+            artifact,
             kind,
             name,
             qualified_name,
             name_span,
             declaration_span,
         })
+    }
+
+    /// Rebinds this validated occurrence to its explicitly persisted language.
+    #[must_use]
+    pub const fn with_language(mut self, language: SourceLanguage) -> Self {
+        self.language = language;
+        self
+    }
+
+    /// Returns the syntax adapter language that produced this occurrence.
+    #[must_use]
+    pub const fn language(&self) -> SourceLanguage {
+        self.language
     }
 
     /// Returns the deterministic source-order ordinal within the file.
@@ -318,7 +366,13 @@ impl RustSymbolOccurrence {
     /// Returns the semantics-complete artifact identity.
     #[must_use]
     pub const fn artifact_digest(&self) -> AnalysisArtifactDigest {
-        self.artifact_digest
+        self.artifact.artifact_digest()
+    }
+
+    /// Returns the exact syntax producer that created the persisted artifact.
+    #[must_use]
+    pub const fn producer_manifest(&self) -> ProducerManifestDigest {
+        self.artifact.producer_manifest()
     }
 
     /// Returns the syntax declaration category.
@@ -356,8 +410,9 @@ impl fmt::Debug for RustSymbolOccurrence {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("RustSymbolOccurrence")
+            .field("language", &self.language)
             .field("fact_ordinal", &self.fact_ordinal)
-            .field("artifact_digest", &self.artifact_digest)
+            .field("artifact", &self.artifact)
             .field("kind", &self.kind)
             .field("name", &"<redacted-symbol>")
             .field("qualified_name", &"<redacted-symbol>")
@@ -366,6 +421,9 @@ impl fmt::Debug for RustSymbolOccurrence {
             .finish()
     }
 }
+
+/// Language-neutral compatibility name for one syntax symbol occurrence.
+pub type SourceSymbolOccurrence = RustSymbolOccurrence;
 
 /// One storage-neutral lexical candidate returned by a retrieval adapter.
 #[derive(Clone, Eq, PartialEq)]
@@ -410,7 +468,6 @@ impl fmt::Debug for CodeSearchCandidate {
 pub struct CodeSearchPortResult<G> {
     snapshot: SourceSnapshotDigest,
     generation: G,
-    producer_manifest: ProducerManifestDigest,
     index_coverage: RustIndexCoverage,
     candidates: Vec<CodeSearchCandidate>,
     total_matches: u64,
@@ -423,7 +480,6 @@ impl<G> CodeSearchPortResult<G> {
     pub const fn new(
         snapshot: SourceSnapshotDigest,
         generation: G,
-        producer_manifest: ProducerManifestDigest,
         index_coverage: RustIndexCoverage,
         candidates: Vec<CodeSearchCandidate>,
         total_matches: u64,
@@ -432,7 +488,6 @@ impl<G> CodeSearchPortResult<G> {
         Self {
             snapshot,
             generation,
-            producer_manifest,
             index_coverage,
             candidates,
             total_matches,
@@ -538,18 +593,26 @@ impl CodeSearchClaim {
     }
 }
 
-/// Fixed producer class for direct Phase 0 Rust syntax evidence.
+/// Fixed producer classes for direct Phase 0 syntax evidence.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CodeSearchProducer {
     /// Bounded Tree-sitter Rust syntax extraction.
     RustSyntax,
+    /// Bounded Tree-sitter Go syntax extraction.
+    GoSyntax,
+    /// Bounded Tree-sitter TypeScript syntax extraction.
+    TypeScriptSyntax,
+    /// Bounded Tree-sitter TSX syntax extraction.
+    TsxSyntax,
+    /// Bounded Tree-sitter Python syntax extraction.
+    PythonSyntax,
 }
 
 /// Structured limitations attached to a Phase 0 lexical search.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CodeSearchNotice {
-    /// The query covers indexed Rust symbol names, not arbitrary source text.
-    RustSymbolLexicalOnly,
+    /// The query covers indexed supported-language symbol names, not arbitrary source text.
+    SupportedLanguageSymbolLexicalOnly,
 }
 
 /// Evidence identity returned by the shared Phase 0 search use case.
@@ -619,510 +682,7 @@ where
     }
 }
 
-/// Runs one bounded search and maps storage-neutral candidates to attributed evidence.
-pub fn code_search<Port>(
-    port: &Port,
-    request: CodeSearchRequest,
-) -> Result<CodeSearchResult<Port::Generation>, CodeSearchError<Port::Error>>
-where
-    Port: CodeSearchPort,
-{
-    check_control(&request.cancelled, request.deadline)?;
-    let query_digest = request.query.digest();
-    let limits = request.limits;
-    let repository = request.repository;
-    let result = port
-        .search(
-            repository,
-            &request.query,
-            limits,
-            Arc::clone(&request.cancelled),
-            request.deadline,
-        )
-        .map_err(CodeSearchError::Port)?;
-    check_control(&request.cancelled, request.deadline)?;
-
-    let (returned_matches, omitted_matches) = validate_port_result(&result, limits)?;
-    let coverage = search_coverage(result.index_coverage, returned_matches, omitted_matches)?;
-    let evidence = search_evidence(
-        repository,
-        result.snapshot,
-        result.producer_manifest,
-        result.candidates,
-        limits,
-    )?;
-    let notices = search_notices()?;
-    let resolution = if returned_matches == 0 {
-        ResolutionStatus::Unresolved
-    } else {
-        ResolutionStatus::Confirmed
-    };
-    MaterialResult::try_new(
-        CodeSearchClaim {
-            query: query_digest,
-            returned_matches,
-            total_matches: result.total_matches,
-        },
-        evidence,
-        resolution,
-        result.snapshot,
-        result.generation,
-        notices,
-        coverage,
-    )
-    .map_err(CodeSearchError::MaterialResult)
-}
-
-fn validate_port_result<G, E>(
-    result: &CodeSearchPortResult<G>,
-    limits: CodeSearchLimits,
-) -> Result<(u64, u64), CodeSearchError<E>> {
-    let returned_matches = u64::try_from(result.candidates.len()).map_err(|_| {
-        CodeSearchError::InvalidPortOutput(CodeSearchPortOutputError::CountNotRepresentable)
-    })?;
-    if returned_matches > u64::from(limits.max_results()) {
-        return Err(CodeSearchError::InvalidPortOutput(
-            CodeSearchPortOutputError::CandidateLimitExceeded,
-        ));
-    }
-    let omitted_matches = result.total_matches.checked_sub(returned_matches).ok_or(
-        CodeSearchError::InvalidPortOutput(CodeSearchPortOutputError::InvalidTotalMatches),
-    )?;
-    if result.output_bytes > limits.max_output_bytes() {
-        return Err(CodeSearchError::InvalidPortOutput(
-            CodeSearchPortOutputError::OutputByteLimitExceeded,
-        ));
-    }
-    Ok((returned_matches, omitted_matches))
-}
-
-fn search_coverage<E>(
-    index: RustIndexCoverage,
-    returned_matches: u64,
-    omitted_matches: u64,
-) -> Result<CoverageSummary, CodeSearchError<E>> {
-    let unresolved = index
-        .unresolved()
-        .checked_add(u64::from(returned_matches == 0))
-        .ok_or(CodeSearchError::InvalidPortOutput(
-            CodeSearchPortOutputError::CountNotRepresentable,
-        ))?;
-    let truncated = index.truncated().checked_add(omitted_matches).ok_or(
-        CodeSearchError::InvalidPortOutput(CodeSearchPortOutputError::CountNotRepresentable),
-    )?;
-    Ok(CoverageSummary::new(
-        CoverageItemCount::new(index.searched()),
-        CoverageItemCount::new(index.skipped()),
-        CoverageItemCount::new(unresolved),
-        CoverageItemCount::new(truncated),
-    ))
-}
-
-fn search_evidence<E>(
-    repository: RepositoryIdentityDigest,
-    snapshot: SourceSnapshotDigest,
-    producer_manifest: ProducerManifestDigest,
-    candidates: Vec<CodeSearchCandidate>,
-    limits: CodeSearchLimits,
-) -> Result<
-    BoundedResultItems<EvidenceRecord<CodeSearchEvidenceIdentity, CodeSearchProducerIdentity>>,
-    CodeSearchError<E>,
-> {
-    let producer = ProducerIdentity::new(CodeSearchProducer::RustSyntax, producer_manifest);
-    let evidence = candidates
-        .into_iter()
-        .map(|candidate| {
-            let (path, content_digest, occurrence) = candidate.into_parts();
-            EvidenceRecord::new(
-                EvidenceIdentity::new(
-                    repository,
-                    snapshot,
-                    path,
-                    content_digest,
-                    EvidenceLocation::SymbolOccurrence(occurrence),
-                ),
-                producer,
-                EvidenceTier::Syntax,
-                EvidenceRelation::Supports,
-            )
-        })
-        .collect();
-    BoundedResultItems::try_from_vec(
-        evidence,
-        ResultItemLimit::new(u64::from(limits.max_results())),
-    )
-    .map_err(CodeSearchError::ResultItems)
-}
-
-fn search_notices<E>()
--> Result<BoundedResultItems<ResultNotice<CodeSearchNotice>>, CodeSearchError<E>> {
-    BoundedResultItems::try_from_vec(
-        vec![ResultNotice::new(
-            ResultNoticeKind::Limitation,
-            CodeSearchNotice::RustSymbolLexicalOnly,
-        )],
-        ResultItemLimit::new(1),
-    )
-    .map_err(CodeSearchError::ResultItems)
-}
-
-fn check_control<E>(cancelled: &AtomicBool, deadline: Instant) -> Result<(), CodeSearchError<E>> {
-    if cancelled.load(Ordering::Acquire) {
-        Err(CodeSearchError::Cancelled)
-    } else if Instant::now() >= deadline {
-        Err(CodeSearchError::DeadlineExceeded)
-    } else {
-        Ok(())
-    }
-}
+include!("code_search/use_case.rs");
 
 #[cfg(test)]
-mod tests {
-    use std::{
-        cell::Cell,
-        sync::{
-            Arc,
-            atomic::{AtomicBool, Ordering},
-        },
-        time::{Duration, Instant},
-    };
-
-    use repowitness_analysis::RustSymbolKind;
-    use repowitness_domain::{
-        AnalysisArtifactDigest, ByteOffset, ByteSpan, EvidenceLocation, RepositoryPath,
-        RepositoryPathLimits, ResolutionStatus, SourceContentDigest, SourceSnapshotDigest,
-    };
-
-    use super::{
-        CodeSearchCandidate, CodeSearchError, CodeSearchLimits, CodeSearchPort,
-        CodeSearchPortOutputError, CodeSearchPortResult, CodeSearchProducer, CodeSearchQuery,
-        CodeSearchQueryError, CodeSearchRequest, MAX_CODE_SEARCH_OUTPUT_BYTES,
-        MAX_CODE_SEARCH_RESULTS, RustIndexCoverage, RustSymbolOccurrence, code_search,
-    };
-
-    const PATH_LIMITS: RepositoryPathLimits = RepositoryPathLimits::new(128, 8);
-
-    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-    enum FakeError {
-        Failed,
-    }
-
-    impl std::fmt::Display for FakeError {
-        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            formatter.write_str("fake retrieval failed")
-        }
-    }
-
-    impl std::error::Error for FakeError {}
-
-    struct FakePort {
-        calls: Cell<u64>,
-        result: Cell<Option<Result<CodeSearchPortResult<u64>, FakeError>>>,
-    }
-
-    impl FakePort {
-        fn with(result: Result<CodeSearchPortResult<u64>, FakeError>) -> Self {
-            Self {
-                calls: Cell::new(0),
-                result: Cell::new(Some(result)),
-            }
-        }
-    }
-
-    impl CodeSearchPort for FakePort {
-        type Generation = u64;
-        type Error = FakeError;
-
-        fn search(
-            &self,
-            _repository: repowitness_domain::RepositoryIdentityDigest,
-            _query: &CodeSearchQuery,
-            _limits: CodeSearchLimits,
-            _cancelled: Arc<AtomicBool>,
-            _deadline: Instant,
-        ) -> Result<CodeSearchPortResult<Self::Generation>, Self::Error> {
-            self.calls.set(self.calls.get() + 1);
-            self.result
-                .take()
-                .expect("fake port should be called at most once")
-        }
-    }
-
-    fn candidate(ordinal: u64, name: &str) -> CodeSearchCandidate {
-        let name_start = 10 + ordinal;
-        let name_end = name_start + u64::try_from(name.len()).expect("fixture length fits");
-        let occurrence = RustSymbolOccurrence::try_new(
-            ordinal,
-            AnalysisArtifactDigest::new([4; 32]),
-            RustSymbolKind::Function,
-            name.to_owned(),
-            format!("fixture::{name}"),
-            ByteSpan::try_new(ByteOffset::new(name_start), ByteOffset::new(name_end))
-                .expect("fixture span is valid"),
-            ByteSpan::try_new(ByteOffset::new(0), ByteOffset::new(name_end + 2))
-                .expect("fixture declaration is valid"),
-        )
-        .expect("fixture occurrence is valid");
-        CodeSearchCandidate::new(
-            RepositoryPath::try_from_bytes(format!("src/{name}.rs").as_bytes(), PATH_LIMITS)
-                .expect("fixture path is valid"),
-            SourceContentDigest::new([3; 32]),
-            occurrence,
-        )
-    }
-
-    fn result(
-        candidates: Vec<CodeSearchCandidate>,
-        total_matches: u64,
-    ) -> CodeSearchPortResult<u64> {
-        CodeSearchPortResult::new(
-            SourceSnapshotDigest::new([2; 32]),
-            7,
-            repowitness_domain::ProducerManifestDigest::new([5; 32]),
-            RustIndexCoverage::new(8, 2, 1, 0),
-            candidates,
-            total_matches,
-            512,
-        )
-    }
-
-    fn request(cancelled: Arc<AtomicBool>, deadline: Instant) -> CodeSearchRequest {
-        CodeSearchRequest::new(
-            repowitness_domain::RepositoryIdentityDigest::new([1; 32]),
-            CodeSearchQuery::try_new("  Widget\t run ").expect("query is valid"),
-            CodeSearchLimits::default(),
-            cancelled,
-            deadline,
-        )
-    }
-
-    #[test]
-    fn query_admission_is_canonical_bounded_and_redacted() {
-        let first = CodeSearchQuery::try_new("  Widget\t run ").expect("query is valid");
-        let second = CodeSearchQuery::try_new("Widget run").expect("query is valid");
-        assert_eq!(first, second);
-        assert_eq!(first.as_str(), "Widget run");
-        assert_eq!(first.term_count(), 2);
-        assert_eq!(first.digest(), second.digest());
-        let debug = format!("{first:?}");
-        assert!(debug.contains("<redacted-query>"));
-        assert!(!debug.contains("Widget"));
-
-        assert_eq!(
-            CodeSearchQuery::try_new(""),
-            Err(CodeSearchQueryError::Empty)
-        );
-        assert_eq!(
-            CodeSearchQuery::try_new(&"x".repeat(257)),
-            Err(CodeSearchQueryError::QueryTooLong)
-        );
-        assert_eq!(
-            CodeSearchQuery::try_new("1 2 3 4 5 6 7 8 9"),
-            Err(CodeSearchQueryError::TooManyTerms)
-        );
-        assert_eq!(
-            CodeSearchQuery::try_new(&"x".repeat(65)),
-            Err(CodeSearchQueryError::TermTooLong)
-        );
-        assert_eq!(
-            CodeSearchQuery::try_new("private\0term"),
-            Err(CodeSearchQueryError::InvalidTerm)
-        );
-    }
-
-    #[test]
-    fn limits_enforce_inclusive_phase0_ceilings() {
-        assert!(
-            CodeSearchLimits::try_new(MAX_CODE_SEARCH_RESULTS, MAX_CODE_SEARCH_OUTPUT_BYTES)
-                .is_ok()
-        );
-        assert!(CodeSearchLimits::try_new(0, 1).is_err());
-        assert!(CodeSearchLimits::try_new(MAX_CODE_SEARCH_RESULTS + 1, 1).is_err());
-        assert!(CodeSearchLimits::try_new(1, 0).is_err());
-        assert!(CodeSearchLimits::try_new(1, MAX_CODE_SEARCH_OUTPUT_BYTES + 1).is_err());
-    }
-
-    #[test]
-    fn candidates_become_ordered_attributed_evidence_with_exact_coverage() {
-        let port = FakePort::with(Ok(result(
-            vec![candidate(0, "Widget"), candidate(1, "run")],
-            5,
-        )));
-        let material = code_search(
-            &port,
-            request(
-                Arc::new(AtomicBool::new(false)),
-                Instant::now() + Duration::from_secs(1),
-            ),
-        )
-        .expect("search should succeed");
-
-        assert_eq!(port.calls.get(), 1);
-        assert_eq!(material.resolution(), ResolutionStatus::Confirmed);
-        assert_eq!(material.claim().returned_matches(), 2);
-        assert_eq!(material.claim().total_matches(), 5);
-        assert_eq!(material.generation(), &7);
-        assert_eq!(material.snapshot(), &SourceSnapshotDigest::new([2; 32]));
-        assert_eq!(material.coverage().searched().get(), 8);
-        assert_eq!(material.coverage().skipped().get(), 2);
-        assert_eq!(material.coverage().unresolved().get(), 1);
-        assert_eq!(material.coverage().truncated().get(), 3);
-        let evidence = material.evidence().as_slice();
-        assert_eq!(evidence.len(), 2);
-        assert_eq!(evidence[0].producer().id(), &CodeSearchProducer::RustSyntax);
-        assert_eq!(evidence[0].tier(), repowitness_domain::EvidenceTier::Syntax);
-        assert_eq!(
-            evidence[0].relation(),
-            repowitness_domain::EvidenceRelation::Supports
-        );
-        let EvidenceLocation::SymbolOccurrence(first) = evidence[0].identity().location() else {
-            panic!("candidate evidence should identify a symbol occurrence");
-        };
-        assert_eq!(first.name(), "Widget");
-        let EvidenceLocation::SymbolOccurrence(second) = evidence[1].identity().location() else {
-            panic!("candidate evidence should identify a symbol occurrence");
-        };
-        assert_eq!(second.name(), "run");
-    }
-
-    #[test]
-    fn an_empty_candidate_set_abstains_and_reports_unresolved_scope() {
-        let port = FakePort::with(Ok(result(Vec::new(), 0)));
-        let material = code_search(
-            &port,
-            request(
-                Arc::new(AtomicBool::new(false)),
-                Instant::now() + Duration::from_secs(1),
-            ),
-        )
-        .expect("empty search should be a valid unresolved result");
-
-        assert_eq!(material.resolution(), ResolutionStatus::Unresolved);
-        assert!(material.evidence().is_empty());
-        assert_eq!(material.coverage().unresolved().get(), 2);
-    }
-
-    #[test]
-    fn cancellation_deadline_and_port_failures_remain_distinct() {
-        let cancelled = Arc::new(AtomicBool::new(true));
-        let cancelled_port = FakePort::with(Err(FakeError::Failed));
-        let cancelled_error = code_search(
-            &cancelled_port,
-            request(cancelled, Instant::now() + Duration::from_secs(1)),
-        )
-        .expect_err("pre-cancelled work should fail");
-        assert!(matches!(cancelled_error, CodeSearchError::Cancelled));
-        assert_eq!(cancelled_port.calls.get(), 0);
-
-        let deadline_port = FakePort::with(Err(FakeError::Failed));
-        let deadline_error = code_search(
-            &deadline_port,
-            request(Arc::new(AtomicBool::new(false)), Instant::now()),
-        )
-        .expect_err("elapsed deadline should fail");
-        assert!(matches!(deadline_error, CodeSearchError::DeadlineExceeded));
-        assert_eq!(deadline_port.calls.get(), 0);
-
-        let failure_port = FakePort::with(Err(FakeError::Failed));
-        let failure = code_search(
-            &failure_port,
-            request(
-                Arc::new(AtomicBool::new(false)),
-                Instant::now() + Duration::from_secs(1),
-            ),
-        )
-        .expect_err("adapter failure should remain distinct");
-        assert!(matches!(failure, CodeSearchError::Port(FakeError::Failed)));
-    }
-
-    #[test]
-    fn invalid_adapter_counts_and_bytes_fail_closed() {
-        let too_many = (0..21)
-            .map(|ordinal| candidate(ordinal, &format!("item{ordinal}")))
-            .collect();
-        let port = FakePort::with(Ok(result(too_many, 21)));
-        assert!(matches!(
-            code_search(
-                &port,
-                request(
-                    Arc::new(AtomicBool::new(false)),
-                    Instant::now() + Duration::from_secs(1)
-                )
-            ),
-            Err(CodeSearchError::InvalidPortOutput(
-                CodeSearchPortOutputError::CandidateLimitExceeded
-            ))
-        ));
-
-        let port = FakePort::with(Ok(result(vec![candidate(0, "item")], 0)));
-        assert!(matches!(
-            code_search(
-                &port,
-                request(
-                    Arc::new(AtomicBool::new(false)),
-                    Instant::now() + Duration::from_secs(1)
-                )
-            ),
-            Err(CodeSearchError::InvalidPortOutput(
-                CodeSearchPortOutputError::InvalidTotalMatches
-            ))
-        ));
-
-        let oversized = CodeSearchPortResult::new(
-            SourceSnapshotDigest::new([2; 32]),
-            7,
-            repowitness_domain::ProducerManifestDigest::new([5; 32]),
-            RustIndexCoverage::new(1, 0, 0, 0),
-            vec![candidate(0, "item")],
-            1,
-            256 * 1024 + 1,
-        );
-        let port = FakePort::with(Ok(oversized));
-        assert!(matches!(
-            code_search(
-                &port,
-                request(
-                    Arc::new(AtomicBool::new(false)),
-                    Instant::now() + Duration::from_secs(1)
-                )
-            ),
-            Err(CodeSearchError::InvalidPortOutput(
-                CodeSearchPortOutputError::OutputByteLimitExceeded
-            ))
-        ));
-    }
-
-    #[test]
-    fn request_debug_and_post_port_cancellation_do_not_expose_query_text() {
-        struct CancellingPort;
-
-        impl CodeSearchPort for CancellingPort {
-            type Generation = u64;
-            type Error = FakeError;
-
-            fn search(
-                &self,
-                _repository: repowitness_domain::RepositoryIdentityDigest,
-                _query: &CodeSearchQuery,
-                _limits: CodeSearchLimits,
-                cancelled: Arc<AtomicBool>,
-                _deadline: Instant,
-            ) -> Result<CodeSearchPortResult<Self::Generation>, Self::Error> {
-                cancelled.store(true, Ordering::Release);
-                Ok(result(vec![candidate(0, "private_symbol")], 1))
-            }
-        }
-
-        let request = request(
-            Arc::new(AtomicBool::new(false)),
-            Instant::now() + Duration::from_secs(1),
-        );
-        let debug = format!("{request:?}");
-        assert!(!debug.contains("Widget"));
-        assert!(!debug.contains("run"));
-        assert!(matches!(
-            code_search(&CancellingPort, request),
-            Err(CodeSearchError::Cancelled)
-        ));
-    }
-}
+mod tests;

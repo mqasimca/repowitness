@@ -1,7 +1,7 @@
 # Phase 0 Rust evidence and memory benchmark
 
 - Status: Proposed
-- Last reviewed: 2026-07-26
+- Last reviewed: 2026-07-28
 - Manifest: [`manifest.json`](manifest.json)
 
 ## Corpus choice
@@ -12,17 +12,20 @@ It is an MIT-licensed, Rust-only teaching project with a client, server, command
 
 RepoWitness does not copy this corpus. A benchmark runner fetches the repository separately and checks out the exact manifest revision.
 
-Run the local preparation and resource probe against a clean external checkout:
+Run the local product-loop and resource probe against a clean external
+checkout:
 
 ```text
 ./scripts/run-phase0-benchmark /path/to/mini-redis 5
 ```
 
-The runner verifies the exact manifest revision before building the release
-probe. The first preparation is reported as cold, later preparations as warm,
-and repeated logical output must remain identical. On systems with
-`/usr/bin/time`, the runner also reports peak resident memory. It never writes
-to the corpus or creates a RepoWitness database.
+The runner verifies the exact manifest revision before making a disposable
+`--no-local` clone and building the release CLI and probe. It creates the
+SQLite database and memory record only in that clone, measures cold and
+unchanged indexing plus repeated warm queries, changes one attached
+declaration, and removes all disposable state on exit. The supplied corpus
+checkout remains read-only. On supported systems, `/usr/bin/time` also records
+peak resident memory.
 
 ## Initial tasks
 
@@ -38,20 +41,26 @@ The lexical/source-only and naive-memory-text baselines use the same corpus revi
 
 ## Current execution coverage
 
-The pinned preparation runner is implemented and records cold/warm time, peak
-RSS when available, repository/Rust-file/byte/fact counts, syntax errors, and
-canonical snapshot identity. Repeated runs require identical logical output.
+The pinned runner records environment identity, cold and unchanged indexing,
+peak RSS, repository/file/byte/fact counts, syntax errors, exact artifact
+reuse, one-file invalidation, query p50/p95, result size, database/WAL size,
+generation identity, and default MCP tool count. It resolves all nine required
+evidence occurrences, writes and separately approves one canonical decision,
+proves current recall and source-plus-memory context, changes its exact source,
+then proves stale recall and stale-memory context exclusion.
 
-The product path now also implements SQLite persistence and exact reuse,
-bounded FTS5 search, exact declaration retrieval, CLI commands, and local stdio
-MCP. Those stages pass end-to-end tests on temporary and neighboring cloned
-Rust repositories, but they are not yet wired into this pinned manifest runner.
-Memory revalidation, context compilation, lexical/naive-memory comparisons,
-and the design-partner task are not implemented.
+The [2026-07-28 provisional run](../../docs/research/phase0-product-benchmark-2026-07-28.md)
+passes every proposed numeric ceiling. The lexical/source-only and
+naive-memory baselines are declared but not yet compared on a real
+design-partner engineering decision.
 
 ## Budgets
 
-Correctness budgets are zero-tolerance for false confirmed claims, silent truncation, mixed-generation reads, and false automatic relinks. Initial resource and latency numbers are proposals for this small corpus, not accepted release gates. Record the required environment data during the first benchmark run, publish cold and warm results, and ratify or revise the numeric budgets before optimizing against them.
+Correctness budgets are zero-tolerance for false confirmed claims, silent
+truncation, mixed-generation reads, and false automatic relinks. Resource and
+latency numbers remain proposals for this small corpus, not accepted release
+gates. Rerun from a clean exact RepoWitness revision and explicitly ratify or
+revise the budgets before making a Phase 0 completion claim.
 
 ## Provenance
 

@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-07-22
+- Last reviewed: 2026-07-28
 - Owners: Project maintainers
 - Scope: `.code-memory/` serialization, version import, edits, conflicts, tombstones, and projection rebuild
 
@@ -106,11 +107,16 @@ Textual merge says nothing about whether two decisions, scopes, or validity even
 
 ## Implementation status
 
-The hostile-YAML admission and canonical semantic-digest behavior exists only
-as a test spike. Production record parsing, canonical writing, Git import,
-conflict/tombstone handling, append-only projection, audit history, and rebuild
-are not implemented. Proposed ADR-0014 must be reviewed before the parser
-stack or record schema is promoted.
+The accepted ADR-0014 domain model, hostile byte parser, canonical semantic
+digest, and deterministic writer are implemented, with the earlier spike kept
+as an independent regression oracle. Capability-contained worktree admission,
+trusted local import, immutable versions including tombstones, and append-only
+audit history are implemented under proposed ADR-0017. Proposed ADR-0018 and
+ADR-0021 now implement conflict-preserving current projection, deterministic
+projection rebuild, observation-only bounded Git-tree history import,
+separately trusted local approval, canonical writes, and manual correspondence
+review. The force-push/pruned-object release matrix and portable archival/export
+policy remain open.
 
 ## Supersession
 

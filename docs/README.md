@@ -21,20 +21,24 @@ This directory turns the detailed research in [`plan.md`](../plan.md) into small
 | [FTS5 retrieval spike (2026-07-25)](research/fts5-retrieval-spike-2026-07-25.md) | Generation-scoped deterministic lexical retrieval, literal-query admission, bounds, projection rebuild, and production promotion | Implemented |
 | [Phase 0 dependency review (2026-07-25)](research/phase0-dependency-review-2026-07-25.md) | Need, versions, features, licenses, native/build surfaces, and verification for production dependencies | Active |
 | [Phase 0 preparation benchmark (2026-07-25)](research/phase0-preparation-benchmark-2026-07-25.md) | Pinned mini-redis environment, cold/warm local-preparation timings, resource use, correctness, and limitations | Provisional measurement |
+| [Phase 0 product benchmark (2026-07-28)](research/phase0-product-benchmark-2026-07-28.md) | Pinned persistence, reuse, retrieval, MCP, memory-management, source-change revalidation, context, resource, and latency results | Provisional measurement |
 | [Strict memory YAML spike (2026-07-25)](research/strict-memory-yaml-spike-2026-07-25.md) | Bounded hostile-YAML admission, canonical JSON, semantic hashing, and candidate dependency findings | Recommendation |
 | [Benchmark manifests](../benchmarks/README.md) | Pinned corpora, tasks, change scenarios, baselines, environments, and budgets | Proposed |
 | [Research plan](../plan.md) | Full research, alternatives, sources, and detailed backlog | Reference |
 
 ## Implementation snapshot
 
-As of 2026-07-26, RepoWitness implements and tests the local Rust
-source-to-evidence path: bounded Git discovery and contained reads, canonical
-source and artifact identity, deterministic Rust extraction and reuse,
-immutable SQLite generations, FTS5 retrieval, exact declaration retrieval,
-CLI commands, and local stdio MCP tools. The
+As of 2026-07-28, RepoWitness implements and tests the local five-language
+source-to-revalidated-context path: bounded Git discovery and contained reads,
+canonical source and artifact identity, deterministic extraction and reuse,
+immutable SQLite generations, retrieval, canonical memory management,
+observation-only Git history, manual correspondence review, context
+compilation, CLI commands, and default-read-only or explicitly authorized
+local stdio MCP tools. The
 [product](product.md), [architecture](architecture.md), and
-[roadmap](roadmap.md) distinguish that completed foundation from the remaining
-memory, correspondence, revalidation, context-compiler, and release-gate work.
+[roadmap](roadmap.md) distinguish that implemented design-partner-alpha loop
+from the remaining ratification, residual release-matrix, clean-attestation,
+and comparative design-partner gates.
 The complete command surface and local Codex setup are in the
 [repository README](../README.md).
 

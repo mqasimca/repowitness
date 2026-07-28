@@ -842,7 +842,7 @@ transport = "stdio"
 | Evidence | Git, tests, ADRs, CODEOWNERS, and SCIP importers | CI, issue tracker, deployment, and telemetry adapters |
 | MCP | Canonical, minimal, and incumbent-compatible tool profiles | Additional resource/UI packages |
 | Security | Path, secret, size, network, and retention policies | Central authorization and secret providers |
-| Observability | stderr and local OpenTelemetry export | Organization collectors and dashboards |
+| Observability | stderr and local OpenTelemetry export | Organization collectors and visualization surfaces |
 
 #### Storage backends and deployment profiles
 

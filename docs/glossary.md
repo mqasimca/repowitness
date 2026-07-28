@@ -1,7 +1,7 @@
 # Glossary
 
 - Status: Draft
-- Last reviewed: 2026-07-26
+- Last reviewed: 2026-07-28
 
 ## Core terms
 
@@ -76,8 +76,14 @@ A versioned relationship connecting occurrences or logical symbols across revisi
 
 A scoped engineering claim whose kind may be decision, failure, procedure, episode, preference, policy, or non-source-derivable fact. Records have immutable versions, provenance, lifecycle, validity, and audit history.
 
-The strict Phase 0 record is still proposed in ADR-0014; the current YAML and
-canonical-digest implementation is a test-only spike.
+The strict Phase 0 version-1 record is accepted in ADR-0014. Its domain model,
+hostile-YAML parser, canonical digest, and deterministic writer are implemented;
+capability-contained worktree admission, trusted import, and append-only SQLite
+persistence are also implemented. The one-migration SQLite baseline contains
+the five-language artifact format, derivation and atomic publication of a
+current-memory projection, and reviewed correspondence. Bounded Git-tree history
+import stores observations only; repository-authored text cannot approve
+itself. None of these boundaries changes the canonical record.
 
 ### Project-valid time
 
@@ -95,8 +101,10 @@ A memory whose evidence or attached code changed enough that continued applicabi
 
 A deterministic, token-budgeted collection of source, relationships, tests, history, and eligible memory assembled for an intent. It includes omissions and a coverage receipt.
 
-Context-pack compilation is not implemented in the current Phase 0 source
-indexing and retrieval slice.
+The current Phase 0 compiler deterministically fuses exact lexical source and
+eligible current memory under the conservative `utf8_bytes_upper_bound_v1`
+budget. References, structural expansion, history, vectors, and model-specific
+tokenizers remain unsupported and appear as limitations.
 
 ### Workspace
 
@@ -113,8 +121,9 @@ User-scoped memory stored outside the repository in a local, optionally encrypte
 ### Canonical tool
 
 A stable, compact RepoWitness MCP operation. The current local stdio server
-implements `code_search` and `symbol_get`; `context_build` is planned for the
-remaining Phase 0 loop.
+implements the read-only `context_build`, `code_search`, `diagnostics`,
+`memory_recall`, and `symbol_get` tools by default. It adds `memory_manage`
+only when the operator explicitly enables mutation with one fixed local actor.
 
 ### Compatibility alias
 
