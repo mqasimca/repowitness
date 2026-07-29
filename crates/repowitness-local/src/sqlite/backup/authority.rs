@@ -268,8 +268,8 @@ fn has_one_link(metadata: &Metadata) -> bool {
 
 #[cfg(windows)]
 fn has_one_link(metadata: &Metadata) -> bool {
-    use cap_std::fs::MetadataExt as _;
-    metadata.number_of_links() == Some(1)
+    use cap_fs_ext::MetadataExt as _;
+    metadata.nlink() == 1
 }
 
 #[cfg(not(any(unix, windows)))]

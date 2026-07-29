@@ -466,9 +466,9 @@ fn has_one_link(metadata: &Metadata) -> bool {
 
 #[cfg(windows)]
 fn has_one_link(metadata: &Metadata) -> bool {
-    use cap_std::fs::MetadataExt as _;
+    use cap_fs_ext::MetadataExt as _;
 
-    metadata.number_of_links() == Some(1)
+    metadata.nlink() == 1
 }
 
 #[cfg(not(any(unix, windows)))]
@@ -478,12 +478,10 @@ fn has_one_link(_metadata: &Metadata) -> bool {
 
 #[cfg(windows)]
 fn is_reparse_point(metadata: &Metadata) -> bool {
-    use cap_std::fs::MetadataExt as _;
+    use cap_primitives::fs::_WindowsByHandle as _;
 
     const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
-    metadata
-        .file_attributes()
-        .is_some_and(|attributes| attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0)
+    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
 }
 
 #[cfg(not(windows))]
