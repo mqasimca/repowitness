@@ -13,6 +13,7 @@ use repowitness_application::{PackageScope, ResolvedConfiguration};
 use repowitness_domain::{
     ConnectedWorkspaceId, RepositoryIdentityDigest, RepositoryPathLimits, SourceSlotId,
 };
+#[cfg(unix)]
 use rusqlite::{Connection, OpenFlags};
 
 use super::super::{
