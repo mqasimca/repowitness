@@ -1,6 +1,6 @@
-#![cfg(unix)]
-
 //! Real-workspace integration for the complete local Rust preparation slice.
+
+#![cfg(unix)]
 
 use std::{
     error::Error,
