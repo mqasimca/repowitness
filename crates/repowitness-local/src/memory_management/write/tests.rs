@@ -55,6 +55,7 @@ impl Drop for TestDirectory {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn contained_directory_sync_uses_a_sync_capable_handle() {
     let fixture = TestDirectory::new("directory-sync");
@@ -64,6 +65,39 @@ fn contained_directory_sync_uses_a_sync_capable_handle() {
         open_directory_sync_handle(&directory).expect("sync-capable directory should open");
 
     sync_directory(&sync_handle).expect("directory synchronization should succeed");
+}
+
+#[cfg(not(unix))]
+#[test]
+fn directory_sync_is_explicitly_deferred_after_publication() {
+    let fixture = TestDirectory::new("directory-sync");
+    let directory = Dir::open_ambient_dir(fixture.path(), ambient_authority())
+        .expect("contained directory should open");
+    let sync_handle = open_directory_sync_handle(&directory)
+        .expect("deferred directory synchronization is valid");
+
+    assert_eq!(
+        sync_directory(&sync_handle),
+        Err(LocalMemoryManageError::FilePublicationFailed)
+    );
+}
+
+#[cfg(not(unix))]
+#[test]
+fn write_commits_the_record_when_directory_sync_is_deferred() {
+    let fixture = TestDirectory::new("directory-sync-deferred");
+
+    let receipt = write(
+        LocalMemoryWriteRequest::from_bytes(fixture.path(), MEMORY_YAML, REPOSITORY_ID),
+        Arc::new(AtomicBool::new(false)),
+    )
+    .expect("unsupported directory synchronization must not reject the committed record");
+
+    assert_eq!(
+        receipt.publication_status().directory_sync(),
+        MemoryFilePublicationStepStatus::Deferred
+    );
+    assert!(fixture.target().is_file());
 }
 
 #[test]

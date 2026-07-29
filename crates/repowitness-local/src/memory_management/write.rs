@@ -41,7 +41,7 @@ static NEXT_TEMPORARY: AtomicU64 = AtomicU64::new(0);
 #[cfg(unix)]
 type DirectorySyncHandle = std::os::fd::OwnedFd;
 #[cfg(not(unix))]
-type DirectorySyncHandle = std::fs::File;
+type DirectorySyncHandle = ();
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PublicationStage {
@@ -621,12 +621,9 @@ fn open_directory_sync_handle(
 
 #[cfg(not(unix))]
 fn open_directory_sync_handle(
-    directory: &Dir,
+    _directory: &Dir,
 ) -> Result<DirectorySyncHandle, LocalMemoryManageError> {
-    directory
-        .try_clone()
-        .map(Dir::into_std_file)
-        .map_err(|_| LocalMemoryManageError::FilePublicationFailed)
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -635,10 +632,8 @@ fn sync_directory(directory: &DirectorySyncHandle) -> Result<(), LocalMemoryMana
 }
 
 #[cfg(not(unix))]
-fn sync_directory(directory: &DirectorySyncHandle) -> Result<(), LocalMemoryManageError> {
-    directory
-        .sync_all()
-        .map_err(|_| LocalMemoryManageError::FilePublicationFailed)
+fn sync_directory(_directory: &DirectorySyncHandle) -> Result<(), LocalMemoryManageError> {
+    Err(LocalMemoryManageError::FilePublicationFailed)
 }
 
 #[cfg(unix)]
