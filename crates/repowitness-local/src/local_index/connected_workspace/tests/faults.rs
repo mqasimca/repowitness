@@ -1,5 +1,6 @@
+#[cfg(unix)]
+use std::fs;
 use std::{
-    fs,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -15,10 +16,11 @@ use super::super::{
         ConnectedSourceSlotRequest, ConnectedWorkspaceIndexError, ConnectedWorkspaceIndexRequest,
     },
 };
+#[cfg(unix)]
+use super::fixtures::active_view_database_id_unchecked;
 use super::fixtures::{
-    TempDirectory, active_view, active_view_database_id_unchecked, connected,
-    default_configuration, fixture_repository, git, index, repository, request, scope, slot,
-    source_slot, write_source,
+    TempDirectory, active_view, connected, default_configuration, fixture_repository, git, index,
+    repository, request, scope, slot, source_slot, write_source,
 };
 
 #[test]

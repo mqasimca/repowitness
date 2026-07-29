@@ -187,6 +187,7 @@ pub(super) fn active_view(
     view
 }
 
+#[cfg(unix)]
 pub(super) fn active_view_database_id_unchecked(
     database: &Path,
     connected_workspace: ConnectedWorkspaceId,

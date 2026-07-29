@@ -9,19 +9,21 @@ use std::{
 
 use repowitness_application::PackageScope;
 
+#[cfg(unix)]
+use super::super::index_connected_workspace_with_parent_control_hooks;
 use super::super::{
     CoordinatorPhase, index_connected_workspace_with_control_hooks,
-    index_connected_workspace_with_parent_control_hooks, model::ConnectedWorkspaceIndexError,
+    model::ConnectedWorkspaceIndexError,
 };
 use super::fixtures::{
-    TempDirectory, active_view, connected, default_configuration, fixture_repository, git, index,
-    repository, request, slot, source_slot, write_source,
+    TempDirectory, active_view, connected, default_configuration, fixture_repository, index,
+    repository, request, slot, source_slot,
 };
-use crate::{
-    MAX_LOCAL_CONNECTED_WORKSPACE_MANIFEST_BYTES,
-    local_index::post_commit::{PostCommitMaintenancePhase, PostCommitMaintenanceStatus},
-    read_bounded_regular_file_with_parent,
-};
+#[cfg(unix)]
+use super::fixtures::{git, write_source};
+use crate::local_index::post_commit::{PostCommitMaintenancePhase, PostCommitMaintenanceStatus};
+#[cfg(unix)]
+use crate::{MAX_LOCAL_CONNECTED_WORKSPACE_MANIFEST_BYTES, read_bounded_regular_file_with_parent};
 
 #[cfg(any(unix, windows))]
 #[test]
