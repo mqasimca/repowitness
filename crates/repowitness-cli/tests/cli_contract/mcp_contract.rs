@@ -546,9 +546,25 @@ fn initialize_mcp(input: &mut ChildStdin, output: &mut BufReader<ChildStdout>) {
 
 include!("mcp_contract/read_tools.rs");
 
-fn stop_mcp(child: std::process::Child, input: ChildStdin, output: BufReader<ChildStdout>) {
+fn stop_mcp(
+    mut child: std::process::Child,
+    input: ChildStdin,
+    output: BufReader<ChildStdout>,
+) {
     drop(input);
     drop(output);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        if child.try_wait().expect("MCP server status").is_some() {
+            break;
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("MCP server did not stop within the bounded shutdown window");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
     let completed = child.wait_with_output().expect("MCP server must stop");
     assert!(completed.status.success());
     assert!(completed.stdout.is_empty());
