@@ -218,7 +218,7 @@ fn parent_replacement_after_open_is_blocked_by_the_platform() {
     let path = parent.join("control");
     fs::write(&path, b"same").expect("write original");
 
-    let contents = read_bounded_regular_file_with_hook(&path, 4, || {
+    let (contents, _admitted_parent) = read_bounded_regular_file_with_hook(&path, 4, || {
         assert!(
             fs::rename(&parent, &old_parent).is_err(),
             "Windows must block replacement of an open parent directory"
