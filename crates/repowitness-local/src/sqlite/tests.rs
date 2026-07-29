@@ -8,12 +8,12 @@ use std::{
     time::{Duration, Instant},
 };
 
-use rusqlite::{Connection, OpenFlags, params};
+use rusqlite::{Connection, OpenFlags, TransactionBehavior, params};
 
 use super::{
-    APPLICATION_ID, MIGRATION_1, MIGRATION_1_NAME, MIGRATION_2, MIGRATION_2_NAME, SCHEMA_VERSION,
-    SqliteStoreError, apply_migration, database_file_identity, migration_checksum, migrations,
-    open_index_writer, open_index_writer_with_identity_and_hook,
+    APPLICATION_ID, MIGRATION_1, MIGRATION_1_NAME, MIGRATION_2, MIGRATION_2_NAME, MIGRATION_3,
+    MIGRATION_3_NAME, SCHEMA_VERSION, SqliteStoreError, apply_migration, database_file_identity,
+    migration_checksum, migrations, open_index_writer, open_index_writer_with_identity_and_hook,
 };
 
 static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
@@ -205,3 +205,4 @@ include!("tests/schema_projection.rs");
 include!("tests/memory_startup.rs");
 include!("tests/baseline.rs");
 include!("tests/migration_2.rs");
+include!("tests/migration_3.rs");

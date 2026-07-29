@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeSet,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -9,21 +10,25 @@ use std::{
 use repowitness_analysis::{RUST_CORRESPONDENCE_PROFILE_ID, RUST_CORRESPONDENCE_PROFILE_VERSION};
 use repowitness_application::{
     MemoryImportApproval, MemoryImportReceipt, PreparedRustFile, PreparedRustIndex,
-    RustIndexCoverage, RustSourceSnapshotIdentity, hash_analysis_artifact_key,
+    RustIndexCoverage, RustSourceSnapshotIdentity, SourceSlotEpoch, hash_analysis_artifact_key,
     hash_analysis_artifact_payload, hash_source_snapshot,
 };
 use repowitness_domain::{
-    AnalysisArtifactKey, CanonicalMemoryDigest, MemoryActorKind, MemoryAssurance,
-    MemoryAuditActorId, MemoryEvidence, MemoryKind, MemoryLifecycle, MemoryObjectFormat,
-    MemoryObservationSource, MemoryPresentationDigest, MemoryProvenanceOrigin, MemoryRecord,
-    MemoryRecordedAtUnixMillis, MemoryRelationshipKind, MemoryValidity, RepositoryIdentityDigest,
-    RustMemorySymbolKind, SourceFileKind, SourceSnapshotDigest,
+    AnalysisArtifactKey, CanonicalMemoryDigest, ConnectedWorkspaceId, MemoryActorKind,
+    MemoryAssurance, MemoryAuditActorId, MemoryEvidence, MemoryKind, MemoryLifecycle,
+    MemoryObjectFormat, MemoryObservationSource, MemoryPresentationDigest, MemoryProvenanceOrigin,
+    MemoryRecord, MemoryRecordedAtUnixMillis, MemoryRelationshipKind, MemoryValidity,
+    RepositoryIdentityDigest, RustMemorySymbolKind, SourceFileKind, SourceSlotId,
+    SourceSnapshotDigest,
 };
 use rusqlite::{
     Connection, ErrorCode, OptionalExtension, Transaction, TransactionBehavior, params,
 };
+use sha2::{Digest, Sha256};
 
 use super::{
+    GenerationRetentionPolicy, MAX_RETENTION_GENERATION_CANDIDATES, MAX_RETENTION_GENERATION_PINS,
+    RetentionApplyOutcome, RetentionPlan, RetentionPlanDigest, RetentionPolicyDigest,
     SqliteStoreError,
     memory_projection::{
         LoadedMemoryJournal, LoadedRustCandidateSet, MemoryProjectionLoadLimits,
@@ -36,6 +41,11 @@ use super::{
         load_memory_correspondence_reviews,
     },
     schema::{RECREATE_GENERATION_SEARCH, RECREATE_GENERATION_SEARCH_REBUILD},
+    workspace::{
+        MAX_CONNECTED_WORKSPACE_SOURCE_SLOTS, PinnedWorkspaceView, PinnedWorkspaceViewMember,
+        SourceSlotGeneration, SourceSlotState, WorkspaceSourceSlot, WorkspaceViewId,
+        WorkspaceViewMember, canonical_source_slots, canonical_view_members,
+    },
 };
 
 const WRITE_BATCH_ROWS: usize = 256;
@@ -171,6 +181,27 @@ impl CheckpointOutcome {
 pub(super) struct WriteControl<'a> {
     pub(super) cancelled: &'a Arc<AtomicBool>,
     pub(super) deadline: Instant,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct SourceSlotReservation {
+    connected_workspace: ConnectedWorkspaceId,
+    source_slot: SourceSlotId,
+    source_epoch: SourceSlotEpoch,
+}
+
+impl SourceSlotReservation {
+    pub(super) const fn new(
+        connected_workspace: ConnectedWorkspaceId,
+        source_slot: SourceSlotId,
+        source_epoch: SourceSlotEpoch,
+    ) -> Self {
+        Self {
+            connected_workspace,
+            source_slot,
+            source_epoch,
+        }
+    }
 }
 
 pub(super) struct PreparedMemoryImport {
@@ -370,9 +401,13 @@ pub(super) struct WriterState {
 }
 
 include!("writer/lifecycle.rs");
+include!("writer/workspace.rs");
 include!("writer/search_projection.rs");
 include!("writer/staging.rs");
 include!("writer/verification.rs");
+include!("writer/graph.rs");
+include!("writer/graph_artifact_verification.rs");
+include!("writer/retention.rs");
 
 include!("writer/memory.rs");
 include!("writer/helpers.rs");

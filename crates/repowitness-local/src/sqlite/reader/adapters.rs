@@ -114,92 +114,146 @@ impl Drop for OwnedSqliteReader {
 
 fn run_reader(connection: &mut Connection, receiver: Receiver<ReaderCommand>) {
     while let Ok(command) = receiver.recv() {
-        match command {
-            ReaderCommand::Search(command) => {
-                let SearchCommand {
-                    repository,
-                    query,
-                    limits,
-                    cancelled,
-                    deadline,
-                    reply,
-                } = *command;
-                let result =
-                    search_active(connection, repository, &query, limits, cancelled, deadline);
-                let _ = reply.try_send(result);
-            }
-            ReaderCommand::GetSymbol(command) => {
-                let SymbolCommand {
-                    repository,
-                    expected_snapshot,
-                    expected_generation,
-                    selector,
-                    cancelled,
-                    deadline,
-                    reply,
-                } = *command;
-                let result = get_active_symbol(
-                    connection,
-                    repository,
-                    expected_snapshot,
-                    expected_generation,
-                    &selector,
-                    cancelled,
-                    deadline,
-                );
-                let _ = reply.try_send(result);
-            }
-            ReaderCommand::LoadArtifacts(command) => {
-                let ArtifactCommand {
-                    requested,
-                    language,
-                    identity,
-                    limits,
-                    cancelled,
-                    deadline,
-                    reply,
-                } = *command;
-                let result = load_reusable_artifacts(
-                    connection, &requested, language, identity, limits, cancelled, deadline,
-                );
-                let _ = reply.try_send(result);
-            }
-            ReaderCommand::RecallMemory(command) => {
-                let MemoryRecallCommand {
-                    repository,
-                    query,
-                    limits,
-                    cancelled,
-                    deadline,
-                    reply,
-                } = *command;
-                let result = recall_active_memory(
-                    connection,
-                    repository,
-                    query.as_deref(),
-                    limits,
-                    cancelled,
-                    deadline,
-                );
-                let _ = reply.try_send(result);
-            }
-            ReaderCommand::Diagnostics(command) => {
-                let DiagnosticsCommand {
-                    repository,
-                    cancelled,
-                    deadline,
-                    reply,
-                } = *command;
-                let result =
-                    diagnose_active_repository(connection, repository, cancelled, deadline);
-                let _ = reply.try_send(result);
-            }
-            ReaderCommand::Shutdown { reply } => {
-                let _ = reply.try_send(Ok(()));
-                break;
-            }
+        if execute_reader_command(connection, command) {
+            break;
         }
     }
+}
+
+fn execute_reader_command(connection: &mut Connection, command: ReaderCommand) -> bool {
+    match command {
+        ReaderCommand::Search(command) => execute_search_command(connection, *command),
+        ReaderCommand::GetSymbol(command) => execute_symbol_command(connection, *command),
+        ReaderCommand::LoadArtifacts(command) => execute_artifact_command(connection, *command),
+        ReaderCommand::LoadGraphArtifacts(command) => {
+            execute_graph_artifact_command(connection, *command);
+        }
+        ReaderCommand::RecallMemory(command) => execute_memory_recall_command(connection, *command),
+        ReaderCommand::Diagnostics(command) => execute_diagnostics_command(connection, *command),
+        ReaderCommand::WorkspaceView(command) => {
+            let result = execute_workspace_view_command(connection, &command);
+            let _ = command.reply.try_send(result);
+        }
+        ReaderCommand::Graph(command) => {
+            let result = execute_graph_command(connection, &command);
+            let _ = command.reply.try_send(result);
+        }
+        ReaderCommand::Shutdown { reply } => {
+            let _ = reply.try_send(Ok(()));
+            return true;
+        }
+    }
+    false
+}
+
+fn execute_search_command(connection: &mut Connection, command: SearchCommand) {
+    let SearchCommand {
+        repository,
+        query,
+        limits,
+        cancelled,
+        deadline,
+        reply,
+    } = command;
+    let result = search_active(connection, repository, &query, limits, cancelled, deadline);
+    let _ = reply.try_send(result);
+}
+
+fn execute_symbol_command(connection: &mut Connection, command: SymbolCommand) {
+    let SymbolCommand {
+        repository,
+        expected_snapshot,
+        expected_generation,
+        selector,
+        cancelled,
+        deadline,
+        reply,
+    } = command;
+    let result = get_active_symbol(
+        connection,
+        repository,
+        expected_snapshot,
+        expected_generation,
+        &selector,
+        cancelled,
+        deadline,
+    );
+    let _ = reply.try_send(result);
+}
+
+fn execute_artifact_command(connection: &mut Connection, command: ArtifactCommand) {
+    let ArtifactCommand {
+        requested,
+        language,
+        identity,
+        limits,
+        cancelled,
+        deadline,
+        reply,
+    } = command;
+    let result = load_reusable_artifacts(
+        connection,
+        &requested,
+        language,
+        identity,
+        limits,
+        cancelled,
+        deadline,
+    );
+    let _ = reply.try_send(result);
+}
+
+fn execute_graph_artifact_command(connection: &mut Connection, command: GraphArtifactCommand) {
+    let GraphArtifactCommand {
+        requested,
+        identity,
+        limits,
+        graph_limits,
+        cancelled,
+        deadline,
+        reply,
+    } = command;
+    let result = load_reusable_graph_artifacts(
+        connection,
+        &requested,
+        identity,
+        limits,
+        graph_limits,
+        cancelled,
+        deadline,
+    );
+    let _ = reply.try_send(result);
+}
+
+fn execute_memory_recall_command(connection: &mut Connection, command: MemoryRecallCommand) {
+    let MemoryRecallCommand {
+        repository,
+        query,
+        limits,
+        cancelled,
+        deadline,
+        reply,
+    } = command;
+    let result = recall_active_memory(
+        connection,
+        repository,
+        query.as_deref(),
+        limits,
+        cancelled,
+        deadline,
+    );
+    let _ = reply.try_send(result);
+}
+
+fn execute_diagnostics_command(connection: &mut Connection, command: DiagnosticsCommand) {
+    let DiagnosticsCommand {
+        repository,
+        cancelled,
+        deadline,
+        reply,
+    } = command;
+    let result = diagnose_active_repository(connection, repository, cancelled, deadline);
+    let _ = reply.try_send(result);
 }
 
 fn search_active(

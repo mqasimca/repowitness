@@ -20,30 +20,34 @@ This directory turns the detailed research in [`plan.md`](../plan.md) into small
 | [SQLite generation spike (2026-07-23)](research/sqlite-generation-spike-2026-07-23.md) | Bounded staging, activation, crash recovery, backup, direct-versus-RAM measurements, and production promotion record | Completed |
 | [FTS5 retrieval spike (2026-07-25)](research/fts5-retrieval-spike-2026-07-25.md) | Generation-scoped deterministic lexical retrieval, literal-query admission, bounds, projection rebuild, and production promotion | Implemented |
 | [Phase 0 dependency review (2026-07-25)](research/phase0-dependency-review-2026-07-25.md) | Need, versions, features, licenses, native/build surfaces, and verification for production dependencies | Active |
+| [Phase 1 local-boundary dependency review (2026-07-29)](research/phase1-configuration-dependency-review-2026-07-29.md) | TOML admission, capability-based file access, stable file identity, and operating-system identity generation | Active |
 | [Phase 0 preparation benchmark (2026-07-25)](research/phase0-preparation-benchmark-2026-07-25.md) | Pinned mini-redis environment, cold/warm local-preparation timings, resource use, correctness, and limitations | Provisional measurement |
 | [Phase 0 product benchmark (2026-07-28)](research/phase0-product-benchmark-2026-07-28.md) | Pinned persistence, reuse, retrieval, MCP, memory-management, source-change revalidation, context, resource, and latency results | Provisional measurement |
+| [Phase 0 clean benchmark attestation (2026-07-29)](research/phase0-clean-benchmark-attestation-2026-07-29.md) | Checksummed clean Ubuntu 24.04 benchmark evidence and budget ratification | Completed |
 | [Phase 0 comparative evaluation (2026-07-28)](research/phase0-comparative-evaluation-2026-07-28.md) | Controlled before/after lexical, naive-memory, and evidence-backed memory comparison | Provisional measurement |
 | [Phase 0 Codex utility evaluation (2026-07-28)](research/phase0-codex-utility-evaluation-2026-07-28.md) | Isolated before/after Codex decision, source grounding, memory use, stale-memory avoidance, and packet presentation | Provisional measurement |
 | [Phase 0 ratification review (2026-07-28)](research/phase0-ratification-review-2026-07-28.md) | Evidence-based ADR and benchmark-budget readiness recommendations | Recommendation |
+| [Phase 0 design-partner evaluation protocol](research/phase0-design-partner-evaluation-protocol.md) | Privacy-preserving method and pass criteria for the remaining real-task gate | Active |
 | [Strict memory YAML spike (2026-07-25)](research/strict-memory-yaml-spike-2026-07-25.md) | Bounded hostile-YAML admission, canonical JSON, semantic hashing, and candidate dependency findings | Recommendation |
-| [Benchmark manifests](../benchmarks/README.md) | Pinned corpora, tasks, change scenarios, baselines, environments, and budgets | Proposed |
+| [Benchmark manifests](../benchmarks/README.md) | Pinned corpora, tasks, change scenarios, baselines, environments, and budgets | Ratified |
 | [Research plan](../plan.md) | Full research, alternatives, sources, and detailed backlog | Reference |
 
 ## Implementation snapshot
 
-As of 2026-07-28, RepoWitness implements and tests the local five-language
+As of 2026-07-29 UTC, RepoWitness implements and tests the local five-language
 source-to-revalidated-context path: bounded Git discovery and contained reads,
 canonical source and artifact identity, deterministic extraction and reuse,
-immutable SQLite generations, retrieval, canonical memory management,
+immutable SQLite generations, native Rust graph publication and reads,
+retrieval, canonical memory management,
 observation-only Git history, manual correspondence review, context
 compilation, CLI commands, and default-read-only or explicitly authorized
 local stdio MCP tools. The
 [product](product.md), [architecture](architecture.md), and
 [roadmap](roadmap.md) distinguish that implemented design-partner-alpha loop
-and passing adversarial release matrix from the remaining ratification,
-clean-attestation, and real design-partner gate. A controlled public baseline
-comparison and an isolated Codex utility evaluation are implemented and
-reproducible.
+and passing adversarial release matrix from the remaining ADR and real
+design-partner gate. The benchmark manifest and budgets have a checksummed
+clean Ubuntu 24.04 attestation. A controlled public baseline comparison and an
+isolated Codex utility evaluation are implemented and reproducible.
 The complete command surface and local Codex setup are in the
 [repository README](../README.md).
 
@@ -65,6 +69,8 @@ Code and executable tests are the strongest statement of implemented behavior. A
   implementation.
 - **Proposed:** complete enough for focused review but not yet an accepted commitment.
 - **Accepted:** the current decision; changes require a superseding ADR.
+- **Ratified:** a benchmark profile or budget set accepted after its required
+  review and evidence; material changes require a new review.
 - **Implemented:** accepted and enforced by shipped code or automated tests.
 - **Implemented and promoted:** a research recommendation adopted by a
   controlling ADR or focused implementation contract.

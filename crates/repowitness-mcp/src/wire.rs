@@ -11,21 +11,47 @@ use repowitness_application::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+mod compatibility;
 mod context_build;
 mod diagnostics;
+mod graph;
 mod memory_manage;
 mod memory_recall;
 
+pub use compatibility::{
+    COMPATIBILITY_PROFILE_VERSION, CompatibilityGraphSchema, CompatibilityGraphSchemaLimits,
+    CompatibilityLevels, CompatibilityNamespace, CompatibilityOutput, CompatibilityReceipt,
+    GET_ARCHITECTURE_ALIAS_TOOL_NAME, GET_CODE_SNIPPET_ALIAS_TOOL_NAME,
+    GET_GRAPH_SCHEMA_ALIAS_TOOL_NAME, GetArchitectureInput, GetCodeSnippetInput,
+    GetGraphSchemaInput, INCUMBENT_COMPATIBLE_PROFILE, INCUMBENT_COMPATIBLE_SURFACE,
+    INDEX_STATUS_ALIAS_TOOL_NAME, IndexStatusInput, SEARCH_CODE_ALIAS_TOOL_NAME,
+    SEARCH_GRAPH_ALIAS_TOOL_NAME, SearchCodeInput, SearchGraphInput, TRACE_PATH_ALIAS_TOOL_NAME,
+    TracePathInput,
+};
+pub(crate) use compatibility::{CompatibilityAlias, compatibility_output, graph_schema_output};
 pub use context_build::{
     ContextBuildInput, ContextBuildOutput, ContextBuildServiceRequest, McpContextCoverage,
     McpContextItem, McpContextMemoryItem, McpContextMemoryProjection, McpContextOmission,
     McpContextSourceItem,
 };
 pub use diagnostics::{
-    DiagnosticsInput, DiagnosticsOutput, DiagnosticsServiceRequest, McpDiagnosticsMemoryProjection,
+    DiagnosticsInput, DiagnosticsOutput, DiagnosticsServiceRequest, McpConfigurationIdentity,
+    McpDiagnosticsMemoryProjection,
+};
+pub use graph::{
+    GRAPH_ARCHITECTURE_TOOL_NAME, GRAPH_EVIDENCE_TOOL_NAME, GRAPH_SEARCH_TOOL_NAME,
+    GRAPH_STATUS_TOOL_NAME, GRAPH_TRACE_TOOL_NAME, GraphArchitectureInput, GraphArchitectureOutput,
+    GraphEvidenceInput, GraphEvidenceOutput, GraphImpactInput, GraphImpactOutput,
+    GraphReadServiceOutput, GraphReadServiceRequest, GraphSearchInput, GraphSearchOutput,
+    GraphStatusInput, GraphStatusOutput, GraphTraceInput, GraphTraceOutput,
+    IMPACT_ANALYZE_TOOL_NAME, McpGraphArchitectureCount, McpGraphCandidate, McpGraphCardinality,
+    McpGraphContext, McpGraphDefinition, McpGraphEdge, McpGraphEvidence, McpGraphImpact,
+    McpGraphPublication, McpGraphSite, McpGraphTrace, McpGraphTraceCoverage,
+    McpGraphTraceTruncation,
 };
 pub use memory_manage::{
-    MemoryManageInput, MemoryManageOperation, MemoryManageOutput, MemoryManageReceipt,
+    MemoryManageFileIdentityStatus, MemoryManageInput, MemoryManageOperation, MemoryManageOutput,
+    MemoryManagePublicationStatus, MemoryManagePublicationStepStatus, MemoryManageReceipt,
     MemoryManageReviewDecision, MemoryManageServiceRequest,
 };
 pub use memory_recall::{
@@ -57,6 +83,7 @@ pub const MAX_MCP_INTEROPERABLE_INTEGER: u64 = 9_007_199_254_740_991;
 pub(crate) const MAX_MCP_SEARCH_OUTPUT_BYTES: usize = 3 * 1024 * 1024;
 pub(crate) const MAX_MCP_CONTEXT_OUTPUT_BYTES: usize = 24 * 1024 * 1024;
 pub(crate) const MAX_MCP_DIAGNOSTICS_OUTPUT_BYTES: usize = 256 * 1024;
+pub(crate) const MAX_MCP_GRAPH_OUTPUT_BYTES: usize = 64 * 1024 * 1024;
 pub(crate) const MAX_MCP_MEMORY_RECALL_OUTPUT_BYTES: usize = 20 * 1024 * 1024;
 pub(crate) const MAX_MCP_MEMORY_MANAGE_OUTPUT_BYTES: usize = 64 * 1024;
 // The MCP SDK includes both structured JSON and a compatibility text copy.
@@ -296,6 +323,8 @@ pub enum RepositoryServiceError {
     ContextBuild,
     /// Repository diagnostics failed without a usable result.
     Diagnostics,
+    /// Native Rust graph read failed without a usable result.
+    GraphRead,
     /// Memory recall failed without a usable result.
     MemoryRecall,
     /// Authorized local memory management failed without a usable result.
@@ -310,6 +339,7 @@ impl fmt::Display for RepositoryServiceError {
             Self::CodeSearch => "code search failed",
             Self::ContextBuild => "context build failed",
             Self::Diagnostics => "repository diagnostics failed",
+            Self::GraphRead => "Rust graph read failed",
             Self::MemoryRecall => "memory recall failed",
             Self::MemoryManage => "memory management failed",
             Self::SymbolGet => "symbol retrieval failed",
@@ -344,6 +374,15 @@ pub trait RepositoryService: Send + Sync + 'static {
         request: DiagnosticsServiceRequest,
         cancelled: Arc<AtomicBool>,
     ) -> Result<DiagnosticsOutput, RepositoryServiceError>;
+
+    /// Runs one native immutable-view-pinned Rust graph operation.
+    fn graph_read(
+        &self,
+        _request: GraphReadServiceRequest,
+        _cancelled: Arc<AtomicBool>,
+    ) -> Result<GraphReadServiceOutput, RepositoryServiceError> {
+        Err(RepositoryServiceError::GraphRead)
+    }
 
     /// Recalls bounded records from the complete active memory projection.
     fn memory_recall(
@@ -384,7 +423,7 @@ pub struct McpCoverage {
 }
 
 /// Versioned half-open byte span.
-#[derive(Clone, Copy, Eq, JsonSchema, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct McpSpan {
     /// Inclusive starting byte offset.

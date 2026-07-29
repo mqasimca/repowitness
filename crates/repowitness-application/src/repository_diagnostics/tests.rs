@@ -115,12 +115,27 @@ fn complete_state_preserves_evidence_coverage_and_static_capabilities() {
         [
             "lexical_source_search",
             "exact_symbol_source",
+            "bounded_rust_syntax_graph",
             "current_memory_recall",
             "bounded_context_build"
         ]
     );
-    assert_eq!(result.limitations().len(), 6);
-    assert_eq!(result.profile_version(), 2);
+    assert_eq!(
+        result
+            .limitations()
+            .iter()
+            .map(|limitation| limitation.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "rust_graph_syntax_derived_only",
+            "no_package_macro_scip_dynamic_or_cross_language_graph",
+            "no_history_search",
+            "no_vector_retrieval",
+            "no_model_tokenizer",
+            "no_remote_transport",
+        ]
+    );
+    assert_eq!(result.profile_version(), 3);
 }
 
 #[test]

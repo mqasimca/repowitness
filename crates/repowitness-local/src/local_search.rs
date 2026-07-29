@@ -14,7 +14,7 @@ use std::{
 use repowitness_application::{
     CodeSearchError, CodeSearchLimitError, CodeSearchLimits, CodeSearchQuery, CodeSearchQueryError,
     CodeSearchRequest, CodeSearchResult, RepositoryIdentityTextError, RepositoryIdentityTextV1,
-    code_search,
+    ResolvedConfiguration, code_search,
 };
 
 use crate::{GenerationId, OwnedSqliteReader, SqliteStoreError};
@@ -32,6 +32,7 @@ pub struct LocalCodeSearchRequest<'a> {
     repository_identity: &'a str,
     query: &'a str,
     limits: CodeSearchLimits,
+    configuration: Option<&'a ResolvedConfiguration>,
     deadline: Duration,
 }
 
@@ -44,6 +45,7 @@ impl<'a> LocalCodeSearchRequest<'a> {
             repository_identity,
             query,
             limits: CodeSearchLimits::default(),
+            configuration: None,
             deadline: DEFAULT_LOCAL_CODE_SEARCH_DEADLINE,
         }
     }
@@ -52,6 +54,13 @@ impl<'a> LocalCodeSearchRequest<'a> {
     pub fn with_max_results(mut self, max_results: u16) -> Result<Self, CodeSearchLimitError> {
         self.limits = CodeSearchLimits::try_new(max_results, self.limits.max_output_bytes())?;
         Ok(self)
+    }
+
+    /// Applies a resolved configuration as an additional query-result ceiling.
+    #[must_use]
+    pub const fn with_configuration(mut self, configuration: &'a ResolvedConfiguration) -> Self {
+        self.configuration = Some(configuration);
+        self
     }
 
     /// Applies an explicit end-to-end deadline duration.
@@ -70,6 +79,10 @@ impl fmt::Debug for LocalCodeSearchRequest<'_> {
             .field("repository_identity", &"<redacted-identity>")
             .field("query", &"<redacted-query>")
             .field("limits", &self.limits)
+            .field(
+                "configuration_digest",
+                &self.configuration.map(ResolvedConfiguration::digest),
+            )
             .field("deadline", &self.deadline)
             .finish()
     }
@@ -87,6 +100,11 @@ pub enum LocalCodeSearchError {
     Query {
         /// Stable query validation failure.
         source: CodeSearchQueryError,
+    },
+    /// Resolved configuration could not produce a valid effective query bound.
+    Limits {
+        /// Stable limit validation failure.
+        source: CodeSearchLimitError,
     },
     /// The absolute deadline cannot be represented.
     DeadlineNotRepresentable,
@@ -112,6 +130,7 @@ impl fmt::Display for LocalCodeSearchError {
         formatter.write_str(match self {
             Self::RepositoryIdentity { .. } => "repository identity is invalid",
             Self::Query { .. } => "code-search query is invalid",
+            Self::Limits { .. } => "code-search limits are invalid",
             Self::DeadlineNotRepresentable => "code-search deadline cannot be represented",
             Self::ReaderStart { .. } => "local index reader could not start",
             Self::Search { .. } => "local code search failed",
@@ -125,6 +144,7 @@ impl Error for LocalCodeSearchError {
         match self {
             Self::RepositoryIdentity { source } => Some(source),
             Self::Query { source } => Some(source),
+            Self::Limits { source } => Some(source),
             Self::ReaderStart { source } => Some(source),
             Self::Search { source } => Some(source),
             Self::Shutdown { source } => Some(source),
@@ -142,6 +162,8 @@ pub fn search_local_rust_index(
         .map_err(|source| LocalCodeSearchError::RepositoryIdentity { source })?;
     let query = CodeSearchQuery::try_new(request.query)
         .map_err(|source| LocalCodeSearchError::Query { source })?;
+    let limits = effective_search_limits(&request)
+        .map_err(|source| LocalCodeSearchError::Limits { source })?;
     let deadline = Instant::now()
         .checked_add(request.deadline)
         .ok_or(LocalCodeSearchError::DeadlineNotRepresentable)?;
@@ -150,7 +172,7 @@ pub fn search_local_rust_index(
         .map_err(|source| LocalCodeSearchError::ReaderStart { source })?;
     let result = code_search(
         &reader,
-        CodeSearchRequest::new(repository, query, request.limits, cancelled, deadline),
+        CodeSearchRequest::new(repository, query, limits, cancelled, deadline),
     );
     let shutdown = reader.shutdown(deadline);
     match (result, shutdown) {
@@ -158,6 +180,19 @@ pub fn search_local_rust_index(
         (Err(source), _) => Err(LocalCodeSearchError::Search { source }),
         (Ok(_), Err(source)) => Err(LocalCodeSearchError::Shutdown { source }),
     }
+}
+
+fn effective_search_limits(
+    request: &LocalCodeSearchRequest<'_>,
+) -> Result<CodeSearchLimits, CodeSearchLimitError> {
+    let configured_max = request
+        .configuration
+        .map_or(u64::from(request.limits.max_results()), |configuration| {
+            *configuration.preferences().query_results().effective()
+        });
+    let effective_max = u64::from(request.limits.max_results()).min(configured_max);
+    let effective_max = u16::try_from(effective_max).map_err(|_| CodeSearchLimitError)?;
+    CodeSearchLimits::try_new(effective_max, request.limits.max_output_bytes())
 }
 
 /// Searches the active local supported-language index.
@@ -196,7 +231,14 @@ mod tests {
         time::Duration,
     };
 
-    use super::{LocalCodeSearchError, LocalCodeSearchRequest, search_local_rust_index};
+    use repowitness_application::resolve_configuration;
+
+    use crate::{ConfigurationFileLayer, parse_configuration_file};
+
+    use super::{
+        LocalCodeSearchError, LocalCodeSearchRequest, effective_search_limits,
+        search_local_rust_index,
+    };
 
     const REPOSITORY_ID: &str = concat!(
         "rwi1:h:",
@@ -222,6 +264,32 @@ mod tests {
                 .with_max_results(0)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn resolved_configuration_can_only_tighten_query_results() {
+        let layer = parse_configuration_file(
+            b"schema_version = 1\n[preferences]\nquery_results = 3\n",
+            ConfigurationFileLayer::User,
+        )
+        .expect("configuration should parse");
+        let configuration = resolve_configuration(&[layer]).expect("configuration should resolve");
+        let configured = LocalCodeSearchRequest::new(Path::new("index"), REPOSITORY_ID, "symbol")
+            .with_max_results(100)
+            .expect("explicit limit should be valid")
+            .with_configuration(&configuration);
+        let tightened =
+            effective_search_limits(&configured).expect("effective limit should be valid");
+        assert_eq!(tightened.max_results(), 3);
+
+        let narrower = LocalCodeSearchRequest::new(Path::new("index"), REPOSITORY_ID, "symbol")
+            .with_max_results(2)
+            .expect("explicit limit should be valid")
+            .with_configuration(&configuration);
+        let preserved =
+            effective_search_limits(&narrower).expect("effective limit should be valid");
+        assert_eq!(preserved.max_results(), 2);
+        assert!(format!("{configured:?}").contains("configuration_digest"));
     }
 
     #[test]

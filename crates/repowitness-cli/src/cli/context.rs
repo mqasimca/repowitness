@@ -8,13 +8,21 @@ struct ContextInvocation {
 }
 
 trait RepositoryContextBuilder {
-    fn build(&self, invocation: &ContextInvocation) -> Result<ContextBuildOutput, String>;
+    fn build(
+        &self,
+        invocation: &ContextInvocation,
+        configuration: &ResolvedConfiguration,
+    ) -> Result<ContextBuildOutput, String>;
 }
 
 struct LocalRepositoryContextBuilder;
 
 impl RepositoryContextBuilder for LocalRepositoryContextBuilder {
-    fn build(&self, invocation: &ContextInvocation) -> Result<ContextBuildOutput, String> {
+    fn build(
+        &self,
+        invocation: &ContextInvocation,
+        configuration: &ResolvedConfiguration,
+    ) -> Result<ContextBuildOutput, String> {
         let repository_identity = invocation
             .repository_identity
             .to_str()
@@ -32,7 +40,8 @@ impl RepositoryContextBuilder for LocalRepositoryContextBuilder {
         .with_budget_units(invocation.budget_units)
         .map_err(|error| error.to_string())?
         .with_max_provider_results(invocation.max_provider_results)
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| error.to_string())?
+        .with_configuration(configuration);
         build_local_context(request, Arc::new(AtomicBool::new(false)))
             .map_err(|error| error.to_string())
             .and_then(mcp_context_output)

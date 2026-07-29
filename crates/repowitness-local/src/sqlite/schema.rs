@@ -1,5 +1,5 @@
 pub(super) const APPLICATION_ID: i64 = 0x5257_5031;
-pub(super) const SCHEMA_VERSION: i64 = 2;
+pub(super) const SCHEMA_VERSION: i64 = 3;
 pub(super) const MIGRATION_1_NAME: &str = "phase0_design_partner_baseline";
 pub(super) const MIGRATION_1: &str = concat!(
     include_str!("schema/baseline_1_core.sql"),
@@ -8,6 +8,13 @@ pub(super) const MIGRATION_1: &str = concat!(
 );
 pub(super) const MIGRATION_2_NAME: &str = "persist_known_parser_limitations";
 pub(super) const MIGRATION_2: &str = include_str!("schema/0002_parser_diagnostics.sql");
+pub(super) const MIGRATION_3_NAME: &str = "phase1_workspace_graph_and_retention_foundation";
+pub(super) const MIGRATION_3: &str = concat!(
+    include_str!("migrations/0003_phase1_workspace.sql"),
+    include_str!("migrations/0003_phase1_graph.sql"),
+    include_str!("migrations/0003_phase1_graph_completion.sql"),
+    include_str!("migrations/0003_phase1_retention.sql"),
+);
 
 pub(super) const RECREATE_GENERATION_SEARCH: &str = r#"
 DROP TABLE IF EXISTS generation_search;

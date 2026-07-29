@@ -68,12 +68,16 @@ Prototype PostgreSQL only when design partners need centralized concurrent acces
 
 ## Implementation status
 
-Implemented for the local Phase 0 source index through accepted ADR-0012 and
-SQLite schema version 3. Owned connections, WAL configuration, immutable
-generations, atomic activation, bounded FTS5, checkpoints, recovery, and
-validated online backup have production adapters and regression tests.
-Pinned-corpus budgets, retention/garbage collection, `doctor`, and any
-PostgreSQL prototype remain.
+Implemented for the local source index through accepted ADR-0012 and the
+provisional compatible SQLite schema version 3. Owned connections, WAL
+configuration, immutable generations, atomic activation, bounded FTS5,
+checkpoints, recovery, and validated online backup have production adapters
+and regression tests. Version 3 adds the storage and owned-writer foundation
+for bounded connected-workspace source slots, atomic immutable views,
+generation-pinned Rust syntax graphs, and explicit bounded retention.
+Read-only `doctor`, connected-workspace composition, and retention plan/apply
+adapters are implemented under proposed Phase 1 ADRs. Their release evidence
+and ratification, plus any PostgreSQL prototype, remain.
 
 ## Supersession
 

@@ -67,7 +67,11 @@ impl RepositoryMemory for RecordingManager {
         Err("must not be called".to_owned())
     }
 
-    fn recall(&self, _invocation: &MemoryRecallInvocation) -> Result<MemoryRecallOutput, String> {
+    fn recall(
+        &self,
+        _invocation: &MemoryRecallInvocation,
+        _configuration: &ResolvedConfiguration,
+    ) -> Result<MemoryRecallOutput, String> {
         Err("must not be called".to_owned())
     }
 
@@ -156,6 +160,7 @@ fn invoke_manage(arguments: &[&str], memory: &impl RepositoryMemory) -> (u8, Str
         &FakeSearcher::failure("must not be called"),
         &FakeSymbolGetter::failure("must not be called"),
         memory,
+        &LocalConfigurationLoader,
     );
     (
         code,
@@ -174,6 +179,7 @@ fn memory_manage_write_passes_explicit_paths_and_emits_safe_json() {
         revision: "11".repeat(32),
         created: true,
         canonical_bytes: 619,
+        publication: CliMemoryPublicationStatus::complete(),
     });
     let identity = identity();
     let (code, stdout, stderr) = invoke_manage(
@@ -195,7 +201,7 @@ fn memory_manage_write_passes_explicit_paths_and_emits_safe_json() {
     assert_eq!(
         stdout,
         format!(
-            "{{\"schema_version\":1,\"operation\":\"write\",\"revision_sha256\":\"{}\",\"created\":true,\"canonical_bytes\":619}}\n",
+            "{{\"schema_version\":1,\"operation\":\"write\",\"revision_sha256\":\"{}\",\"created\":true,\"canonical_bytes\":619,\"publication\":{{\"complete\":true,\"warning_count\":0,\"temporary_cleanup\":\"complete\",\"target_identity\":\"confirmed_at_final_fence\",\"records_directory_identity\":\"confirmed_at_final_fence\",\"directory_sync\":\"complete\"}}}}\n",
             "11".repeat(32)
         )
     );
@@ -532,6 +538,7 @@ fn memory_manage_rejects_invalid_receipt_revisions_without_json_injection() {
                 revision: "\"}\n{\"injected\":true".to_owned(),
                 created: true,
                 canonical_bytes: 1,
+                publication: CliMemoryPublicationStatus::complete(),
             },
             vec![
                 "memory-manage",
@@ -598,6 +605,7 @@ fn memory_manage_output_failure_returns_io_exit_code() {
                 revision: "33".repeat(32),
                 created: false,
                 canonical_bytes: 1,
+                publication: CliMemoryPublicationStatus::complete(),
             },
         ),
         EXIT_IO

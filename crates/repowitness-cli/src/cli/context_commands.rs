@@ -3,6 +3,7 @@ fn run_context_build(
     stdout: &mut impl Write,
     stderr: &mut impl Write,
     builder: &impl RepositoryContextBuilder,
+    configuration_loader: &impl ConfigurationLoader,
 ) -> u8 {
     let arguments: Vec<OsString> = args.take(MAX_CONTEXT_BUILD_ARGUMENTS + 1).collect();
     if arguments.len() > MAX_CONTEXT_BUILD_ARGUMENTS {
@@ -16,11 +17,26 @@ fn run_context_build(
     {
         return emit_output(stdout, CONTEXT_BUILD_HELP);
     }
+    let (arguments, configuration_invocation) =
+        match extract_configuration_arguments(&arguments, &[]) {
+            Ok(parsed) => parsed,
+            Err(message) => return emit_error(stderr, EXIT_USAGE, message),
+        };
     let invocation = match parse_context_build_arguments(&arguments) {
         Ok(invocation) => invocation,
         Err(message) => return emit_error(stderr, EXIT_USAGE, message),
     };
-    match builder.build(&invocation) {
+    let configuration = match configuration_loader.load(&configuration_invocation) {
+        Ok(configuration) => configuration,
+        Err(_) => {
+            return emit_error(
+                stderr,
+                EXIT_SOFTWARE,
+                "error: configuration resolution failed\n",
+            );
+        }
+    };
+    match builder.build(&invocation, &configuration) {
         Ok(report) => emit_context_report(stdout, &report),
         Err(_) => emit_error(stderr, EXIT_SOFTWARE, "error: context build failed\n"),
     }

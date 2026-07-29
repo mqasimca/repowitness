@@ -5,7 +5,7 @@
 > superseded by [ADR-0022](../adr/0022-squash-pre-release-sqlite-schema.md) and
 > the [current schema](phase0-sqlite-current-v2.md).
 
-- Status: Implemented against proposed ADR-0017
+- Status: Implemented against accepted ADR-0017
 - Date: 2026-07-27
 - Governing decision:
   [ADR-0017](../adr/0017-phase0-memory-journal.md)

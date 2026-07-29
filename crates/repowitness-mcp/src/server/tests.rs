@@ -3,10 +3,7 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
-use rmcp::{
-    ServiceExt,
-    model::{CallToolRequestParams, JsonObject},
-};
+use rmcp::{ServiceExt, model::CallToolRequestParams};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 use super::*;
@@ -23,6 +20,7 @@ struct FakeService {
     search_calls: AtomicUsize,
     context_calls: AtomicUsize,
     diagnostics_calls: AtomicUsize,
+    graph_calls: AtomicUsize,
     invalid_diagnostics: AtomicBool,
     manage_calls: AtomicUsize,
     memory_calls: AtomicUsize,
@@ -142,6 +140,7 @@ impl FakeService {
             search_calls: AtomicUsize::new(0),
             context_calls: AtomicUsize::new(0),
             diagnostics_calls: AtomicUsize::new(0),
+            graph_calls: AtomicUsize::new(0),
             invalid_diagnostics: AtomicBool::new(false),
             manage_calls: AtomicUsize::new(0),
             memory_calls: AtomicUsize::new(0),
@@ -205,6 +204,15 @@ impl RepositoryService for FakeService {
         Ok(output)
     }
 
+    fn graph_read(
+        &self,
+        request: GraphReadServiceRequest,
+        _cancelled: Arc<AtomicBool>,
+    ) -> Result<GraphReadServiceOutput, RepositoryServiceError> {
+        self.graph_calls.fetch_add(1, Ordering::Relaxed);
+        Ok(graph_output(request))
+    }
+
     fn memory_recall(
         &self,
         request: MemoryRecallServiceRequest,
@@ -238,6 +246,8 @@ impl RepositoryService for FakeService {
 }
 
 mod adversarial;
+mod compatibility;
+mod graph;
 mod memory_manage;
 
 #[test]
@@ -249,13 +259,7 @@ fn tool_contract_is_exact_sorted_versioned_and_read_only() {
             .iter()
             .map(|tool| tool.name.as_ref())
             .collect::<Vec<_>>(),
-        [
-            CODE_SEARCH_TOOL_NAME,
-            CONTEXT_BUILD_TOOL_NAME,
-            DIAGNOSTICS_TOOL_NAME,
-            MEMORY_RECALL_TOOL_NAME,
-            SYMBOL_GET_TOOL_NAME
-        ]
+        graph::native_tool_names()
     );
     for tool in server.tools.iter() {
         assert!(tool.input_schema.contains_key("properties"));
@@ -357,13 +361,7 @@ async fn initialized_client_lists_and_calls_all_tools() {
             .iter()
             .map(|tool| tool.name.as_ref())
             .collect::<Vec<_>>(),
-        [
-            CODE_SEARCH_TOOL_NAME,
-            CONTEXT_BUILD_TOOL_NAME,
-            DIAGNOSTICS_TOOL_NAME,
-            MEMORY_RECALL_TOOL_NAME,
-            SYMBOL_GET_TOOL_NAME
-        ]
+        graph::native_tool_names()
     );
 
     let search = client
@@ -417,12 +415,19 @@ async fn initialized_client_lists_and_calls_all_tools() {
             .as_ref()
             .and_then(|value| value.get("schema_version"))
             .and_then(serde_json::Value::as_u64),
-        Some(2)
+        Some(3)
     );
     let diagnostics_content = diagnostics
         .structured_content
         .as_ref()
         .expect("diagnostics structured content");
+    assert_eq!(
+        diagnostics_content
+            .get("configuration")
+            .and_then(|value| value.get("profile"))
+            .and_then(serde_json::Value::as_str),
+        Some("local")
+    );
     assert_eq!(
         diagnostics_content
             .get("syntax_error_nodes")
@@ -470,11 +475,28 @@ async fn initialized_client_lists_and_calls_all_tools() {
         .await
         .expect("symbol response");
     assert_eq!(symbol.is_error, Some(false));
+    for (tool, arguments) in graph::tool_requests() {
+        let response = client
+            .call_tool(CallToolRequestParams::new(tool).with_arguments(json_object(arguments)))
+            .await
+            .expect("graph response");
+        assert_eq!(response.is_error, Some(false), "{tool}");
+        assert_eq!(
+            response
+                .structured_content
+                .as_ref()
+                .and_then(|value| value.get("schema_version"))
+                .and_then(serde_json::Value::as_u64),
+            Some(1),
+            "{tool}"
+        );
+    }
     assert_eq!(service.search_calls.load(Ordering::Relaxed), 1);
     assert_eq!(service.context_calls.load(Ordering::Relaxed), 1);
     assert_eq!(service.diagnostics_calls.load(Ordering::Relaxed), 1);
     assert_eq!(service.memory_calls.load(Ordering::Relaxed), 1);
     assert_eq!(service.symbol_calls.load(Ordering::Relaxed), 1);
+    assert_eq!(service.graph_calls.load(Ordering::Relaxed), 6);
     assert_eq!(
         service.search_request.lock().expect("lock").as_ref(),
         Some(&("run".to_owned(), 7))
@@ -672,8 +694,4 @@ async fn read_json<R: tokio::io::AsyncRead + Unpin>(
     let bytes = reader.read_line(&mut line).await.expect("response reads");
     assert!(bytes > 0, "server closed before responding");
     serde_json::from_str(&line).expect("response is JSON")
-}
-
-fn json_object(value: serde_json::Value) -> JsonObject {
-    value.as_object().expect("fixture is an object").clone()
 }

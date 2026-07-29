@@ -12,7 +12,7 @@ use std::{
 use repowitness_application::{
     MemoryRecallError, MemoryRecallLimitError, MemoryRecallLimits, MemoryRecallQuery,
     MemoryRecallQueryError, MemoryRecallRequest, MemoryRecallResult, RepositoryIdentityTextError,
-    RepositoryIdentityTextV1, memory_recall,
+    RepositoryIdentityTextV1, ResolvedConfiguration, memory_recall,
 };
 
 use crate::{GenerationId, OwnedSqliteReader, SqliteStoreError};
@@ -45,6 +45,7 @@ pub struct LocalMemoryRecallRequest<'a> {
     repository_identity: &'a str,
     selection: LocalMemoryRecallSelection<'a>,
     limits: MemoryRecallLimits,
+    configuration: Option<&'a ResolvedConfiguration>,
     deadline: Duration,
 }
 
@@ -61,6 +62,7 @@ impl<'a> LocalMemoryRecallRequest<'a> {
             repository_identity,
             selection,
             limits: MemoryRecallLimits::default(),
+            configuration: None,
             deadline: DEFAULT_LOCAL_MEMORY_RECALL_DEADLINE,
         }
     }
@@ -82,6 +84,13 @@ impl<'a> LocalMemoryRecallRequest<'a> {
         self
     }
 
+    /// Applies a resolved configuration as an additional result-count ceiling.
+    #[must_use]
+    pub const fn with_configuration(mut self, configuration: &'a ResolvedConfiguration) -> Self {
+        self.configuration = Some(configuration);
+        self
+    }
+
     /// Replaces the end-to-end monotonic deadline duration.
     #[must_use]
     pub const fn with_deadline(mut self, deadline: Duration) -> Self {
@@ -98,6 +107,10 @@ impl fmt::Debug for LocalMemoryRecallRequest<'_> {
             .field("repository_identity", &"<redacted-identity>")
             .field("selection", &self.selection)
             .field("limits", &self.limits)
+            .field(
+                "configuration_digest",
+                &self.configuration.map(ResolvedConfiguration::digest),
+            )
             .field("deadline", &self.deadline)
             .finish()
     }
@@ -118,6 +131,11 @@ pub enum LocalMemoryRecallError {
     Query {
         /// Stable query-validation failure.
         source: MemoryRecallQueryError,
+    },
+    /// Resolved configuration could not produce a valid effective query bound.
+    Limits {
+        /// Stable limit-validation failure.
+        source: MemoryRecallLimitError,
     },
     /// The absolute deadline could not be represented.
     DeadlineNotRepresentable,
@@ -147,6 +165,7 @@ impl fmt::Display for LocalMemoryRecallError {
         formatter.write_str(match self {
             Self::RepositoryIdentity { .. } => "repository identity is invalid",
             Self::Query { .. } => "memory recall query is invalid",
+            Self::Limits { .. } => "memory recall limits are invalid",
             Self::DeadlineNotRepresentable => "memory recall deadline is not representable",
             Self::Cancelled => "memory recall was cancelled",
             Self::DeadlineExceeded => "memory recall deadline elapsed",
@@ -162,6 +181,7 @@ impl Error for LocalMemoryRecallError {
         match self {
             Self::RepositoryIdentity { source } => Some(source),
             Self::Query { source } => Some(source),
+            Self::Limits { source } => Some(source),
             Self::ReaderStart { source } | Self::Shutdown { source } => Some(source),
             Self::Recall { source } => Some(source),
             Self::DeadlineNotRepresentable | Self::Cancelled | Self::DeadlineExceeded => None,
@@ -181,6 +201,8 @@ pub fn recall_local_memory(
         LocalMemoryRecallSelection::Query(value) => MemoryRecallQuery::try_new(value)
             .map_err(|source| LocalMemoryRecallError::Query { source })?,
     };
+    let limits = effective_recall_limits(&request)
+        .map_err(|source| LocalMemoryRecallError::Limits { source })?;
     let deadline = Instant::now()
         .checked_add(request.deadline)
         .ok_or(LocalMemoryRecallError::DeadlineNotRepresentable)?;
@@ -189,7 +211,7 @@ pub fn recall_local_memory(
         .map_err(|source| LocalMemoryRecallError::ReaderStart { source })?;
     let result = memory_recall(
         &reader,
-        MemoryRecallRequest::new(repository, query, request.limits, cancelled, deadline),
+        MemoryRecallRequest::new(repository, query, limits, cancelled, deadline),
     );
     let shutdown = reader.shutdown(deadline);
     match (result, shutdown) {
@@ -197,6 +219,23 @@ pub fn recall_local_memory(
         (Err(source), _) => Err(LocalMemoryRecallError::Recall { source }),
         (Ok(_), Err(source)) => Err(LocalMemoryRecallError::Shutdown { source }),
     }
+}
+
+fn effective_recall_limits(
+    request: &LocalMemoryRecallRequest<'_>,
+) -> Result<MemoryRecallLimits, MemoryRecallLimitError> {
+    let configured_max = request
+        .configuration
+        .map_or(u64::from(request.limits.max_results()), |configuration| {
+            *configuration.preferences().query_results().effective()
+        });
+    let effective_max = u64::from(request.limits.max_results()).min(configured_max);
+    let effective_max = u16::try_from(effective_max).map_err(|_| MemoryRecallLimitError)?;
+    MemoryRecallLimits::try_new(
+        effective_max,
+        request.limits.max_output_bytes(),
+        request.limits.max_scan_bytes(),
+    )
 }
 
 fn check_control(cancelled: &AtomicBool, deadline: Instant) -> Result<(), LocalMemoryRecallError> {
@@ -212,6 +251,10 @@ fn check_control(cancelled: &AtomicBool, deadline: Instant) -> Result<(), LocalM
 #[cfg(test)]
 mod tests {
     use std::{path::Path, sync::atomic::AtomicBool};
+
+    use repowitness_application::resolve_configuration;
+
+    use crate::{ConfigurationFileLayer, parse_configuration_file};
 
     use super::*;
 
@@ -269,5 +312,39 @@ mod tests {
                 .to_string()
                 .contains("limits")
         );
+    }
+
+    #[test]
+    fn resolved_configuration_can_only_tighten_recall_results() {
+        let layer = parse_configuration_file(
+            b"schema_version = 1\n[preferences]\nquery_results = 3\n",
+            ConfigurationFileLayer::User,
+        )
+        .expect("configuration should parse");
+        let configuration = resolve_configuration(&[layer]).expect("configuration should resolve");
+        let configured = LocalMemoryRecallRequest::new(
+            Path::new("index"),
+            "identity",
+            LocalMemoryRecallSelection::All,
+        )
+        .with_max_results(100)
+        .expect("explicit result limit should be valid")
+        .with_configuration(&configuration);
+        let tightened =
+            effective_recall_limits(&configured).expect("effective limits should be valid");
+        assert_eq!(tightened.max_results(), 3);
+
+        let narrower = LocalMemoryRecallRequest::new(
+            Path::new("index"),
+            "identity",
+            LocalMemoryRecallSelection::All,
+        )
+        .with_max_results(2)
+        .expect("explicit result limit should be valid")
+        .with_configuration(&configuration);
+        let preserved =
+            effective_recall_limits(&narrower).expect("effective limits should be valid");
+        assert_eq!(preserved.max_results(), 2);
+        assert!(format!("{configured:?}").contains("configuration_digest"));
     }
 }

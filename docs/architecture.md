@@ -55,6 +55,7 @@ repository containing any mixture of Rust, Go, TypeScript, TSX, and Python:
 ```text
 Git/worktree -> contained source reads -> language-specific syntax facts
     -> immutable artifacts -> owned SQLite source generation
+    -> generation-scoped Rust syntax graph -> exact evidence/trace/impact
     -> memory correspondence/revalidation -> immutable memory projection
     -> exact source/current-memory retrieval -> bounded context or diagnostics
     -> CLI or local stdio MCP
@@ -73,15 +74,21 @@ writes.
 
 The implemented read path provides bounded literal `code_search`, exact
 `symbol_get`, current-projection `memory_recall`, deterministic
-`context_build`, and transactionally pinned `diagnostics`. These return
-evidence-bearing application results rather than storage rows. Diagnostics
-retains the raw Tree-sitter error/missing-node total and reports recognized
-parser limitations only as a non-subtractive subset. The CLI and MCP adapters
-share the same use cases, and the MCP server fixes the repository, source root,
-and database at startup. Exact source declarations use labeled UTF-8 when valid
-and display-safe, and lowercase hexadecimal otherwise. CLI report data is
-JSON-escaped into one field, while MCP keeps the representation label and
-declaration separate.
+`context_build`, transactionally pinned `diagnostics`, and native Rust graph
+status, exact-name search, site evidence, count-only architecture, trace, and
+conservative inbound impact. These return evidence-bearing application results
+rather than storage rows. Graph reads pin one immutable workspace view and
+generation and expose categorical resolution, candidate cardinality, coverage,
+and independent truncation. Diagnostics retains the raw Tree-sitter
+error/missing-node total, reports recognized parser limitations only as a
+non-subtractive subset, and identifies the graph as Rust-only and
+syntax-derived. Package-aware resolution, macro expansion, SCIP, dynamic
+dispatch, and cross-language edges remain unavailable or explicitly
+unresolved. The CLI and MCP adapters share the same use cases, and the MCP
+server fixes the repository, source root, and database at startup. Exact source
+declarations use labeled UTF-8 when valid and display-safe, and lowercase
+hexadecimal otherwise. CLI report data is JSON-escaped into one field, while
+MCP keeps the representation label and declaration separate.
 
 Memory ingestion now reaches an append-only local journal: the domain model,
 strict YAML parser, canonical digest, and deterministic writer implement
@@ -90,7 +97,7 @@ capability-contained worktree admission feeds a scope-checked application use
 case; and the owned SQLite writer atomically appends immutable versions,
 normalized children, observations, and trusted local approvals under the
 implemented
-[current schema](schemas/phase0-sqlite-current-v2.md). The immutable baseline
+[provisional version-3 schema](schemas/phase1-sqlite-provisional-v3.md). The immutable baseline
 and compatible migration chain contain Rust occurrence fingerprints, Git-validity and
 correspondence results, conflicts, categorical effective state, an atomically
 activated current-memory projection, Python as an exact fifth persisted
@@ -179,7 +186,7 @@ source digest, adapter/grammar/producer identity, semantics-affecting
 configuration, extraction schema, and canonicalization version as distinct
 logical inputs. Equality and persisted digest identity change when any key
 input changes. See the
-[Phase 0 SQLite schema](schemas/phase0-sqlite-current-v2.md).
+[provisional Phase 1 SQLite schema](schemas/phase1-sqlite-provisional-v3.md).
 
 The pure analysis layer plans immutable artifact reuse from a canonical
 manifest and a verified logical-key inventory. Planning preserves manifest
@@ -336,34 +343,60 @@ built-in defaults
     -> CLI
 ```
 
-Security and governance use monotonic merging instead of last-write-wins. Denials are unioned, allowed roots/capabilities are intersected, numeric ceilings take the strictest value, and a lower-trust layer cannot re-enable a denied operation.
+Security and governance use monotonic merging instead of last-write-wins.
+Denials are unioned, allowed language/capability sets are intersected, numeric
+ceilings take the strictest value, and a lower-trust layer cannot re-enable a
+denied operation.
 
-`config explain` reports value provenance and policy constraints. `doctor` validates paths, adapters, backend capabilities, credentials, and incompatible settings before indexing.
+`config explain` reports value provenance and policy constraints. `doctor`
+validates the resolved schema, explicit repository/database paths and
+placement, compiled adapters, SQLite capabilities and schema, and incompatible
+settings before indexing.
+
+The local composition root accepts only explicit `--user-config`,
+`--workspace-config`, and `--repository-config` paths. It reads each bounded
+file, resolves the fixed user/workspace/repository order once, and passes the
+same path-free `ResolvedConfiguration` to indexing, search, graph reads,
+context building, memory recall, diagnostics, and MCP service requests. A configuration failure
+stops before repository/database work or MCP runtime construction. Query and
+context requests can only be tightened by their caller bounds and the
+effective resolved limits. Diagnostics wire schema 3/profile 3 reports only the
+configuration digest, schema version, resolver version, and named profile; it
+never reports configuration paths or source text.
 
 ## MCP and CLI boundary
 
-The canonical surface stays compact:
+The implemented canonical local stdio MCP surface exposes exactly eleven
+read-only tools by default:
 
-- `workspace_index`
 - `code_search`
-- `symbol_get`
+- `context_build`
+- `diagnostics`
+- `graph_architecture`
+- `graph_evidence`
+- `graph_search`
+- `graph_status`
 - `graph_trace`
 - `impact_analyze`
-- `context_build`
 - `memory_recall`
-- `memory_manage`
-- `task_checkpoint`
-- `diagnostics`
+- `symbol_get`
 
-Phase 0 implements only the subset named in the [roadmap](roadmap.md). Compatibility aliases report tool-name, schema, and behavior compatibility separately. General `query_graph` compatibility is excluded until a versioned, bounded query language and safety contract is approved.
+Explicit fixed-actor startup authorization adds `memory_manage` as the twelfth
+tool. An explicit compatibility profile adds only the bounded, schema-tested
+aliases listed by ADR-0030; it does not alter the native default inventory.
+General `query_graph` compatibility is excluded until a versioned, bounded
+query language and safety contract is approved.
 
 Use a released, pinned MCP specification/SDK pair. MCP DTOs stay outside
 application and domain types. Local stdio is the Phase 0 transport. The current
-server pins MCP `2025-11-25` through `rmcp` 2.2.0 and exposes
-`context_build`, `code_search`, `diagnostics`, `memory_recall`, and
-`symbol_get` by default. It adds `memory_manage` only when startup explicitly
-enables writes with one fixed validated local actor. Repository identity,
-database, contained source root, actor, and resource policy are fixed at
+server pins MCP `2025-11-25` through `rmcp` 2.2.0 and exposes the eleven
+read-only tools listed above in deterministic name order. It adds
+`memory_manage` only when startup explicitly
+enables writes with one fixed validated local actor, the effective monotonic
+policy permits memory writes, and the requested canonical tool profile remains
+authorized. Unsupported or unauthorized profiles and effective write denials
+fail before runtime initialization. Repository identity, database, contained
+source root, actor, resolved configuration, and resource policy are fixed at
 process startup rather than accepted from tool callers. The transport rejects
 a protocol line over 3 MiB; every result envelope has a bounded encoded size.
 A four-permit semaphore bounds admitted repository work. Each synchronous

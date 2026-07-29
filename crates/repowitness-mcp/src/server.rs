@@ -29,13 +29,18 @@ use crate::{
     BoundedLineReader, CODE_SEARCH_TOOL_NAME, CONTEXT_BUILD_TOOL_NAME, CodeSearchInput,
     CodeSearchOutput, CodeSearchServiceRequest, ContextBuildInput, ContextBuildOutput,
     ContextBuildServiceRequest, DIAGNOSTICS_TOOL_NAME, DiagnosticsInput, DiagnosticsOutput,
-    DiagnosticsServiceRequest, MAX_MCP_INPUT_LINE_BYTES, MEMORY_MANAGE_TOOL_NAME,
+    DiagnosticsServiceRequest, GRAPH_ARCHITECTURE_TOOL_NAME, GRAPH_EVIDENCE_TOOL_NAME,
+    GRAPH_SEARCH_TOOL_NAME, GRAPH_STATUS_TOOL_NAME, GRAPH_TRACE_TOOL_NAME, GraphArchitectureInput,
+    GraphArchitectureOutput, GraphEvidenceInput, GraphEvidenceOutput, GraphImpactInput,
+    GraphImpactOutput, GraphReadServiceOutput, GraphReadServiceRequest, GraphSearchInput,
+    GraphSearchOutput, GraphStatusInput, GraphStatusOutput, GraphTraceInput, GraphTraceOutput,
+    IMPACT_ANALYZE_TOOL_NAME, MAX_MCP_INPUT_LINE_BYTES, MEMORY_MANAGE_TOOL_NAME,
     MEMORY_RECALL_TOOL_NAME, MemoryManageInput, MemoryManageOutput, MemoryManageServiceRequest,
     MemoryRecallInput, MemoryRecallOutput, MemoryRecallServiceRequest, RepositoryService,
     RepositoryServiceError, SYMBOL_GET_TOOL_NAME, SymbolGetInput, SymbolGetOutput,
     SymbolGetServiceRequest,
     wire::{
-        MAX_MCP_CONTEXT_OUTPUT_BYTES, MAX_MCP_DIAGNOSTICS_OUTPUT_BYTES,
+        MAX_MCP_CONTEXT_OUTPUT_BYTES, MAX_MCP_DIAGNOSTICS_OUTPUT_BYTES, MAX_MCP_GRAPH_OUTPUT_BYTES,
         MAX_MCP_MEMORY_MANAGE_OUTPUT_BYTES, MAX_MCP_MEMORY_RECALL_OUTPUT_BYTES,
         MAX_MCP_SEARCH_OUTPUT_BYTES, MAX_MCP_SYMBOL_OUTPUT_BYTES,
     },
@@ -71,6 +76,7 @@ pub struct RepoWitnessMcpServer {
     operations: Arc<Semaphore>,
     tools: Arc<[Tool]>,
     memory_writes_enabled: bool,
+    surface: McpToolSurface,
 }
 
 impl fmt::Debug for RepoWitnessMcpServer {
@@ -81,6 +87,7 @@ impl fmt::Debug for RepoWitnessMcpServer {
             .field("available_permits", &self.operations.available_permits())
             .field("tool_count", &self.tools.len())
             .field("memory_writes_enabled", &self.memory_writes_enabled)
+            .field("surface", &self.surface)
             .finish()
     }
 }
@@ -89,13 +96,38 @@ impl RepoWitnessMcpServer {
     /// Constructs the default bounded Phase 0 MCP server.
     #[must_use]
     pub fn new(service: Arc<dyn RepositoryService>) -> Self {
-        Self::with_operation_concurrency(service, DEFAULT_MCP_OPERATION_CONCURRENCY)
+        Self::configured(
+            service,
+            DEFAULT_MCP_OPERATION_CONCURRENCY,
+            false,
+            McpToolSurface::NativeV1,
+        )
     }
 
     /// Constructs a bounded server with the local memory-mutation tool enabled.
     #[must_use]
     pub fn with_memory_writes(service: Arc<dyn RepositoryService>) -> Self {
-        Self::configured(service, DEFAULT_MCP_OPERATION_CONCURRENCY, true)
+        Self::configured(
+            service,
+            DEFAULT_MCP_OPERATION_CONCURRENCY,
+            true,
+            McpToolSurface::NativeV1,
+        )
+    }
+
+    /// Constructs a bounded server with one explicit fixed tool surface.
+    #[must_use]
+    pub fn with_surface(service: Arc<dyn RepositoryService>, surface: McpToolSurface) -> Self {
+        Self::configured(service, DEFAULT_MCP_OPERATION_CONCURRENCY, false, surface)
+    }
+
+    /// Constructs a bounded server with an explicit surface and authorized memory writes.
+    #[must_use]
+    pub fn with_surface_and_memory_writes(
+        service: Arc<dyn RepositoryService>,
+        surface: McpToolSurface,
+    ) -> Self {
+        Self::configured(service, DEFAULT_MCP_OPERATION_CONCURRENCY, true, surface)
     }
 
     /// Constructs a server with an explicit positive operation-concurrency bound.
@@ -109,13 +141,19 @@ impl RepoWitnessMcpServer {
         service: Arc<dyn RepositoryService>,
         operation_concurrency: usize,
     ) -> Self {
-        Self::configured(service, operation_concurrency, false)
+        Self::configured(
+            service,
+            operation_concurrency,
+            false,
+            McpToolSurface::NativeV1,
+        )
     }
 
     fn configured(
         service: Arc<dyn RepositoryService>,
         operation_concurrency: usize,
         memory_writes_enabled: bool,
+        surface: McpToolSurface,
     ) -> Self {
         assert!(
             operation_concurrency > 0,
@@ -124,8 +162,9 @@ impl RepoWitnessMcpServer {
         Self {
             service,
             operations: Arc::new(Semaphore::new(operation_concurrency)),
-            tools: Arc::from(tools(memory_writes_enabled)),
+            tools: Arc::from(tools(memory_writes_enabled, surface)),
             memory_writes_enabled,
+            surface,
         }
     }
 
@@ -269,6 +308,9 @@ impl RepoWitnessMcpServer {
     }
 }
 
+include!("server/graph.rs");
+include!("server/compatibility.rs");
+
 impl ServerHandler for RepoWitnessMcpServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
@@ -277,20 +319,10 @@ impl ServerHandler for RepoWitnessMcpServer {
                 "repowitness",
                 env!("CARGO_PKG_VERSION"),
             ))
-            .with_instructions(if self.memory_writes_enabled {
-                "Use context_build for one deterministic budgeted source-and-memory pack. \
-                     Use code_search first when selecting an exact occurrence for symbol_get. \
-                     Use memory_recall to inspect projected records including non-current states. \
-                     The operator explicitly enabled memory_manage with one fixed local actor; \
-                     inspect exact evidence before mutation. Results are generation-pinned and \
-                     evidence-bearing."
-            } else {
-                "Use context_build for one deterministic budgeted source-and-memory pack. \
-                     Use code_search first when selecting an exact occurrence for symbol_get. \
-                     Use memory_recall to inspect projected records including non-current states. \
-                     Use diagnostics to inspect active coverage, capabilities, and limitations. \
-                     Results are generation-pinned and evidence-bearing."
-            })
+            .with_instructions(server_instructions(
+                self.surface,
+                self.memory_writes_enabled,
+            ))
     }
 
     async fn list_tools(
@@ -331,6 +363,48 @@ impl ServerHandler for RepoWitnessMcpServer {
                     .map_err(|message| McpError::invalid_params(message, None))?;
                 self.call_diagnostics(request, context).await
             }
+            GRAPH_STATUS_TOOL_NAME => {
+                let input = parse_arguments::<GraphStatusInput>(request.arguments)?;
+                let request = input
+                    .validate()
+                    .map_err(|message| McpError::invalid_params(message, None))?;
+                self.call_graph_status(request, context).await
+            }
+            GRAPH_SEARCH_TOOL_NAME => {
+                let input = parse_arguments::<GraphSearchInput>(request.arguments)?;
+                let request = input
+                    .validate()
+                    .map_err(|message| McpError::invalid_params(message, None))?;
+                self.call_graph_search(request, context).await
+            }
+            GRAPH_EVIDENCE_TOOL_NAME => {
+                let input = parse_arguments::<GraphEvidenceInput>(request.arguments)?;
+                let request = input
+                    .validate()
+                    .map_err(|message| McpError::invalid_params(message, None))?;
+                self.call_graph_evidence(request, context).await
+            }
+            GRAPH_ARCHITECTURE_TOOL_NAME => {
+                let input = parse_arguments::<GraphArchitectureInput>(request.arguments)?;
+                let request = input
+                    .validate()
+                    .map_err(|message| McpError::invalid_params(message, None))?;
+                self.call_graph_architecture(request, context).await
+            }
+            GRAPH_TRACE_TOOL_NAME => {
+                let input = parse_arguments::<GraphTraceInput>(request.arguments)?;
+                let request = input
+                    .validate()
+                    .map_err(|message| McpError::invalid_params(message, None))?;
+                self.call_graph_trace(request, context).await
+            }
+            IMPACT_ANALYZE_TOOL_NAME => {
+                let input = parse_arguments::<GraphImpactInput>(request.arguments)?;
+                let request = input
+                    .validate()
+                    .map_err(|message| McpError::invalid_params(message, None))?;
+                self.call_graph_impact(request, context).await
+            }
             MEMORY_RECALL_TOOL_NAME => {
                 let input = parse_arguments::<MemoryRecallInput>(request.arguments)?;
                 let request = input
@@ -352,6 +426,9 @@ impl ServerHandler for RepoWitnessMcpServer {
                     .map_err(|message| McpError::invalid_params(message, None))?;
                 self.call_symbol_get(request, context).await
             }
+            _ if self.surface.includes_compatibility_aliases() => {
+                self.call_compatibility_tool(request, context).await
+            }
             _ => Err(McpError::invalid_params("unknown RepoWitness tool", None)),
         }
     }
@@ -359,26 +436,36 @@ impl ServerHandler for RepoWitnessMcpServer {
 
 /// Serves the bounded local MCP protocol on process stdin/stdout until EOF.
 pub async fn serve_stdio(service: Arc<dyn RepositoryService>) -> Result<(), McpServeError> {
-    serve_stdio_configured(service, false).await
+    serve_stdio_configured(service, McpToolSurface::NativeV1, false).await
 }
 
 /// Serves local stdio with explicitly authorized memory mutation enabled.
 pub async fn serve_stdio_with_memory_writes(
     service: Arc<dyn RepositoryService>,
 ) -> Result<(), McpServeError> {
-    serve_stdio_configured(service, true).await
+    serve_stdio_configured(service, McpToolSurface::NativeV1, true).await
+}
+
+/// Serves local stdio with an explicitly selected fixed tool surface.
+pub async fn serve_stdio_with_surface(
+    service: Arc<dyn RepositoryService>,
+    surface: McpToolSurface,
+    memory_writes_enabled: bool,
+) -> Result<(), McpServeError> {
+    serve_stdio_configured(service, surface, memory_writes_enabled).await
 }
 
 async fn serve_stdio_configured(
     service: Arc<dyn RepositoryService>,
+    surface: McpToolSurface,
     memory_writes_enabled: bool,
 ) -> Result<(), McpServeError> {
     let input = BoundedLineReader::try_new(tokio::io::stdin(), MAX_MCP_INPUT_LINE_BYTES)
         .expect("the fixed MCP input-line limit is positive");
     let server = if memory_writes_enabled {
-        RepoWitnessMcpServer::with_memory_writes(service)
+        RepoWitnessMcpServer::with_surface_and_memory_writes(service, surface)
     } else {
-        RepoWitnessMcpServer::new(service)
+        RepoWitnessMcpServer::with_surface(service, surface)
     };
     let running = server
         .serve((input, tokio::io::stdout()))
@@ -391,7 +478,7 @@ async fn serve_stdio_configured(
     Ok(())
 }
 
-fn tools(memory_writes_enabled: bool) -> Vec<Tool> {
+fn tools(memory_writes_enabled: bool, surface: McpToolSurface) -> Vec<Tool> {
     let annotations = ToolAnnotations::new()
         .read_only(true)
         .destructive(false)
@@ -432,7 +519,7 @@ fn tools(memory_writes_enabled: bool) -> Vec<Tool> {
     )
     .with_input_schema::<SymbolGetInput>()
     .with_output_schema::<SymbolGetOutput>()
-    .annotate(annotations);
+    .annotate(annotations.clone());
     let memory_recall = Tool::new(
         MEMORY_RECALL_TOOL_NAME,
         "Recall bounded engineering memories from the complete active source projection with \
@@ -455,6 +542,10 @@ fn tools(memory_writes_enabled: bool) -> Vec<Tool> {
         memory_recall,
         symbol_get,
     ];
+    tools.extend(graph_tools(&annotations));
+    if surface.includes_compatibility_aliases() {
+        tools.extend(compatibility_tools(&annotations));
+    }
     if memory_writes_enabled {
         let memory_manage = Tool::new(
             MEMORY_MANAGE_TOOL_NAME,
@@ -472,8 +563,9 @@ fn tools(memory_writes_enabled: bool) -> Vec<Tool> {
                 .idempotent(false)
                 .open_world(false),
         );
-        tools.insert(3, memory_manage);
+        tools.push(memory_manage);
     }
+    tools.sort_by(|left, right| left.name.as_ref().cmp(right.name.as_ref()));
     tools
 }
 

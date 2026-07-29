@@ -402,10 +402,10 @@ sanitizer when run with a supported nightly toolchain.
 
 - Completed 2026-07-27: add capability-contained worktree admission, the
   scope-checked application import use case, and the SQLite v5 append-only
-  journal under proposed ADR-0017.
+  journal under ADR-0017.
 - Completed 2026-07-27: add SQLite v6 revalidation/current projection,
   current-memory recall, bounded context compilation, diagnostics, and thin
-  CLI/MCP adapters under proposed ADR-0018 and ADR-0019.
+  CLI/MCP adapters under ADR-0018 and ADR-0019.
 - Completed 2026-07-28: add bounded observation-only Git-tree history
   admission, bounded manual correspondence review, and deterministic
   conflict-preserving aggregation under proposed ADR-0021.

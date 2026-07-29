@@ -237,15 +237,14 @@ fn active_memory_projection(
              JOIN active_memory_projections AS active
                ON active.workspace_id = workspace.workspace_id
              JOIN memory_projection_generations AS projection
-               ON projection.projection_id = active.projection_id
-              AND projection.workspace_id = workspace.workspace_id
-              AND projection.lifecycle_state = 'complete'
-              AND projection.source_epoch = workspace.source_epoch
+              ON projection.projection_id = active.projection_id
+             AND projection.workspace_id = workspace.workspace_id
+             AND projection.lifecycle_state = 'complete'
               AND projection.index_generation_id = workspace.active_generation_id
              JOIN index_generations AS generation
                ON generation.generation_id = workspace.active_generation_id
               AND generation.workspace_id = workspace.workspace_id
-              AND generation.source_epoch = workspace.source_epoch
+              AND generation.source_epoch = projection.source_epoch
               AND generation.snapshot_digest = projection.snapshot_digest
               AND generation.lifecycle_state = 'active'
              JOIN source_snapshots AS snapshot

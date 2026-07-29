@@ -27,6 +27,26 @@ fn validate_prepared_identity(prepared: &PreparedRustIndex) -> Result<(), Sqlite
 fn delete_staging_content(transaction: &Transaction<'_>) -> Result<(), SqliteStoreError> {
     transaction
         .execute(
+            "DELETE FROM rust_graph_sites
+             WHERE artifact_digest IN (
+                SELECT artifact_digest FROM analysis_artifacts
+                WHERE lifecycle_state = 'staging'
+             )",
+            [],
+        )
+        .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
+    transaction
+        .execute(
+            "DELETE FROM rust_graph_artifacts
+             WHERE artifact_digest IN (
+                SELECT artifact_digest FROM analysis_artifacts
+                WHERE lifecycle_state = 'staging'
+             )",
+            [],
+        )
+        .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
+    transaction
+        .execute(
             "DELETE FROM artifact_fact_correspondence
              WHERE artifact_digest IN (
                 SELECT artifact_digest FROM analysis_artifacts

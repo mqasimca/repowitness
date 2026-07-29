@@ -164,6 +164,7 @@ fn index_success_reports_aggregates_and_passes_explicit_inputs() {
             "indexed_python_files=1\n",
             "reused_python_files=1\n",
             "analyzed_python_files=0\n",
+            "skipped_policy_paths=0\n",
             "skipped_unsupported_paths=2\n",
             "total_source_bytes=101\n",
             "symbol_facts=7\n",
@@ -195,6 +196,27 @@ fn index_output_rejects_known_parser_counts_above_raw_syntax_errors() {
     let mut report = index_report();
     report.syntax_error_nodes = 1;
     report.known_parser_limitation_nodes = 2;
+    let mut output = Vec::new();
+    assert_eq!(emit_index_report(&mut output, report), EXIT_SOFTWARE);
+    assert!(output.is_empty());
+}
+
+#[test]
+fn index_output_rejects_inconsistent_language_accounting() {
+    let mut report = index_report();
+    report.reused_rust_files = report.indexed_rust_files;
+    report.analyzed_rust_files = 1;
+    let mut output = Vec::new();
+    assert_eq!(emit_index_report(&mut output, report), EXIT_SOFTWARE);
+    assert!(output.is_empty());
+}
+
+#[test]
+fn index_output_rejects_overflowing_path_accounting() {
+    let mut report = index_report();
+    report.indexed_rust_files = u64::MAX;
+    report.reused_rust_files = u64::MAX;
+    report.analyzed_rust_files = 0;
     let mut output = Vec::new();
     assert_eq!(emit_index_report(&mut output, report), EXIT_SOFTWARE);
     assert!(output.is_empty());

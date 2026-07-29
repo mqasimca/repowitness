@@ -5,9 +5,11 @@ use std::{
     sync::atomic::{AtomicBool, AtomicU64, Ordering},
 };
 
-use repowitness_application::{ContextItem, ContextOmission};
+use repowitness_application::{ContextItem, ContextOmission, resolve_configuration};
 
-use crate::{LocalIndexRequest, index_local_repository};
+use crate::{
+    ConfigurationFileLayer, LocalIndexRequest, index_local_repository, parse_configuration_file,
+};
 
 use super::*;
 
@@ -98,6 +100,47 @@ fn request_bounds_and_debug_output_are_explicit_and_redacted() {
             .contains("source-provider")
     );
     assert!(request.with_budget_units(0).is_err());
+}
+
+#[test]
+fn resolved_configuration_can_only_tighten_context_bounds() {
+    let layer = parse_configuration_file(
+        b"schema_version = 1\n[preferences]\nquery_results = 3\ncontext_bytes = 1024\n",
+        ConfigurationFileLayer::User,
+    )
+    .expect("configuration should parse");
+    let configuration = resolve_configuration(&[layer]).expect("configuration should resolve");
+    let configured = LocalContextBuildRequest::new(
+        Path::new("root"),
+        Path::new("index"),
+        REPOSITORY_ID,
+        "symbol",
+    )
+    .with_budget_units(4096)
+    .expect("budget")
+    .with_max_provider_results(7)
+    .expect("provider results")
+    .with_configuration(&configuration);
+    let tightened = effective_context_request(configured).expect("configuration should tighten");
+    assert_eq!(tightened.budget.units(), 1024);
+    assert_eq!(tightened.max_provider_results, 3);
+
+    let narrower = LocalContextBuildRequest::new(
+        Path::new("root"),
+        Path::new("index"),
+        REPOSITORY_ID,
+        "symbol",
+    )
+    .with_budget_units(512)
+    .expect("budget")
+    .with_max_provider_results(2)
+    .expect("provider results")
+    .with_configuration(&configuration);
+    let preserved =
+        effective_context_request(narrower).expect("configuration should preserve tighter values");
+    assert_eq!(preserved.budget.units(), 512);
+    assert_eq!(preserved.max_provider_results, 2);
+    assert!(format!("{configured:?}").contains("configuration_digest"));
 }
 
 #[test]

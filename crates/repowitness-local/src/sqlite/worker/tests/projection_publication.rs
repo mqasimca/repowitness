@@ -135,6 +135,58 @@ fn memory_projection_publication_is_complete_atomic_and_stale_safe() {
 }
 
 #[test]
+fn reserved_epoch_keeps_active_source_and_memory_readable_but_rejects_stale_publication() {
+    let directory = TempDirectory::new();
+    let database = directory.database();
+    let (store, prepared, repository) = prepared_memory_projection_fixture(&database);
+    let projection = store
+        .publish_memory_projection(
+            prepared.clone(),
+            Arc::new(AtomicBool::new(false)),
+            deadline(),
+        )
+        .expect("baseline projection should publish");
+    store
+        .advance_source_epoch(repository, 0, 1, deadline())
+        .expect("a successor source epoch should reserve");
+
+    let reader =
+        OwnedSqliteReader::start(&database, deadline()).expect("reader should start concurrently");
+    let source = reader
+        .search(
+            repository,
+            "stable_v1",
+            SearchLimits::default(),
+            Arc::new(AtomicBool::new(false)),
+            deadline(),
+        )
+        .expect("the prior active source should remain readable");
+    assert_eq!(source.hits().len(), 1);
+    let memory = repowitness_application::memory_recall(
+        &reader,
+        repowitness_application::MemoryRecallRequest::new(
+            repository,
+            repowitness_application::MemoryRecallQuery::all(),
+            repowitness_application::MemoryRecallLimits::default(),
+            Arc::new(AtomicBool::new(false)),
+            deadline(),
+        ),
+    )
+    .expect("the prior active memory projection should remain readable");
+    assert_eq!(*memory.generation(), source.generation());
+    assert_eq!(*memory.projection(), projection.projection_id());
+    assert_eq!(memory.source_epoch(), 0);
+    assert_eq!(memory.records().len(), 1);
+
+    assert_eq!(
+        store.publish_memory_projection(prepared, Arc::new(AtomicBool::new(false)), deadline(),),
+        Err(SqliteStoreError::StaleSourceEpoch)
+    );
+    reader.shutdown(deadline()).expect("reader should stop");
+    store.shutdown(deadline()).expect("writer should stop");
+}
+
+#[test]
 fn every_memory_projection_stage_failure_preserves_the_previous_active_projection() {
     for case in MEMORY_PROJECTION_FAILURE_CASES {
         let directory = TempDirectory::new();
@@ -160,11 +212,7 @@ fn every_memory_projection_stage_failure_preserves_the_previous_active_projectio
         let (store, _) =
             OwnedSqliteIndex::start(&database, 456, deadline()).expect("store should reopen");
         let error = store
-            .publish_memory_projection(
-                prepared,
-                Arc::new(AtomicBool::new(false)),
-                deadline(),
-            )
+            .publish_memory_projection(prepared, Arc::new(AtomicBool::new(false)), deadline())
             .expect_err("injected stage failure should fail publication");
         assert_eq!(
             error,
@@ -201,7 +249,8 @@ fn prepared_memory_projection_fixture(
         AnalysisSchemaDigest::new([6; 32]),
         7,
     );
-    let (store, _) = OwnedSqliteIndex::start(database, 123, deadline()).expect("store should start");
+    let (store, _) =
+        OwnedSqliteIndex::start(database, 123, deadline()).expect("store should start");
     store
         .register_workspace(repository, 0, deadline())
         .expect("workspace should register");

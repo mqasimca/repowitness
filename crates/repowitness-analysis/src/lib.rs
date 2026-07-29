@@ -9,6 +9,7 @@ mod go_source;
 mod python_source;
 mod reconciliation;
 mod rust_correspondence;
+mod rust_graph;
 mod rust_source;
 mod typescript_source;
 
@@ -37,6 +38,25 @@ pub use rust_correspondence::{
     RustCorrespondenceSubject, RustOccurrenceFingerprint, RustPathContinuity,
     fingerprint_rust_occurrence, resolve_rust_correspondence,
     rust_correspondence_implementation_fingerprint_input,
+};
+pub use rust_graph::{
+    RUST_GRAPH_RESOLVER_PROFILE_VERSION, RUST_GRAPH_SITE_PROFILE_VERSION,
+    RUST_GRAPH_TRAVERSAL_PROFILE_VERSION, RustGraphAnalysisControl, RustGraphAnalysisError,
+    RustGraphAnalysisLimits, RustGraphDefinitionIdentity, RustGraphDefinitionOccurrence,
+    RustGraphEdgeKind, RustGraphEdgeKinds, RustGraphEnclosingDefinition, RustGraphImpact,
+    RustGraphImpactClass, RustGraphImpactRequest, RustGraphImpactResult,
+    RustGraphRelationshipCardinality, RustGraphResolution, RustGraphResolutionCandidate,
+    RustGraphResolutionControl, RustGraphResolutionCoverage, RustGraphResolutionError,
+    RustGraphResolutionEvidence, RustGraphResolutionLimits, RustGraphResolutionOutcome,
+    RustGraphSite, RustGraphSiteAnalysis, RustGraphSiteAnalyzer, RustGraphSiteEvidence,
+    RustGraphSiteIdentity, RustGraphSiteKind, RustGraphSiteOccurrence, RustGraphSiteOrdinal,
+    RustGraphSiteResolution, RustGraphTraceControl, RustGraphTraceCoverage,
+    RustGraphTraceDirection, RustGraphTraceEdge, RustGraphTraceError, RustGraphTraceLimits,
+    RustGraphTraceRequest, RustGraphTraceResult, RustGraphTraceStart, RustGraphTraceTruncation,
+    RustGraphTraversalEdge, RustGraphUnresolvedReason, analyze_rust_graph_impact,
+    resolve_rust_graph_sites, rust_graph_site_extraction_fingerprint_input,
+    rust_graph_site_implementation_fingerprint_input, rust_graph_site_traversal_fingerprint_input,
+    trace_rust_graph,
 };
 pub use rust_source::{
     RUST_ANALYSIS_PROFILE_VERSION, RustAnalysisControl, RustAnalysisError, RustAnalysisLimits,

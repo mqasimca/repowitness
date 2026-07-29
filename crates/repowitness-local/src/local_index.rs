@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     error::Error,
     fmt, fs,
     path::Path,
@@ -10,25 +11,51 @@ use std::{
 };
 
 use repowitness_application::{
-    PublishRustIndexError, PublishRustIndexRequest, RepositoryIdentityTextError,
-    RepositoryIdentityTextV1, RustArtifactIdentity, RustIndexCoverage, RustSourceSnapshotIdentity,
-    SourceArtifactIdentities, SourceLanguage, phase0_source_artifact_identities,
-    phase0_source_snapshot_profile, publish_rust_index,
+    CompleteStagedSourceSlotIndexError, ConfigurationResolutionError, PackageScope,
+    PublishSourceSlotIndexRequest, RepositoryIdentityTextError, RepositoryIdentityTextV1,
+    ResolvedConfiguration, RustArtifactIdentity, RustIndexCoverage, RustSourceSnapshotIdentity,
+    SourceArtifactIdentities, SourceLanguage, SourceSlotFinalFence,
+    complete_staged_source_slot_index, hash_source_snapshot, phase0_source_artifact_identities,
+    phase0_source_snapshot_profile, phase1_rust_graph_artifact_identity, resolve_configuration,
+    stage_source_slot_index,
 };
 use repowitness_domain::{AnalysisSchemaDigest, ConfigurationDigest, ProducerManifestDigest};
 use sha2::{Digest, Sha256};
 
 use crate::{
     GenerationId, LocalRustIndexError, LocalRustIndexLimits, OwnedSqliteIndex, OwnedSqliteReader,
-    SqliteStoreError, contained_source::FileIdentity, git_paths::discovered_worktree_root,
-    rust_index::prepare_local_source_index_excluding_identity_with_reuse,
+    SourceSlotEpoch, SqliteStoreError,
+    contained_source::FileIdentity,
+    git_paths::discovered_worktree_root,
+    local_graph_index::{
+        LocalRustGraphProjectionError, PreparedLocalRustGraphProjection,
+        prepare_local_rust_graph_projection, prepare_local_rust_graph_projection_for_source_slot,
+    },
+    rust_index::{
+        LocalSourceIndexReuseRequest, LocalSourceSnapshotFenceError, SourceLanguageSelection,
+        prepare_local_source_index_excluding_identity_with_full_reuse,
+    },
     sqlite::SqliteMutationLease,
 };
 
-const ONE_SHOT_SOURCE_EPOCH: u64 = 0;
+mod final_fence;
+use final_fence::LocalSourceSlotFinalFence;
+pub(crate) mod connected_workspace;
+pub(crate) mod polling_runner;
+mod post_commit;
+
+const INITIAL_SOURCE_EPOCH: u64 = 0;
 const LOCAL_PRODUCER_DOMAIN: &[u8] = b"RepoWitness\0phase0-local-source-producer\0";
 const LOCAL_SNAPSHOT_PRODUCER_DOMAIN: &[u8] =
     b"RepoWitness\0phase0-local-supported-languages-snapshot-producer\0";
+const LOCAL_SNAPSHOT_CONFIGURATION_DOMAIN: &[u8] =
+    b"RepoWitness\0phase1-local-resolved-snapshot-configuration\0";
+const LOCAL_SNAPSHOT_CONFIGURATION_VERSION: u32 = 1;
+const CONNECTED_SCOPE_CONFIGURATION_DOMAIN: &[u8] =
+    b"RepoWitness\0phase1-connected-scope-configuration\0";
+const CONNECTED_SCOPE_ARTIFACT_CONFIGURATION_DOMAIN: &[u8] =
+    b"RepoWitness\0phase1-connected-scope-artifact-configuration\0";
+const CONNECTED_SCOPE_CONFIGURATION_VERSION: u32 = 1;
 const LOCAL_PRODUCER_VERSION: u32 = 4;
 
 /// Complete explicit input for one bounded local Phase 0 indexing operation.
@@ -39,6 +66,7 @@ pub struct LocalIndexRequest<'a> {
     repository_identity: &'a str,
     migration_applied_at_unix_ms: u64,
     limits: LocalRustIndexLimits,
+    configuration: Option<&'a ResolvedConfiguration>,
 }
 
 impl fmt::Debug for LocalIndexRequest<'_> {
@@ -53,6 +81,10 @@ impl fmt::Debug for LocalIndexRequest<'_> {
                 &self.migration_applied_at_unix_ms,
             )
             .field("limits", &self.limits)
+            .field(
+                "configuration_digest",
+                &self.configuration.map(ResolvedConfiguration::digest),
+            )
             .finish()
     }
 }
@@ -72,6 +104,7 @@ impl<'a> LocalIndexRequest<'a> {
             repository_identity,
             migration_applied_at_unix_ms,
             limits: LocalRustIndexLimits::default(),
+            configuration: None,
         }
     }
 
@@ -79,6 +112,13 @@ impl<'a> LocalIndexRequest<'a> {
     #[must_use]
     pub const fn with_limits(mut self, limits: LocalRustIndexLimits) -> Self {
         self.limits = limits;
+        self
+    }
+
+    /// Applies one fully resolved, path-free semantic configuration.
+    #[must_use]
+    pub const fn with_configuration(mut self, configuration: &'a ResolvedConfiguration) -> Self {
+        self.configuration = Some(configuration);
         self
     }
 }
@@ -95,6 +135,7 @@ pub struct LocalIndexReport {
     indexed_typescript_files: u64,
     indexed_tsx_files: u64,
     indexed_python_files: u64,
+    skipped_policy_paths: u64,
     skipped_unsupported_paths: u64,
     total_source_bytes: u64,
     total_facts: u64,
@@ -165,6 +206,12 @@ impl LocalIndexReport {
     #[must_use]
     pub const fn indexed_python_files(self) -> u64 {
         self.indexed_python_files
+    }
+
+    /// Returns supported-language paths excluded by resolved policy.
+    #[must_use]
+    pub const fn skipped_policy_paths(self) -> u64 {
+        self.skipped_policy_paths
     }
 
     /// Returns discovered paths outside the supported language scope.
@@ -272,6 +319,13 @@ pub enum LocalIndexError {
         /// Stable validation failure without identity bytes.
         source: RepositoryIdentityTextError,
     },
+    /// The built-in semantic configuration could not be resolved.
+    ConfigurationResolution {
+        /// Stable path-free resolution failure.
+        source: ConfigurationResolutionError,
+    },
+    /// Effective configuration and compiled indexing limits did not compose.
+    InvalidEffectiveConfiguration,
     /// The end-to-end monotonic deadline could not be represented.
     DeadlineNotRepresentable,
     /// Repository discovery, source capture, or analysis failed.
@@ -307,6 +361,21 @@ pub enum LocalIndexError {
         /// Stable SQLite boundary failure.
         source: SqliteStoreError,
     },
+    /// Complete generation-scoped Rust graph preparation failed.
+    GraphPreparation {
+        /// Stable path-free graph preparation failure.
+        source: LocalRustGraphProjectionError,
+    },
+    /// Rust graph staging failed without activation.
+    GraphPublicationStaging {
+        /// Stable SQLite boundary failure.
+        source: SqliteStoreError,
+    },
+    /// The authoritative post-staging source snapshot fence failed.
+    FinalSourceFence {
+        /// Stable path-free source-fence failure.
+        source: LocalSourceSnapshotFenceError,
+    },
     /// Atomic generation activation failed.
     PublicationActivation {
         /// Stable SQLite boundary failure.
@@ -328,6 +397,10 @@ impl fmt::Display for LocalIndexError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
             Self::RepositoryIdentity { .. } => "repository identity is invalid",
+            Self::ConfigurationResolution { .. } => "local index configuration resolution failed",
+            Self::InvalidEffectiveConfiguration => {
+                "local index configuration is incompatible with compiled limits"
+            }
             Self::DeadlineNotRepresentable => "local index deadline is not representable",
             Self::Preparation { .. } => "local source index preparation failed",
             Self::DatabasePathUnavailable => "local index database path is unavailable",
@@ -342,6 +415,9 @@ impl fmt::Display for LocalIndexError {
             Self::ArtifactReuse { .. } => "local index reusable artifact loading failed",
             Self::WorkspaceRegistration { .. } => "local index workspace registration failed",
             Self::PublicationStaging { .. } => "local index generation staging failed",
+            Self::GraphPreparation { .. } => "local Rust graph preparation failed",
+            Self::GraphPublicationStaging { .. } => "local Rust graph staging failed",
+            Self::FinalSourceFence { .. } => "local index final source fence failed",
             Self::PublicationActivation { .. } => "local index generation activation failed",
             Self::Checkpoint { .. } => "local index checkpoint failed after activation",
             Self::Shutdown { .. } => "local index writer shutdown failed after activation",
@@ -353,15 +429,20 @@ impl Error for LocalIndexError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::RepositoryIdentity { source } => Some(source),
+            Self::ConfigurationResolution { source } => Some(source),
             Self::Preparation { source } => Some(source),
             Self::StoreStartup { source }
             | Self::ArtifactReuse { source }
             | Self::WorkspaceRegistration { source }
             | Self::PublicationStaging { source }
+            | Self::GraphPublicationStaging { source }
             | Self::PublicationActivation { source }
             | Self::Checkpoint { source }
             | Self::Shutdown { source } => Some(source),
-            Self::DeadlineNotRepresentable
+            Self::GraphPreparation { source } => Some(source),
+            Self::FinalSourceFence { source } => Some(source),
+            Self::InvalidEffectiveConfiguration
+            | Self::DeadlineNotRepresentable
             | Self::DatabasePathUnavailable
             | Self::DatabaseInsideWorktree
             | Self::DatabaseHasMultipleLinks
@@ -380,7 +461,7 @@ pub fn index_local_rust_repository(
     request: LocalIndexRequest<'_>,
     cancelled: Arc<AtomicBool>,
 ) -> Result<LocalIndexReport, LocalIndexError> {
-    index_local_rust_repository_with_hook(request, cancelled, || {})
+    index_local_rust_repository_with_hooks(request, cancelled, || {}, || {})
 }
 
 /// Language-neutral entry point for the local supported-language index.
@@ -391,107 +472,168 @@ pub fn index_local_repository(
     index_local_rust_repository(request, cancelled)
 }
 
+struct PreparedLocalIndexPublication {
+    identity: RustSourceSnapshotIdentity,
+    prepared: repowitness_application::PreparedRustIndex,
+    graph: PreparedLocalRustGraphProjection,
+    coverage: RustIndexCoverage,
+}
+
+#[cfg(test)]
 fn index_local_rust_repository_with_hook(
     request: LocalIndexRequest<'_>,
     cancelled: Arc<AtomicBool>,
     after_lease: impl FnOnce(),
 ) -> Result<LocalIndexReport, LocalIndexError> {
-    let repository = RepositoryIdentityTextV1::decode(request.repository_identity)
-        .map_err(|source| LocalIndexError::RepositoryIdentity { source })?;
-    let deadline = Instant::now()
-        .checked_add(request.limits.deadline())
-        .ok_or(LocalIndexError::DeadlineNotRepresentable)?;
-    if cancelled.load(Ordering::Relaxed) {
-        return Err(LocalIndexError::Preparation {
-            source: LocalRustIndexError::Cancelled,
-        });
-    }
-    let worktree = discovered_worktree_root(request.repository_root).map_err(|source| {
-        LocalIndexError::Preparation {
-            source: LocalRustIndexError::Discovery { source },
-        }
-    })?;
-    let database = validated_database_outside_worktree(&worktree, request.database)?;
-    let mutation_lease = SqliteMutationLease::acquire(&database, deadline)
-        .map_err(|source| LocalIndexError::StoreStartup { source })?;
-    let database_identity = database_alias_identity(&database)?;
-    after_lease();
-    let preparation_limits = remaining_preparation_limits(request.limits, deadline)?;
-    let artifacts = phase0_local_source_artifact_identities();
-    let preparation = prepare_with_artifact_reuse(
-        &worktree,
-        &database,
-        database_identity.as_ref(),
-        artifacts,
-        preparation_limits,
-        &cancelled,
-        deadline,
-    )?;
-    let report_input = ReportInput::from_preparation(&preparation);
-    let snapshot_profile = phase0_local_source_snapshot_profile(artifacts);
-    let identity = RustSourceSnapshotIdentity::new_supported_languages(
-        repository,
-        preparation.git_state(),
-        preparation.worktree_state(),
-        snapshot_profile.configuration,
-        snapshot_profile.producer_manifest,
-        snapshot_profile.analysis_schema,
-        snapshot_profile.canonicalization_version,
-    );
-    let coverage = RustIndexCoverage::new(
-        report_input.indexed_files,
-        report_input.skipped_unsupported_paths,
-        report_input.syntax_error_nodes,
-        0,
-    );
-    let prepared = preparation.into_prepared();
-    let confirmed_database_identity = database_alias_identity(&database)?;
-    if confirmed_database_identity != database_identity {
-        return Err(LocalIndexError::DatabaseChangedDuringIndexing);
-    }
-    drop(confirmed_database_identity);
+    index_local_rust_repository_with_hooks(request, cancelled, after_lease, || {})
+}
 
-    let (writer, startup) = OwnedSqliteIndex::start_with_lease(
-        mutation_lease,
-        database_identity,
-        request.migration_applied_at_unix_ms,
-        Arc::clone(&cancelled),
+fn index_local_rust_repository_with_hooks(
+    request: LocalIndexRequest<'_>,
+    cancelled: Arc<AtomicBool>,
+    after_lease: impl FnOnce(),
+    after_graph_staging: impl FnOnce(),
+) -> Result<LocalIndexReport, LocalIndexError> {
+    let mut after_lease = Some(after_lease);
+    let mut after_graph_staging = Some(after_graph_staging);
+    match index_local_repository_with_mode_and_control(
+        request,
+        cancelled,
+        false,
+        move |phase| match phase {
+            LocalIndexPhase::MutationLeaseAcquired => {
+                if let Some(hook) = after_lease.take() {
+                    hook();
+                }
+            }
+            LocalIndexPhase::GraphStaged => {
+                if let Some(hook) = after_graph_staging.take() {
+                    hook();
+                }
+            }
+            LocalIndexPhase::WriterStarted | LocalIndexPhase::PublicationCommitted => {}
+        },
+        |_, deadline| deadline,
+    )? {
+        LocalReconciliationOutcome::Published(report) => Ok(report),
+        LocalReconciliationOutcome::Resumed(_) | LocalReconciliationOutcome::Unchanged(_) => {
+            unreachable!("one-shot indexing always publishes a fresh generation")
+        }
+    }
+}
+
+#[cfg(test)]
+fn index_local_rust_repository_with_control_hooks(
+    request: LocalIndexRequest<'_>,
+    cancelled: Arc<AtomicBool>,
+    after_phase: impl FnMut(LocalIndexPhase),
+    maintenance_deadline: impl FnMut(post_commit::PostCommitMaintenancePhase, Instant) -> Instant,
+) -> Result<LocalIndexReport, LocalIndexError> {
+    match index_local_repository_with_mode_and_control(
+        request,
+        cancelled,
+        false,
+        after_phase,
+        maintenance_deadline,
+    )? {
+        LocalReconciliationOutcome::Published(report) => Ok(report),
+        LocalReconciliationOutcome::Resumed(_) | LocalReconciliationOutcome::Unchanged(_) => {
+            unreachable!("one-shot indexing always publishes a fresh generation")
+        }
+    }
+}
+
+fn publish_prepared_local_index(
+    writer: &OwnedSqliteIndex,
+    repository: repowitness_domain::RepositoryIdentityDigest,
+    publication: PreparedLocalIndexPublication,
+    final_fence: &LocalSourceSlotFinalFence<'_>,
+    after_graph_staging: impl FnOnce(),
+    cancelled: &Arc<AtomicBool>,
+    deadline: Instant,
+) -> Result<(GenerationId, SourceSlotEpoch), LocalIndexError> {
+    let persisted_epoch = writer
+        .ensure_workspace(repository, INITIAL_SOURCE_EPOCH, deadline)
+        .map_err(|source| LocalIndexError::WorkspaceRegistration { source })?;
+    publish_prepared_local_index_at_epoch(
+        writer,
+        repository,
+        persisted_epoch,
+        publication,
+        final_fence,
+        after_graph_staging,
+        cancelled,
         deadline,
     )
-    .map_err(map_store_startup_error)?;
-    writer
-        .register_workspace(repository, ONE_SHOT_SOURCE_EPOCH, deadline)
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "publication identity, epoch, fence, hook, and control remain explicit"
+)]
+fn publish_prepared_local_index_at_epoch(
+    writer: &OwnedSqliteIndex,
+    repository: repowitness_domain::RepositoryIdentityDigest,
+    persisted_epoch: SourceSlotEpoch,
+    publication: PreparedLocalIndexPublication,
+    final_fence: &LocalSourceSlotFinalFence<'_>,
+    after_graph_staging: impl FnOnce(),
+    cancelled: &Arc<AtomicBool>,
+    deadline: Instant,
+) -> Result<(GenerationId, SourceSlotEpoch), LocalIndexError> {
+    let connected_workspace =
+        repowitness_domain::ConnectedWorkspaceId::for_single_repository(repository);
+    let source_slot = repowitness_domain::SourceSlotId::for_repository(repository);
+    let reserved_epoch = writer
+        .reserve_source_slot_epoch(
+            connected_workspace,
+            source_slot,
+            persisted_epoch,
+            Arc::clone(cancelled),
+            deadline,
+        )
         .map_err(|source| LocalIndexError::WorkspaceRegistration { source })?;
-    let publication = publish_rust_index(
-        &writer,
-        PublishRustIndexRequest::new(
-            ONE_SHOT_SOURCE_EPOCH,
-            identity,
-            prepared,
-            coverage,
-            Arc::clone(&cancelled),
+    let staged = stage_source_slot_index(
+        writer,
+        PublishSourceSlotIndexRequest::new(
+            connected_workspace,
+            source_slot,
+            reserved_epoch,
+            publication.identity,
+            publication.prepared,
+            publication.coverage,
+            Arc::clone(cancelled),
             deadline,
         ),
     )
-    .map_err(|error| match error {
-        PublishRustIndexError::Stage(source) => LocalIndexError::PublicationStaging { source },
-        PublishRustIndexError::Activate(source) => {
-            LocalIndexError::PublicationActivation { source }
-        }
-    })?;
+    .map_err(|source| LocalIndexError::PublicationStaging { source })?;
+    let generation = staged.generation();
+    let graph = publication
+        .graph
+        .into_generation(generation, cancelled.as_ref(), deadline)
+        .map_err(|source| LocalIndexError::GraphPreparation { source })?;
     writer
-        .checkpoint(deadline)
-        .map_err(|source| LocalIndexError::Checkpoint { source })?;
+        .stage_rust_graph(generation, graph, Arc::clone(cancelled), deadline)
+        .map_err(|source| LocalIndexError::GraphPublicationStaging { source })?;
+    after_graph_staging();
+    let completed = complete_staged_source_slot_index(writer, final_fence, staged).map_err(
+        |error| match error {
+            CompleteStagedSourceSlotIndexError::FinalFence(source) => {
+                LocalIndexError::FinalSourceFence { source }
+            }
+            CompleteStagedSourceSlotIndexError::Complete(source) => {
+                LocalIndexError::PublicationActivation { source }
+            }
+        },
+    )?;
     writer
-        .shutdown(deadline)
-        .map_err(|source| LocalIndexError::Shutdown { source })?;
-
-    Ok(activated_report(
-        publication.generation(),
-        publication.source_epoch(),
-        startup.recovered_generations(),
-        report_input,
-    ))
+        .activate(
+            completed.generation(),
+            completed.source_epoch().get(),
+            deadline,
+        )
+        .map_err(|source| LocalIndexError::PublicationActivation { source })?;
+    Ok((completed.generation(), completed.source_epoch()))
 }
 
 fn map_store_startup_error(source: SqliteStoreError) -> LocalIndexError {
@@ -501,6 +643,7 @@ fn map_store_startup_error(source: SqliteStoreError) -> LocalIndexError {
     }
 }
 
+include!("local_index/reconciliation.rs");
 include!("local_index/preparation.rs");
 
 #[cfg(test)]

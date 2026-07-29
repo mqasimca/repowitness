@@ -1,4 +1,5 @@
 use std::error::Error;
+#[cfg(unix)]
 use std::ffi::OsString;
 use std::fmt;
 use std::io::{self, Read};

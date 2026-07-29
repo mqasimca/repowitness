@@ -1,0 +1,471 @@
+#!/bin/sh
+set -eu
+
+MANIFEST=benchmarks/phase1/manifest.json
+MAX_CAPTURED_OUTPUT_BYTES=1048576
+
+# Runs one command while retaining at most one MiB of combined stdout and
+# stderr. Continue draining both streams after the limit so a verbose child
+# cannot block, then report the capture as failed without exposing its output.
+run_bounded_capture() {
+    stdout_path=$1
+    stderr_path=$2
+    shift 2
+    perl -MIPC::Open3 -MIO::Select -MSymbol=gensym -e '
+        use strict;
+        use warnings;
+
+        my ($stdout_path, $stderr_path, $maximum, @command) = @ARGV;
+        exit 1 if !defined($maximum) || $maximum !~ /\A[1-9][0-9]*\z/;
+        my ($stdin, $stdout);
+        my $stderr = gensym;
+        my $pid = eval { open3($stdin, $stdout, $stderr, @command) };
+        exit 1 if $@ || !defined $pid;
+        close $stdin;
+
+        open my $stdout_file, ">:raw", $stdout_path or exit 1;
+        open my $stderr_file, ">:raw", $stderr_path or exit 1;
+        my $ready = IO::Select->new($stdout, $stderr);
+        my $captured = 0;
+        my $over_limit = 0;
+        while ($ready->count()) {
+            for my $handle ($ready->can_read()) {
+                my $chunk = q{};
+                my $read = sysread($handle, $chunk, 8192);
+                if (!defined $read) {
+                    $ready->remove($handle);
+                    next;
+                }
+                if ($read == 0) {
+                    $ready->remove($handle);
+                    next;
+                }
+                my $remaining = $maximum - $captured;
+                if ($remaining > 0) {
+                    my $retained = $read > $remaining ? $remaining : $read;
+                    my $target = fileno($handle) == fileno($stdout)
+                        ? $stdout_file
+                        : $stderr_file;
+                    print {$target} substr($chunk, 0, $retained) or exit 1;
+                    $captured += $retained;
+                }
+                $over_limit = 1 if $read > $remaining;
+            }
+        }
+        close $stdout_file or exit 1;
+        close $stderr_file or exit 1;
+        waitpid($pid, 0);
+        exit 1 if $over_limit || $? != 0;
+    ' "$stdout_path" "$stderr_path" "$MAX_CAPTURED_OUTPUT_BYTES" "$@"
+}
+
+# Runs the fixed sanitized Git adapter through the same bounded capture as every
+# other external command. The Perl program is static; corpus-derived values are
+# passed only as argv, never interpolated into shell source.
+run_bounded_benchmark_git() {
+    stdout_path=$1
+    stderr_path=$2
+    shift 2
+    run_bounded_capture "$stdout_path" "$stderr_path" perl -e '
+        delete @ENV{qw(
+          GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY
+          GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_SHALLOW_FILE GIT_COMMON_DIR
+          GIT_CONFIG GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS GIT_NAMESPACE
+          GIT_IMPLICIT_WORK_TREE GIT_CEILING_DIRECTORIES
+          GIT_DISCOVERY_ACROSS_FILESYSTEM GIT_REFERENCE_BACKEND
+          GIT_LITERAL_PATHSPECS GIT_GLOB_PATHSPECS GIT_NOGLOB_PATHSPECS
+          GIT_ICASE_PATHSPECS GIT_EXTERNAL_DIFF GIT_EXEC_PATH GIT_TEMPLATE_DIR
+          GIT_TRACE GIT_TRACE2 GIT_TRACE2_EVENT GIT_TRACE2_PERF
+        )};
+        $ENV{GIT_CONFIG_NOSYSTEM} = q{1};
+        $ENV{GIT_CONFIG_GLOBAL} = q{/dev/null};
+        $ENV{GIT_CONFIG_SYSTEM} = q{/dev/null};
+        $ENV{GIT_TERMINAL_PROMPT} = q{0};
+        $ENV{GCM_INTERACTIVE} = q{never};
+        $ENV{GIT_OPTIONAL_LOCKS} = q{0};
+        $ENV{GIT_NO_REPLACE_OBJECTS} = q{1};
+        $ENV{GIT_PAGER} = q{cat};
+        $ENV{PAGER} = q{cat};
+        exec {q{git}} q{git}, q{--no-pager}, q{--literal-pathspecs},
+          q{-c}, q{core.fsmonitor=false}, q{-c}, q{core.hooksPath=/dev/null},
+          q{-c}, q{core.excludesFile=/dev/null}, q{-c}, q{core.untrackedCache=false},
+          q{-c}, q{diff.external=}, q{-c}, q{protocol.file.allow=always}, @ARGV;
+        exit 127;
+    ' -- "$@"
+}
+
+if [ "$#" -ne 1 ]; then
+    echo "usage: ./scripts/run-phase1-benchmark <public-corpus>" >&2
+    exit 64
+fi
+
+CORPUS_ROOT=$1
+
+BENCHMARK_TEMP=$(mktemp -d "${TMPDIR:-/tmp}/repowitness-phase1.XXXXXXXX")
+cleanup() {
+    rm -rf "$BENCHMARK_TEMP"
+}
+trap cleanup EXIT HUP INT TERM
+
+if ! run_bounded_capture \
+    "$BENCHMARK_TEMP/manifest-check.output" "$BENCHMARK_TEMP/manifest-check.log" \
+    ./scripts/check-benchmarks
+then
+    echo "error: benchmark manifest validation failed" >&2
+    exit 65
+fi
+if ! run_bounded_capture \
+    "$BENCHMARK_TEMP/manifest-values.output" "$BENCHMARK_TEMP/manifest-read.log" \
+    perl -MJSON::PP -e '
+    use strict;
+    use warnings;
+
+    my ($path) = @ARGV;
+    my @expected = qw(
+      atomic-two-source-publication
+      same-repository-two-worktrees
+      quiet-polling-no-publication
+      moving-selector-final-fence
+      package-scope-clean-incremental-equivalence
+      native-graph-read-suite
+      compatibility-schema-suite
+      retention-plan-apply-restart
+    );
+    open my $handle, "<:raw", $path or die "cannot read benchmark manifest\n";
+    local $/;
+    my $manifest = decode_json(<$handle>);
+    close $handle;
+    my $corpora = $manifest->{corpora};
+    die "benchmark corpus profile is invalid\n"
+      if ref($corpora) ne "ARRAY" || @$corpora != 1;
+    my $revision = $corpora->[0]->{revision};
+    die "benchmark corpus revision is invalid\n"
+      if !defined($revision) || ref($revision) || $revision !~ /\A[0-9a-f]{40}\z/;
+    my $workloads = $manifest->{phase1_workloads};
+    die "benchmark workload profile is invalid\n"
+      if ref($workloads) ne "ARRAY" || @$workloads != @expected;
+    my %by_id;
+    for my $workload (@$workloads) {
+        die "benchmark workload is invalid\n" if ref($workload) ne "HASH";
+        my $id = $workload->{id};
+        my $iterations = $workload->{iterations};
+        die "benchmark workload is invalid\n"
+          if !defined($id) || ref($id) || exists($by_id{$id})
+          || !defined($iterations) || ref($iterations)
+          || $iterations !~ /\A[1-9][0-9]*\z/ || $iterations > 1000;
+        $by_id{$id} = $iterations;
+    }
+    die "benchmark workload profile differs from the runner\n"
+      if join("\0", sort keys %by_id) ne join("\0", sort @expected);
+    print join " ", $revision, map { $_, $by_id{$_} } @expected;
+' -- "$MANIFEST"
+then
+    echo "error: benchmark manifest execution profile was invalid" >&2
+    exit 65
+fi
+EXECUTION_VALUES=$(cat "$BENCHMARK_TEMP/manifest-values.output")
+set -f
+set -- $EXECUTION_VALUES
+set +f
+if [ "$#" -ne 17 ]; then
+    echo "error: benchmark manifest execution profile was incomplete" >&2
+    exit 65
+fi
+
+EXPECTED_REVISION=$1
+ATOMIC_WORKLOAD=$2
+ATOMIC_RUNS=$3
+TWO_WORKTREE_WORKLOAD=$4
+TWO_WORKTREE_RUNS=$5
+QUIET_WORKLOAD=$6
+QUIET_RUNS=$7
+SELECTOR_WORKLOAD=$8
+SELECTOR_RUNS=$9
+shift 9
+SCOPE_WORKLOAD=$1
+SCOPE_RUNS=$2
+GRAPH_WORKLOAD=$3
+GRAPH_RUNS=$4
+COMPATIBILITY_WORKLOAD=$5
+COMPATIBILITY_RUNS=$6
+RETENTION_WORKLOAD=$7
+RETENTION_RUNS=$8
+
+if ! run_bounded_benchmark_git \
+    "$BENCHMARK_TEMP/corpus-revision.output" "$BENCHMARK_TEMP/corpus-preflight.log" \
+    -C "$CORPUS_ROOT" rev-parse --verify HEAD
+then
+    echo "error: benchmark corpus could not be verified" >&2
+    exit 65
+fi
+ACTUAL_REVISION=$(cat "$BENCHMARK_TEMP/corpus-revision.output")
+if [ "$ACTUAL_REVISION" != "$EXPECTED_REVISION" ]; then
+    echo "error: corpus revision does not match the Phase 1 manifest" >&2
+    exit 65
+fi
+if ! run_bounded_benchmark_git \
+    "$BENCHMARK_TEMP/corpus-status.output" "$BENCHMARK_TEMP/corpus-status.log" \
+    -C "$CORPUS_ROOT" status --porcelain --untracked-files=all
+then
+    echo "error: benchmark corpus could not be verified" >&2
+    exit 65
+fi
+if [ -s "$BENCHMARK_TEMP/corpus-status.output" ]; then
+    echo "error: corpus worktree must be clean" >&2
+    exit 65
+fi
+
+WORKTREE_ONE=$BENCHMARK_TEMP/worktree-one
+WORKTREE_TWO=$BENCHMARK_TEMP/worktree-two
+DATABASE=$BENCHMARK_TEMP/index.sqlite3
+ATOMIC_MANIFEST=$BENCHMARK_TEMP/atomic-workspace.toml
+TWO_WORKTREE_MANIFEST=$BENCHMARK_TEMP/two-worktree-workspace.toml
+CLI=target/release/repowitness
+
+if ! run_bounded_benchmark_git \
+    "$BENCHMARK_TEMP/clone-one.output" "$BENCHMARK_TEMP/clone-one.errors" \
+    clone --quiet --no-local --no-checkout -- "$CORPUS_ROOT" "$WORKTREE_ONE" \
+    || ! run_bounded_benchmark_git \
+        "$BENCHMARK_TEMP/checkout-one.output" "$BENCHMARK_TEMP/checkout-one.errors" \
+        -C "$WORKTREE_ONE" checkout --quiet --detach "$EXPECTED_REVISION" \
+    || ! run_bounded_benchmark_git \
+        "$BENCHMARK_TEMP/clone-two.output" "$BENCHMARK_TEMP/clone-two.errors" \
+        clone --quiet --no-local --no-checkout -- "$CORPUS_ROOT" "$WORKTREE_TWO" \
+    || ! run_bounded_benchmark_git \
+        "$BENCHMARK_TEMP/checkout-two.output" "$BENCHMARK_TEMP/checkout-two.errors" \
+        -C "$WORKTREE_TWO" checkout --quiet --detach "$EXPECTED_REVISION"
+then
+    echo "error: benchmark corpus setup failed" >&2
+    exit 65
+fi
+
+if ! run_bounded_capture "$BENCHMARK_TEMP/build.output" "$BENCHMARK_TEMP/build.log" \
+    cargo build --release --locked -p repowitness-cli --bin repowitness
+then
+    echo "error: benchmark runner build failed" >&2
+    exit 70
+fi
+if ! run_bounded_capture \
+    "$BENCHMARK_TEMP/local-tests-build.output" "$BENCHMARK_TEMP/local-tests-build.log" \
+    cargo test -p repowitness-local --release --locked --no-run \
+    || ! run_bounded_capture \
+        "$BENCHMARK_TEMP/cli-tests-build.output" "$BENCHMARK_TEMP/cli-tests-build.log" \
+        cargo test -p repowitness-cli --release --locked --test cli_contract --no-run \
+    || ! run_bounded_capture \
+        "$BENCHMARK_TEMP/mcp-tests-build.output" "$BENCHMARK_TEMP/mcp-tests-build.log" \
+        cargo test -p repowitness-mcp --release --locked --no-run
+then
+    echo "error: benchmark runner test preparation failed" >&2
+    exit 70
+fi
+
+generate_identity() {
+    run_bounded_capture \
+        "$BENCHMARK_TEMP/identity.output" "$BENCHMARK_TEMP/identity.errors" \
+        "$CLI" identity generate "$1"
+    tr -d '\n' <"$BENCHMARK_TEMP/identity.output"
+}
+
+CONNECTED_ONE=$(generate_identity connected-workspace)
+CONNECTED_TWO=$(generate_identity connected-workspace)
+REPOSITORY_ONE=$(generate_identity repository)
+REPOSITORY_TWO=$(generate_identity repository)
+REPOSITORY_THREE=$(generate_identity repository)
+SLOT_ONE=$(generate_identity source-slot)
+SLOT_TWO=$(generate_identity source-slot)
+SLOT_THREE=$(generate_identity source-slot)
+SLOT_FOUR=$(generate_identity source-slot)
+
+write_manifest() {
+    output=$1
+    workspace=$2
+    first_slot=$3
+    first_repository=$4
+    first_root=$5
+    second_slot=$6
+    second_repository=$7
+    second_root=$8
+    printf '%s\n' \
+        'schema_version = 1' \
+        "connected_workspace_id = \"$workspace\"" \
+        '' \
+        '[[source]]' \
+        "source_slot_id = \"$first_slot\"" \
+        "repository_identity = \"$first_repository\"" \
+        "worktree_root = \"$first_root\"" \
+        '' \
+        '[source.selector]' \
+        'kind = "worktree-head"' \
+        '' \
+        '[source.scope]' \
+        'kind = "whole-repository"' \
+        '' \
+        '[[source]]' \
+        "source_slot_id = \"$second_slot\"" \
+        "repository_identity = \"$second_repository\"" \
+        "worktree_root = \"$second_root\"" \
+        '' \
+        '[source.selector]' \
+        'kind = "worktree-head"' \
+        '' \
+        '[source.scope]' \
+        'kind = "whole-repository"' >"$output"
+}
+
+write_manifest \
+    "$ATOMIC_MANIFEST" "$CONNECTED_ONE" "$SLOT_ONE" "$REPOSITORY_ONE" "$WORKTREE_ONE" \
+    "$SLOT_TWO" "$REPOSITORY_TWO" "$WORKTREE_TWO"
+write_manifest \
+    "$TWO_WORKTREE_MANIFEST" "$CONNECTED_TWO" "$SLOT_THREE" "$REPOSITORY_THREE" "$WORKTREE_ONE" \
+    "$SLOT_FOUR" "$REPOSITORY_THREE" "$WORKTREE_TWO"
+
+now_ms() {
+    perl -MTime::HiRes=time -e 'printf "%.0f\n", time * 1000'
+}
+
+run_workload() {
+    workload=$1
+    runs=$2
+    expected_tests=$3
+    shift 3
+    timings=$BENCHMARK_TEMP/$workload.timings
+    output=$BENCHMARK_TEMP/$workload.output
+    errors=$BENCHMARK_TEMP/$workload.errors
+    attempt=1
+    : >"$timings"
+    if ! run_workload_command "$output" "$errors" "$@"; then
+        echo "error: benchmark workload failed: $workload" >&2
+        return 1
+    fi
+    if [ "$expected_tests" -gt 0 ] \
+        && ! grep -Fq "test result: ok. $expected_tests passed; 0 failed;" "$output"
+    then
+        echo "error: benchmark workload did not execute its expected tests: $workload" >&2
+        return 1
+    fi
+    while [ "$attempt" -le "$runs" ]; do
+        started=$(now_ms)
+        if ! run_workload_command "$output" "$errors" "$@"; then
+            echo "error: benchmark workload failed: $workload" >&2
+            return 1
+        fi
+        if [ "$expected_tests" -gt 0 ] \
+            && ! grep -Fq "test result: ok. $expected_tests passed; 0 failed;" "$output"
+        then
+            echo "error: benchmark workload did not execute its expected tests: $workload" >&2
+            return 1
+        fi
+        finished=$(now_ms)
+        elapsed=$((finished - started))
+        if [ "$elapsed" -lt 0 ]; then
+            echo "error: benchmark clock moved backwards" >&2
+            return 1
+        fi
+        printf '%s\n' "$elapsed" >>"$timings"
+        attempt=$((attempt + 1))
+    done
+    rank=$(((runs * 95 + 99) / 100))
+    p95=$(sort -n "$timings" | sed -n "${rank}p")
+    case "$p95" in
+        ''|*[!0-9]*)
+            echo "error: benchmark timing collection failed" >&2
+            return 1
+            ;;
+    esac
+    printf 'workload=%s runs=%s test_harness_p95_ms=%s status=passed\n' \
+        "$workload" "$runs" "$p95"
+}
+
+# Shell functions are intentionally internal, fixed workload adapters. They
+# emit no output themselves and capture their small structured CLI reports in
+# dedicated files. External commands always use the bounded stream capture.
+run_workload_command() {
+    output=$1
+    errors=$2
+    shift 2
+    case "$1" in
+        run_atomic_workspace|run_two_worktree_workspace|run_compatibility_suite)
+            "$@" >"$output" 2>"$errors"
+            ;;
+        *)
+            run_bounded_capture "$output" "$errors" "$@"
+            ;;
+    esac
+}
+
+verify_workspace_report() {
+    report=$1
+    first_root=$2
+    second_root=$3
+    first_repository=$4
+    second_repository=$5
+    grep -qx 'status=ok' "$report"
+    grep -qx 'operation=workspace_index' "$report"
+    grep -qx 'source_slots=2' "$report"
+    grep -qx 'outcome=published' "$report"
+    for sensitive in \
+        "$BENCHMARK_TEMP" "$first_root" "$second_root" \
+        "$first_repository" "$second_repository"
+    do
+        if grep -Fq "$sensitive" "$report"; then
+            return 1
+        fi
+    done
+}
+
+run_atomic_workspace() {
+    report=$BENCHMARK_TEMP/atomic-workspace.report
+    run_bounded_capture "$report" "$BENCHMARK_TEMP/atomic-workspace.errors" \
+        "$CLI" workspace index --manifest "$ATOMIC_MANIFEST" --database "$DATABASE"
+    verify_workspace_report \
+        "$report" "$WORKTREE_ONE" "$WORKTREE_TWO" "$REPOSITORY_ONE" "$REPOSITORY_TWO"
+}
+
+run_two_worktree_workspace() {
+    report=$BENCHMARK_TEMP/two-worktree-workspace.report
+    run_bounded_capture "$report" "$BENCHMARK_TEMP/two-worktree-workspace.errors" \
+        "$CLI" workspace index --manifest "$TWO_WORKTREE_MANIFEST" --database "$DATABASE"
+    verify_workspace_report \
+        "$report" "$WORKTREE_ONE" "$WORKTREE_TWO" "$REPOSITORY_THREE" "$REPOSITORY_THREE"
+}
+
+run_exact_test() {
+    output=$BENCHMARK_TEMP/exact-test.output
+    errors=$BENCHMARK_TEMP/exact-test.errors
+    if ! run_bounded_capture "$output" "$errors" "$@"; then
+        return 1
+    fi
+    grep -Fq 'test result: ok. 1 passed; 0 failed;' "$output"
+}
+
+run_compatibility_suite() {
+    run_exact_test cargo test -p repowitness-mcp --release --locked \
+        server::tests::compatibility::opt_in_surface_is_exact_sorted_read_only_and_excludes_unimplemented_names \
+        -- --exact --test-threads=1
+    run_exact_test cargo test -p repowitness-mcp --release --locked \
+        server::tests::compatibility::compatibility_aliases_forward_to_canonical_use_cases_and_preserve_receipts \
+        -- --exact --test-threads=1
+}
+
+run_workload "$ATOMIC_WORKLOAD" "$ATOMIC_RUNS" 0 run_atomic_workspace
+run_workload "$TWO_WORKTREE_WORKLOAD" "$TWO_WORKTREE_RUNS" 0 run_two_worktree_workspace
+run_workload "$QUIET_WORKLOAD" "$QUIET_RUNS" 1 \
+    cargo test -p repowitness-local --release --locked \
+    local_index::tests::watched_reconciliation_skips_unchanged_source_and_publishes_changes \
+    -- --exact --test-threads=1
+run_workload "$SELECTOR_WORKLOAD" "$SELECTOR_RUNS" 1 \
+    cargo test -p repowitness-local --release --locked \
+    local_index::connected_workspace::tests::faults::moving_ref_after_preparation_fails_the_final_fence_and_preserves_view \
+    -- --exact --test-threads=1
+run_workload "$SCOPE_WORKLOAD" "$SCOPE_RUNS" 3 \
+    cargo test -p repowitness-local --release --locked \
+    local_index::connected_workspace::tests::scopes:: -- --test-threads=1
+run_workload "$GRAPH_WORKLOAD" "$GRAPH_RUNS" 1 \
+    cargo test -p repowitness-cli --release --locked --test cli_contract \
+    mcp_stdio_indexes_searches_retrieves_and_rejects_a_stale_selector -- --exact --test-threads=1
+run_workload "$COMPATIBILITY_WORKLOAD" "$COMPATIBILITY_RUNS" 0 run_compatibility_suite
+run_workload "$RETENTION_WORKLOAD" "$RETENTION_RUNS" 1 \
+    cargo test -p repowitness-cli --release --locked --test cli_contract \
+    gc_plan_apply_replay_and_stale_rejection_preserve_the_active_generation -- --exact --test-threads=1
+
+printf 'status=passed phase=phase1 workloads=8\n'

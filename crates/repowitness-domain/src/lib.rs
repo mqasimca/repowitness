@@ -14,6 +14,7 @@ mod path;
 mod resolution;
 mod result;
 mod snapshot;
+mod workspace;
 
 pub use artifact::{AnalysisArtifactKey, AnalysisArtifactKeyVersion};
 pub use coverage::{CoverageCompleteness, CoverageItemCount, CoverageSummary};
@@ -59,4 +60,7 @@ pub use snapshot::{
     SourceFileCount, SourceFileKind, SourceFileLimit, SourceManifest, SourceManifestEntry,
     SourceManifestError, SourceManifestVersion, SourceSnapshot, SourceSnapshotMetadata,
     SourceSnapshotVersion,
+};
+pub use workspace::{
+    ConnectedWorkspaceId, SourceSlotId, WORKSPACE_ID_BYTES, WorkspaceIdentityLengthError,
 };

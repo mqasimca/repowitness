@@ -1,0 +1,50 @@
+#!/bin/sh
+
+set -eu
+
+limit=700
+
+if [ "$#" -gt 1 ]; then
+    printf '%s\n' "usage: $0 [repository-root]" >&2
+    exit 2
+fi
+
+if [ "$#" -eq 1 ]; then
+    repository_root=$1
+else
+    repository_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
+fi
+
+if [ ! -d "$repository_root/crates" ]; then
+    printf '%s\n' "Rust source root is missing: crates" >&2
+    exit 2
+fi
+
+repository_root=$(CDPATH= cd -- "$repository_root" && pwd -P)
+file_list=$(mktemp "${TMPDIR:-/tmp}/repowitness-rust-lines.XXXXXX")
+trap 'rm -f "$file_list"' EXIT HUP INT TERM
+
+find "$repository_root/crates" -type f -name '*.rs' -print |
+    LC_ALL=C sort >"$file_list"
+
+files=0
+violations=0
+while IFS= read -r source_file; do
+    files=$((files + 1))
+    lines=$(awk 'END { print NR + 0 }' "$source_file")
+    if [ "$lines" -gt "$limit" ]; then
+        relative_path=${source_file#"$repository_root/"}
+        printf '%s\n' \
+            "$relative_path: $lines physical lines exceeds the $limit-line limit" >&2
+        violations=$((violations + 1))
+    fi
+done <"$file_list"
+
+if [ "$violations" -ne 0 ]; then
+    printf '%s\n' \
+        "Rust source line check failed: $violations file(s) exceed $limit lines" >&2
+    exit 1
+fi
+
+printf '%s\n' \
+    "Rust source line check passed: $files file(s), maximum $limit lines"

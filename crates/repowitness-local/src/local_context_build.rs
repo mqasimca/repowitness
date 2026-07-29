@@ -17,8 +17,8 @@ use repowitness_application::{
     ContextSourceInput, DEFAULT_CODE_SEARCH_OUTPUT_BYTES, DEFAULT_MEMORY_RECALL_OUTPUT_BYTES,
     DEFAULT_MEMORY_RECALL_SCAN_BYTES, MemoryRecallError, MemoryRecallLimits, MemoryRecallQuery,
     MemoryRecallQueryError, MemoryRecallRequest, RepositoryIdentityTextError,
-    RepositoryIdentityTextV1, SymbolGetError, SymbolGetLimits, SymbolGetRequest, SymbolGetSelector,
-    code_search, compile_context, memory_recall, symbol_get,
+    RepositoryIdentityTextV1, ResolvedConfiguration, SymbolGetError, SymbolGetLimits,
+    SymbolGetRequest, SymbolGetSelector, code_search, compile_context, memory_recall, symbol_get,
 };
 use repowitness_domain::EvidenceLocation;
 
@@ -41,6 +41,7 @@ pub struct LocalContextBuildRequest<'a> {
     intent: &'a str,
     budget: ContextBuildBudget,
     max_provider_results: u16,
+    configuration: Option<&'a ResolvedConfiguration>,
     deadline: Duration,
 }
 
@@ -60,6 +61,7 @@ impl<'a> LocalContextBuildRequest<'a> {
             intent,
             budget: ContextBuildBudget::default(),
             max_provider_results: DEFAULT_LOCAL_CONTEXT_PROVIDER_RESULTS,
+            configuration: None,
             deadline: DEFAULT_LOCAL_CONTEXT_BUILD_DEADLINE,
         }
     }
@@ -90,6 +92,13 @@ impl<'a> LocalContextBuildRequest<'a> {
         Ok(self)
     }
 
+    /// Applies resolved query and context limits as additional ceilings.
+    #[must_use]
+    pub const fn with_configuration(mut self, configuration: &'a ResolvedConfiguration) -> Self {
+        self.configuration = Some(configuration);
+        self
+    }
+
     /// Replaces the end-to-end monotonic deadline duration.
     #[must_use]
     pub const fn with_deadline(mut self, deadline: Duration) -> Self {
@@ -108,6 +117,10 @@ impl fmt::Debug for LocalContextBuildRequest<'_> {
             .field("intent", &"<redacted-intent>")
             .field("budget", &self.budget)
             .field("max_provider_results", &self.max_provider_results)
+            .field(
+                "configuration_digest",
+                &self.configuration.map(ResolvedConfiguration::digest),
+            )
             .field("deadline", &self.deadline)
             .finish()
     }
@@ -200,6 +213,7 @@ pub fn build_local_context(
         CodeSearchQuery::try_new(request.intent).map_err(LocalContextBuildError::SourceQuery)?;
     let memory_query =
         MemoryRecallQuery::try_new(request.intent).map_err(LocalContextBuildError::MemoryQuery)?;
+    let request = effective_context_request(request).map_err(LocalContextBuildError::Compile)?;
     let deadline = Instant::now()
         .checked_add(request.deadline)
         .ok_or(LocalContextBuildError::DeadlineNotRepresentable)?;
@@ -223,6 +237,22 @@ pub fn build_local_context(
         (Err(source), _) => Err(source),
         (Ok(_), Err(source)) => Err(LocalContextBuildError::Shutdown(source)),
     }
+}
+
+fn effective_context_request<'a>(
+    mut request: LocalContextBuildRequest<'a>,
+) -> Result<LocalContextBuildRequest<'a>, ContextBuildError> {
+    let Some(configuration) = request.configuration else {
+        return Ok(request);
+    };
+    let configured_budget = *configuration.preferences().context_bytes().effective();
+    request.budget = ContextBuildBudget::try_new(request.budget.units().min(configured_budget))?;
+
+    let configured_results = *configuration.preferences().query_results().effective();
+    let configured_results =
+        u16::try_from(configured_results).map_err(|_| ContextBuildError::InvalidSourceInput)?;
+    request.max_provider_results = request.max_provider_results.min(configured_results);
+    Ok(request)
 }
 
 #[allow(

@@ -3,23 +3,45 @@
 //!
 //! Concrete I/O is kept outside the domain, analysis, and application rules.
 
+mod bounded_file;
+mod configuration;
+mod connected_workspace_manifest;
 mod contained_source;
 mod git_memory;
 mod git_paths;
+mod local_connected_workspace;
 mod local_context_build;
 mod local_diagnostics;
+mod local_doctor;
+mod local_graph_index;
+mod local_graph_read;
+mod local_identity;
 mod local_index;
 mod local_memory_recall;
+mod local_retention;
 mod local_search;
 mod local_symbol_get;
+mod local_watch;
 mod memory_format;
 mod memory_import;
 mod memory_management;
 mod memory_revalidation;
+mod package_scope;
 mod rust_index;
+mod source_selector;
 mod source_state;
 mod sqlite;
+mod watch_reconciliation;
 
+pub use bounded_file::{
+    AdmittedFileParent, BoundedFileContents, BoundedFileReadError, MAX_BOUNDED_CONTROL_FILE_BYTES,
+    MAX_BOUNDED_CONTROL_FILE_COMPONENTS, MAX_BOUNDED_CONTROL_FILE_PATH_BYTES,
+    read_bounded_regular_file, read_bounded_regular_file_with_parent,
+};
+pub use configuration::{
+    ConfigurationFileError, ConfigurationFileLayer, MAX_CONFIGURATION_FILE_BYTES,
+    MAX_CONFIGURATION_TEXT_BYTES, parse_configuration_file,
+};
 pub use contained_source::{
     ContainedSourceError, ContainedSourceRoot, DEFAULT_SOURCE_FILE_BYTES,
     DEFAULT_SOURCE_READ_CHUNK_BYTES, DEFAULT_SOURCE_READ_DEADLINE, MAX_EXACT_DIRECTORY_ENTRIES,
@@ -32,6 +54,17 @@ pub use git_paths::{
     DiscoveredRepositoryPaths, GitPathDiscoveryError, GitPathDiscoveryLimits,
     GitPathDiscoveryStats, discover_repository_paths, discover_repository_paths_with_cancel,
 };
+pub use local_connected_workspace::{
+    DEFAULT_LOCAL_CONNECTED_WORKSPACE_DEADLINE, DEFAULT_LOCAL_CONNECTED_WORKSPACE_SOURCE_DEADLINE,
+    LOCAL_CONNECTED_WORKSPACE_REPORT_VERSION, LocalConnectedWorkspaceCoverage,
+    LocalConnectedWorkspaceIndexError, LocalConnectedWorkspaceIndexReport,
+    LocalConnectedWorkspaceIndexRequest, LocalConnectedWorkspaceMaintenance,
+    LocalConnectedWorkspaceManifestErrorKind, LocalConnectedWorkspaceOutcome,
+    LocalConnectedWorkspaceParentErrorKind, LocalConnectedWorkspacePhase,
+    LocalConnectedWorkspaceRequestErrorKind, LocalConnectedWorkspaceSourceLimits,
+    LocalConnectedWorkspaceViewDigest, MAX_LOCAL_CONNECTED_WORKSPACE_MANIFEST_BYTES,
+    index_local_connected_workspace,
+};
 pub use local_context_build::{
     DEFAULT_LOCAL_CONTEXT_BUILD_DEADLINE, DEFAULT_LOCAL_CONTEXT_PROVIDER_RESULTS,
     LocalContextBuildError, LocalContextBuildRequest, LocalContextBuildResult, build_local_context,
@@ -40,6 +73,19 @@ pub use local_diagnostics::{
     DEFAULT_LOCAL_DIAGNOSTICS_DEADLINE, LocalRepositoryDiagnosticsError,
     LocalRepositoryDiagnosticsRequest, LocalRepositoryDiagnosticsResult, diagnose_local_repository,
 };
+pub use local_doctor::{
+    DoctorCheckStatus, DoctorDatabaseState, DoctorOverallStatus, LocalDoctorReport,
+    LocalDoctorTargets, inspect_local_doctor,
+};
+pub use local_graph_read::{
+    DEFAULT_LOCAL_RUST_GRAPH_READ_DEADLINE, LocalRustGraphEvidenceRead, LocalRustGraphPortError,
+    LocalRustGraphReadError, LocalRustGraphReadOutput, LocalRustGraphReadRequest,
+    LocalRustGraphReadResult, LocalRustGraphWorkspace, read_local_rust_graph,
+};
+pub use local_identity::{
+    GeneratedLocalIdentity, LocalIdentityGenerationError, LocalIdentityKind,
+    generate_local_identity,
+};
 pub use local_index::{
     LocalIndexError, LocalIndexReport, LocalIndexRequest, index_local_repository,
     index_local_rust_repository,
@@ -47,6 +93,13 @@ pub use local_index::{
 pub use local_memory_recall::{
     DEFAULT_LOCAL_MEMORY_RECALL_DEADLINE, LocalMemoryRecallError, LocalMemoryRecallRequest,
     LocalMemoryRecallResult, LocalMemoryRecallSelection, recall_local_memory,
+};
+pub use local_retention::{
+    DEFAULT_LOCAL_RETENTION_TIMEOUT, LOCAL_RETENTION_PROFILE_VERSION, LocalRetentionApplyReport,
+    LocalRetentionApplyRequest, LocalRetentionError, LocalRetentionErrorKind, LocalRetentionPins,
+    LocalRetentionPlanReport, LocalRetentionPlanRequest, LocalRetentionPolicySummary,
+    LocalRetentionRequestError, MAX_LOCAL_RETENTION_TIMEOUT, apply_local_retention,
+    plan_local_retention,
 };
 pub use local_search::{
     DEFAULT_LOCAL_CODE_SEARCH_DEADLINE, LocalCodeSearchError, LocalCodeSearchRequest,
@@ -57,6 +110,11 @@ pub use local_symbol_get::{
     LocalSymbolGetResult, LocalSymbolPortError, LocalSymbolSelectorText, Sha256TextError,
     get_local_rust_symbol, get_local_symbol,
 };
+pub use local_watch::{
+    LOCAL_WATCH_PROFILE_VERSION, LocalWatchError, LocalWatchExit, LocalWatchReconciliation,
+    LocalWatchReport, LocalWatchRequest, LocalWatchRequestError, MAX_LOCAL_WATCH_RUNTIME,
+    watch_local_repository,
+};
 pub use memory_format::{
     MAX_CANONICAL_MEMORY_BYTES, MAX_MEMORY_SCALAR_BYTES, MAX_MEMORY_YAML_BYTES,
     MemoryFormatControl, MemoryFormatError, ParsedMemoryRecord, canonical_memory_digest,
@@ -66,9 +124,10 @@ pub use memory_import::{LoadedMemoryRecord, MemoryFileImportError, MemoryRecordF
 pub use memory_management::{
     DEFAULT_LOCAL_MEMORY_MANAGE_DEADLINE, LocalMemoryApprovalReceipt, LocalMemoryApprovalRequest,
     LocalMemoryCorrespondenceReviewReceipt, LocalMemoryCorrespondenceReviewRequest,
-    LocalMemoryHistoryImportLimits, LocalMemoryHistoryImportReport,
-    LocalMemoryHistoryImportRequest, LocalMemoryManageError, LocalMemoryWriteReceipt,
-    LocalMemoryWriteRequest, approve_local_memory, import_local_memory_history,
+    LocalMemoryFilePublicationStatus, LocalMemoryHistoryImportLimits,
+    LocalMemoryHistoryImportReport, LocalMemoryHistoryImportRequest, LocalMemoryManageError,
+    LocalMemoryWriteReceipt, LocalMemoryWriteRequest, MemoryFileIdentityStatus,
+    MemoryFilePublicationStepStatus, approve_local_memory, import_local_memory_history,
     review_local_memory_correspondence, validate_local_memory_actor, write_local_memory,
 };
 pub use memory_revalidation::{
@@ -78,25 +137,49 @@ pub use memory_revalidation::{
     LocalMemoryRevalidationRequest, MAX_LOCAL_MEMORY_GIT_QUERIES, revalidate_local_memory,
 };
 pub use repowitness_application::{
-    CODE_SEARCH_PROFILE_VERSION, CONTEXT_BUILD_RRF_K, CodeSearchNotice, CodeSearchProducer,
-    ContextItem, ContextOmission, ContextProvider, DEFAULT_CONTEXT_BUILD_BUDGET_UNITS,
-    MAX_CONTEXT_BUILD_BUDGET_UNITS, MEMORY_RECALL_PROFILE_VERSION, MemoryEffectiveState,
+    CODE_SEARCH_PROFILE_VERSION, CONFIGURATION_DIGEST_VERSION, CONFIGURATION_RESOLVER_VERSION,
+    CONFIGURATION_SCHEMA_VERSION, CONNECTED_WORKSPACE_ID_TEXT_BYTES, CONTEXT_BUILD_RRF_K,
+    CodeSearchNotice, CodeSearchProducer, ConfigurationField, ConfigurationLayer,
+    ConfigurationLayerKind, ConfigurationPolicyOverrides, ConfigurationPreferenceOverrides,
+    ConfigurationProfile, ConfigurationResolutionError, ConfigurationValidationError,
+    ConnectedWorkspaceIdTextV1, ContextItem, ContextOmission, ContextProvider,
+    DEFAULT_CONFIGURATION_RETAINED_GENERATIONS_PER_SOURCE_SLOT,
+    DEFAULT_CONFIGURATION_RETENTION_BYTES, DEFAULT_CONFIGURATION_RETENTION_GENERATION_CANDIDATES,
+    DEFAULT_CONFIGURATION_RETENTION_ROWS, DEFAULT_CONTEXT_BUILD_BUDGET_UNITS,
+    EffectiveConfigurationPolicy, EffectiveConfigurationPreferences,
+    EffectiveRetentionConfiguration, MAX_CONFIGURATION_CONTEXT_BYTES,
+    MAX_CONFIGURATION_FILE_LAYERS, MAX_CONFIGURATION_GRAPH_DEPTH, MAX_CONFIGURATION_GRAPH_RESULTS,
+    MAX_CONFIGURATION_QUERY_RESULTS, MAX_CONFIGURATION_RETAINED_GENERATIONS_PER_SOURCE_SLOT,
+    MAX_CONFIGURATION_RETENTION_BYTES, MAX_CONFIGURATION_RETENTION_GENERATION_CANDIDATES,
+    MAX_CONFIGURATION_RETENTION_ROWS, MAX_CONFIGURATION_SOURCE_FILE_BYTES,
+    MAX_CONFIGURATION_SOURCE_FILES, MAX_CONFIGURATION_WATCHER_POLL_INTERVAL_MS,
+    MAX_CONTEXT_BUILD_BUDGET_UNITS, MEMORY_RECALL_PROFILE_VERSION,
+    MIN_CONFIGURATION_WATCHER_POLL_INTERVAL_MS, McpToolProfile, MemoryEffectiveState,
     MemoryProjectionValidityState, MemoryRecallCandidate, MemoryRecallCandidateRelation,
     MemoryRecallEvidence, MemoryRecallEvidenceAssurance, MemoryRecallEvidenceOutcome,
     MemoryRecallEvidenceState, MemoryRecallLimits, MemoryRecallOccurrence, MemoryRecallProducer,
     MemoryRecallProjectionCoverage, MemoryRecallQueryDigest, MemoryRecallReason,
-    MemoryRecallRecord, MemoryRecordIdTextV1, REPOSITORY_DIAGNOSTICS_PROFILE_VERSION,
+    MemoryRecallRecord, MemoryRecordIdTextV1, PolicyValue, REPOSITORY_DIAGNOSTICS_PROFILE_VERSION,
     RepositoryDiagnosticCapability, RepositoryDiagnosticLimitation,
     RepositoryDiagnosticsMemoryProjection, RepositoryIdentityTextV1, RepositoryPathTextByteLimit,
-    RepositoryPathTextV1, RetrievedSymbol, RustSymbolOccurrence, SYMBOL_GET_PROFILE_VERSION,
+    RepositoryPathTextV1, ResolvedConfiguration, ResolvedPreference, ResolvedToolProfilePreference,
+    RetentionConfigurationOverrides, RetrievedSymbol, RustGraphDefinitionSelector,
+    RustGraphReadOperation, RustGraphReadSelection, RustGraphSelectorError, RustGraphSiteKind,
+    RustGraphSiteSelector as ApplicationRustGraphSiteSelector, RustGraphSymbolQuery,
+    RustGraphSymbolQueryError, RustGraphTraceDirection, RustGraphTraceLimits,
+    RustGraphTraceStartSelector, RustSymbolOccurrence, SOURCE_SLOT_ID_TEXT_BYTES,
+    SYMBOL_GET_PROFILE_VERSION, SourceLanguage, SourceSlotIdTextV1, WorkspaceIdentityTextError,
+    resolve_configuration,
 };
 pub use repowitness_domain::{
-    EvidenceLocation, MemoryAssurance, MemoryCommitId, MemoryCorrespondenceReviewOperation,
-    MemoryKind, MemoryLifecycle, MemoryObjectFormat, MemoryRevalidationTarget, ResolutionStatus,
+    ConfigurationDigest, ConnectedWorkspaceId, EvidenceLocation, MemoryAssurance, MemoryCommitId,
+    MemoryCorrespondenceReviewOperation, MemoryKind, MemoryLifecycle, MemoryObjectFormat,
+    MemoryRevalidationTarget, ResolutionStatus, SourceSlotId,
 };
 pub use rust_index::{
     DEFAULT_LOCAL_RUST_INDEX_DEADLINE, LocalRustIndexError, LocalRustIndexLimits,
-    LocalRustIndexPreparation, prepare_local_rust_index, prepare_local_source_index,
+    LocalRustIndexPreparation, LocalSourceSnapshotFenceError, prepare_local_rust_index,
+    prepare_local_source_index,
 };
 pub use source_state::{
     CapturedSourceState, GIT_STATE_VERSION, GIT_STATUS_PROFILE_VERSION,
@@ -104,8 +187,40 @@ pub use source_state::{
     capture_source_state, capture_source_state_with_cancel,
 };
 pub use sqlite::{
-    BackupLimits, BackupOutcome, CheckpointOutcome, GenerationCoverage, GenerationId,
-    IndexStoreStartup, OwnedSqliteIndex, OwnedSqliteReader, ProjectionRebuildLimits,
-    ProjectionRebuildOutcome, SearchHit, SearchLimits, SearchResults, SqliteStoreError,
-    SymbolLookupResults, create_online_backup,
+    BackupIdentityStatus, BackupLimits, BackupMaintenanceStatus, BackupOutcome,
+    BackupPublicationStatus, CheckpointOutcome, DEFAULT_RETAINED_GENERATIONS_PER_SOURCE_SLOT,
+    GenerationCoverage, GenerationId, GenerationRetentionPolicy, IndexStoreStartup,
+    MAX_CONNECTED_WORKSPACE_SOURCE_SLOTS, MAX_RETAINED_GENERATIONS_PER_SOURCE_SLOT,
+    MAX_RETENTION_BYTES, MAX_RETENTION_GENERATION_CANDIDATES, MAX_RETENTION_GENERATION_PINS,
+    MAX_RETENTION_ROWS, MAX_RETENTION_VIEW_PINS, OwnedSqliteIndex, OwnedSqliteReader,
+    PinnedWorkspaceView, PinnedWorkspaceViewMember, PreparedRustGraphArtifact,
+    PreparedRustGraphGeneration, ProjectionRebuildLimits, ProjectionRebuildOutcome,
+    RETENTION_POLICY_VERSION, RetentionApplyOutcome, RetentionApplyRequest, RetentionLimits,
+    RetentionPins, RetentionPlan, RetentionPlanDigest, RetentionPlanRequest, RetentionPolicyDigest,
+    RustGraphArchitectureSummary, RustGraphAvailability, RustGraphCandidateRecord,
+    RustGraphDefinitionRecord, RustGraphDirection, RustGraphEdgeKind, RustGraphEdgeKinds,
+    RustGraphEdgeRecord, RustGraphEvidenceResult, RustGraphImpactClass, RustGraphImpactResult,
+    RustGraphImpactedDefinition, RustGraphOutcomeRecord, RustGraphPreparationControl,
+    RustGraphPreparationError, RustGraphPublicationSummary, RustGraphReadError,
+    RustGraphReadLimits, RustGraphRelationshipCardinality, RustGraphSiteSelector, RustGraphSource,
+    RustGraphSymbolSearchResult, RustGraphTraceCoverage, RustGraphTraceResult, RustGraphTraceStart,
+    RustGraphTraceTruncation, SearchHit, SearchLimits, SearchResults, SourceSlotEpoch,
+    SourceSlotGeneration, SourceSlotState, SqliteStoreError, SymbolLookupResults,
+    WorkspaceSourceSlot, WorkspaceViewId, WorkspaceViewMember, create_online_backup,
+    prepare_rust_graph_generation,
+};
+pub use watch_reconciliation::{
+    CompleteReconciliationWork, DEFAULT_WATCHER_DEBOUNCE_MS, DEFAULT_WATCHER_HINT_PATH_BYTES,
+    DEFAULT_WATCHER_HINT_PATHS, DEFAULT_WATCHER_MAX_RETRIES, DEFAULT_WATCHER_PERIODIC_MS,
+    DEFAULT_WATCHER_POLL_INTERVAL_MS, DEFAULT_WATCHER_RETRY_DELAY_MS, MAX_WATCHER_DEBOUNCE_MS,
+    MAX_WATCHER_HINT_PATH_BYTES, MAX_WATCHER_HINT_PATHS, MAX_WATCHER_PERIODIC_MS,
+    MAX_WATCHER_RETRIES, MAX_WATCHER_RETRY_DELAY_MS, PollingHintObservation,
+    PollingReconciliationRequest, PollingReconciliationSupervisor,
+    WATCH_RECONCILIATION_PROFILE_VERSION, WatcherCompletion, WatcherCompletionOutcome,
+    WatcherDurationMillis, WatcherFullReconciliationCauses, WatcherHintAccumulator,
+    WatcherHintAdmission, WatcherHintBatch, WatcherHintCounters, WatcherHintLimitError,
+    WatcherHintLimits, WatcherMonotonicTimestamp, WatcherObservationOutcome, WatcherPathByteCount,
+    WatcherPathCount, WatcherPollDecision, WatcherPollIntervalMillis, WatcherPollingState,
+    WatcherReconciliationReason, WatcherRetryAttempt, WatcherScheduleLimitError,
+    WatcherScheduleLimits, WatcherStateCounters, WatcherStateError,
 };

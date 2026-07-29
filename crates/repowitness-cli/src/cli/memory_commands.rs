@@ -42,6 +42,7 @@ fn run_memory_recall(
     stdout: &mut impl Write,
     stderr: &mut impl Write,
     memory: &impl RepositoryMemory,
+    configuration_loader: &impl ConfigurationLoader,
 ) -> u8 {
     let arguments: Vec<OsString> = args.take(MAX_MEMORY_RECALL_ARGUMENTS + 1).collect();
     if arguments.len() > MAX_MEMORY_RECALL_ARGUMENTS {
@@ -55,11 +56,26 @@ fn run_memory_recall(
     {
         return emit_output(stdout, MEMORY_RECALL_HELP);
     }
+    let (arguments, configuration_invocation) =
+        match extract_configuration_arguments(&arguments, &["--all"]) {
+            Ok(parsed) => parsed,
+            Err(message) => return emit_error(stderr, EXIT_USAGE, message),
+        };
     let invocation = match parse_memory_recall_arguments(&arguments) {
         Ok(invocation) => invocation,
         Err(message) => return emit_error(stderr, EXIT_USAGE, message),
     };
-    match memory.recall(&invocation) {
+    let configuration = match configuration_loader.load(&configuration_invocation) {
+        Ok(configuration) => configuration,
+        Err(_) => {
+            return emit_error(
+                stderr,
+                EXIT_SOFTWARE,
+                "error: configuration resolution failed\n",
+            );
+        }
+    };
+    match memory.recall(&invocation, &configuration) {
         Ok(report) => emit_memory_recall_report(stdout, &report),
         Err(_) => emit_error(stderr, EXIT_SOFTWARE, "error: memory recall failed\n"),
     }

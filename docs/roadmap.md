@@ -1,7 +1,7 @@
 # Roadmap
 
 - Status: Proposed
-- Last reviewed: 2026-07-28
+- Last reviewed: 2026-07-29
 
 ## Sequencing rule
 
@@ -39,7 +39,9 @@ Prove that RepoWitness can connect a source change to memory revalidation and a 
 - Every material result includes revision, generation, evidence, precision, digest, coverage, and unresolved work.
 - Cancellation and failure preserve the previous active generation.
 - Clean and incremental output is equivalent on the fixture.
-- Missed/duplicated watcher events converge through reconciliation; watcher output is not required for correctness.
+- Synthetic missed, duplicated, reordered, and coalesced watcher hints converge
+  through complete-manifest reconciliation; production watcher ingestion is a
+  Phase 1 deliverable and is never the source of correctness.
 - The bundled/verified SQLite contains the WAL-reset fix and passes crash, checkpoint, online-backup, and restore tests.
 - Ratified correctness, resource, latency, and retrieval budgets pass.
 - At least one real task shows that evidence or recalled failure changes an engineering decision.
@@ -60,23 +62,34 @@ The output is a design-partner alpha, not a general public beta.
 | Rust workspace and engineering baseline | Implemented | Six packages, enforced dependency policy, pinned Rust/MSRV and dependencies, formatting, Clippy, docs, lockfile, license/advisory/source checks, Make targets, and required Ubuntu PR CI |
 | Repository and source identity | Implemented | Sanitized bounded Git discovery, canonical Git/worktree receipts, exact byte paths, capability-contained no-follow reads, final stability fence, and fail-closed sparse/gitlink scope |
 | Rust, Go, TypeScript, TSX, and Python analysis and incremental reuse | Implemented | Bounded language-specific Tree-sitter facts, one canonical mixed snapshot, five independent artifact identities and payload digests, a checksum-pinned reviewed TypeScript/TSX grammar fix, exact per-language/dialect reuse validation, and clean-versus-incremental equivalence |
-| SQLite publication and recovery | Implemented | Immutable baseline-version-1 and compatible parser-diagnostic-version-2 migrations with exact ledger rows and populated upgrade coverage, explicit non-mutating rejection of retired development versions 1–8, persisted exact artifact language, Rust occurrence fingerprints, reviewed correspondence, owned connections, immutable source and memory generations, atomic activation, FTS5 projection switching, startup recovery, checkpoints, online backup, mutation lease, and database file-identity guards |
-| Evidence retrieval | Implemented | Bounded literal `code_search`, exact digest-verified `symbol_get`, persisted language, language-specific producer attribution, explicit limitations, match counts, and coverage |
-| CLI and local stdio MCP | Implemented | CLI commands cover indexing, exact retrieval, canonical memory write/approval/history/review, memory revalidation/recall, context compilation, diagnostics, and path inspection; MCP exposes five read-only tools by default and adds fixed-actor `memory_manage` only under explicit startup authorization |
+| SQLite publication and recovery | Implemented foundation | Immutable baseline-version-1, compatible accepted parser-diagnostic-version-2, and provisional connected-workspace-version-3 migrations with exact ledger rows and populated upgrade coverage; version 3 adds globally unique bounded source slots, immutable published workspace views, atomic active-view switching, pinned recovery, generation-scoped Rust graph publication, and explicit deterministic bounded retention plan/apply with root revalidation and aggregate audit; retention defaults, budgets, and the migration remain proposed pending ratification |
+| Evidence retrieval | Implemented | Bounded literal `code_search`, exact digest-verified `symbol_get`, persisted language, language-specific producer attribution, and native generation-pinned Rust graph status, search, site evidence, architecture, trace, and conservative impact with explicit coverage and limits |
+| CLI and local stdio MCP | Implemented | CLI commands cover indexing, exact retrieval, six native Rust graph reads, canonical memory write/approval/history/review, memory revalidation/recall, context compilation, diagnostics, and path inspection; MCP exposes eleven deterministically ordered read-only tools by default and adds fixed-actor `memory_manage` only under explicit startup authorization |
 | Engineering-memory format | Implemented | Accepted version-1 pure domain values, strict hostile-YAML parser, bounded canonicalizer and deterministic writer, exact golden vectors, independent mutation/property oracle, release resource probes, and a coverage-guided fuzz target |
 | Engineering-memory import and persistence | Implemented | Capability-contained worktree admission and canonical writes, scope-checked import, observation-only bounded Git history, separately trusted approvals, immutable SQLite journal rows, and rebuildable current projections pass rollback, reopen, corruption, idempotency, and online-backup tests |
 | Correspondence and memory revalidation | Implemented | Versioned Rust fingerprints, exact/same-path-rename/exact-Git-move correspondence, explicit ambiguity and staleness, Git-DAG/worktree validity, head conflicts, idempotent approve/reject/manual-link audit events, deterministic conflict aggregation, and atomic projection activation are implemented |
 | Context compiler and read tools | Implemented | Deterministic reciprocal-rank fusion, conservative byte-budget admission, exact source expansion, current-memory exclusion rules, `context_build`, `memory_recall`, and transactionally pinned raw/recognized parser diagnostics are shared by CLI and MCP with explicit coverage, omissions, limits, cancellation, and source-only fallback |
 | Memory management | Implemented | CLI `memory-manage` writes canonical records, approves exact current revisions, records exact manual review, and imports reachable Git history as observations only; opt-in MCP shares the use case without accepting host paths, actor, repository identity, or resource policy |
-| Phase 0 evaluation and release gate | Partial | The public pinned product-loop benchmark passes all proposed correctness and numeric ceilings in a dirty development worktree; crash/recovery, the complete adversarial release matrix, a controlled lexical/naive-memory comparison, and three repeated isolated Codex utility runs pass, while explicit ADR/budget ratification, clean-revision attestation, and a real design-partner outcome remain |
+| Configuration and readiness diagnostics | Implemented under proposed ADR-0025 | Strict bounded schema-version-1 user/workspace/repository layers, deterministic monotonic resolution, path-free `config explain`, read-only `doctor`, runtime request enforcement, diagnostics identity, and pre-runtime MCP profile/write authorization |
+| Phase 0 evaluation and release gate | Partial | A checksummed clean Ubuntu 24.04 product-loop attestation passes the ratified correctness and resource budgets; crash/recovery, the complete adversarial release matrix, a controlled lexical/naive-memory comparison, and three repeated isolated Codex utility runs pass; ADR-0017, ADR-0019, and ADR-0023 are accepted, while the real design-partner outcome and decisions on ADR-0018 and ADR-0021 remain |
 
 ## Phase 1 — trustworthy local core
 
 - Complete blocking ADRs and the Rust engineering/CI baseline.
-- Support multi-repository workspaces, packages, branches, revisions, and worktrees.
+- Support multi-repository workspaces plus explicit package scopes, branches,
+  revisions, and caller-provided worktrees through the source-slot contract in
+  [ADR-0026](adr/0026-connected-workspace-source-slots-and-views.md) and the
+  selector refinement in
+  [ADR-0031](adr/0031-source-slot-selectors-and-package-scopes.md). Phase 1
+  package scope does not imply package-manager inference or package-aware
+  graph resolution.
 - Harden watching, recovery, path/case behavior, and cancellation on supported operating systems.
-- Expand the first-language graph to references, imports, calls, tests, architecture, trace, and impact.
-- Add versioned configuration, monotonic policy merging, `config explain`, and `doctor`.
+- Ratify and stabilize the implemented Rust-only syntax-derived graph
+  publication, evidence, architecture, trace, and impact contract; retain
+  explicit abstention for package-aware resolution, macro expansion, SCIP,
+  dynamic dispatch, and cross-language edges.
+- Ratify and stabilize the implemented versioned configuration, monotonic
+  policy, `config explain`, and `doctor` contract.
 - Add bounded, schema-tested incumbent compatibility aliases.
 - Add another language only for a named user need.
 
@@ -133,13 +146,14 @@ Prioritize these independently using measured demand:
 
 ## Immediate backlog
 
-1. Review the implemented contracts and evidence for proposed
+1. Completed 2026-07-29: accept
    [ADR-0017](adr/0017-phase0-memory-journal.md),
-   [ADR-0018](adr/0018-phase0-memory-revalidation.md),
    [ADR-0019](adr/0019-phase0-context-compilation-and-diagnostics.md), and
-   [ADR-0021](adr/0021-phase0-memory-management-and-review.md). Accept, revise,
-   or reject them explicitly. The current database contract is the immutable
-   baseline accepted by
+   [ADR-0023](adr/0023-vendor-typescript-grammar-fix.md). Keep
+   [ADR-0018](adr/0018-phase0-memory-revalidation.md) and
+   [ADR-0021](adr/0021-phase0-memory-management-and-review.md) proposed until
+   the real design-partner outcome supports their decisions. The current
+   database contract remains the immutable baseline accepted by
    [ADR-0022](adr/0022-squash-pre-release-sqlite-schema.md) plus the compatible
    version-2 migration accepted by
    [ADR-0024](adr/0024-persist-parser-diagnostics-migration.md).
@@ -148,17 +162,19 @@ Prioritize these independently using measured demand:
    competing reviewed targets; explicit split/merge abstention; and
    deterministic failure at every canonical-file and SQLite publication stage,
    including transaction commit.
-3. Rerun the complete pinned
-   [product-loop benchmark](research/phase0-product-benchmark-2026-07-28.md)
-   from a clean exact RepoWitness revision, then explicitly ratify or revise
-   correctness, latency, RSS, database/WAL, and result-size budgets.
+3. Completed 2026-07-29: the
+   [clean Ubuntu 24.04 attestation](research/phase0-clean-benchmark-attestation-2026-07-29.md)
+   passes from an exact clean RepoWitness revision, and the unchanged
+   correctness, latency, RSS, database/WAL, and result-size budgets are
+   ratified.
 4. Completed 2026-07-28 for the controlled public fixture: RepoWitness,
    lexical/source-only, and naive-memory-text now run against one pinned
    before/after oracle. Three repeated isolated Codex paired runs make both
    correct decisions, use current memory, ignore stale memory, and rate the
-   packet useful. Repeat the comparison on one real design-partner task and
-   record whether evidence or recalled failure changes a useful engineering
-   decision.
+   packet useful. Use the
+   [design-partner evaluation protocol](research/phase0-design-partner-evaluation-protocol.md)
+   for one real task and record whether evidence or recalled failure changes a
+   useful engineering decision.
 5. Completed 2026-07-28 for Phase 0 Git discovery: a synthetic 50,000-path
    comparison found `gix` faster, but its index-open path does not provide the
    caller-owned active cancellation/deadline boundary. Retain sanitized Git in

@@ -1,7 +1,8 @@
 # ADR-0019: Compile bounded Phase 0 context from exact source and current memory
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-07-27
+- Last reviewed: 2026-07-29
 - Owners: Project maintainers
 - Scope: Application context compilation, local retrieval composition, CLI, and local stdio MCP
 
@@ -155,6 +156,9 @@ into an agent context. Phase 0 instead excludes it and reports why.
 
 ## Follow-up
 
+- Accepted 2026-07-29 after generation-pinning, current-memory admission,
+  omission, diagnostics, CLI/MCP, adversarial presentation, controlled Codex,
+  and clean release-platform benchmark evidence passed.
 - Completed 2026-07-27: implement the shared application compiler,
   generation-pinned local composition, transactionally pinned diagnostics, CLI
   commands, and read-only local MCP tools with focused unit and contract

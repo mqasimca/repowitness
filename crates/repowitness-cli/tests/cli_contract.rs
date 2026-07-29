@@ -20,7 +20,9 @@ struct TempDirectory(PathBuf);
 impl TempDirectory {
     fn new() -> Self {
         let ordinal = NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!(
+        let physical_temporary_directory = std::fs::canonicalize(std::env::temp_dir())
+            .expect("canonicalize temporary directory for no-follow fixture");
+        let path = physical_temporary_directory.join(format!(
             "repowitness-cli-contract-{}-{ordinal}",
             std::process::id()
         ));
@@ -276,4 +278,9 @@ fn assert_changed_search_contract(database: &Path) {
 }
 
 include!("cli_contract/cli_behavior.rs");
+include!("cli_contract/doctor_contract.rs");
+include!("cli_contract/gc_contract.rs");
 include!("cli_contract/mcp_contract.rs");
+#[cfg(unix)]
+include!("cli_contract/watch_contract.rs");
+include!("cli_contract/workspace_contract.rs");

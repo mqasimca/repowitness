@@ -38,7 +38,7 @@ impl OwnedSqliteIndex {
             })),
             deadline,
         )?;
-        match receive_reply(&receiver, deadline) {
+        match receive_mutation_reply(&receiver, Some(cancelled.as_ref()), deadline) {
             Ok(receipt) => Ok(receipt),
             Err(error) => {
                 cancelled.store(true, Ordering::Release);
@@ -66,7 +66,7 @@ impl OwnedSqliteIndex {
             )),
             deadline,
         )?;
-        receive_reply(&receiver, deadline)
+        receive_mutation_reply(&receiver, Some(cancelled.as_ref()), deadline)
     }
 
     pub(crate) fn load_memory_journal(
@@ -177,6 +177,6 @@ impl OwnedSqliteIndex {
             })),
             deadline,
         )?;
-        receive_reply(&receiver, deadline)
+        receive_mutation_reply(&receiver, Some(cancelled.as_ref()), deadline)
     }
 }

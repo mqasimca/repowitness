@@ -23,6 +23,26 @@ fn write_diagnostics_report(
     writeln!(writer, "operation=diagnostics")?;
     writeln!(writer, "schema_version={}", report.schema_version)?;
     writeln!(writer, "diagnostics_profile={}", report.diagnostics_profile)?;
+    writeln!(
+        writer,
+        "configuration_digest_sha256={}",
+        report.configuration.digest_sha256
+    )?;
+    writeln!(
+        writer,
+        "configuration_schema_version={}",
+        report.configuration.schema_version
+    )?;
+    writeln!(
+        writer,
+        "configuration_resolver_version={}",
+        report.configuration.resolver_version
+    )?;
+    writeln!(
+        writer,
+        "configuration_profile={}",
+        report.configuration.profile
+    )?;
     writeln!(writer, "snapshot_sha256={}", report.snapshot_sha256)?;
     writeln!(writer, "generation={}", report.generation)?;
     writeln!(writer, "source_epoch={}", report.source_epoch)?;

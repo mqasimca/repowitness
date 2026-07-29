@@ -1,7 +1,7 @@
 # Phase 0 Rust evidence and memory benchmark
 
-- Status: Proposed
-- Last reviewed: 2026-07-28
+- Status: Ratified
+- Last reviewed: 2026-07-29
 - Manifest: [`manifest.json`](manifest.json)
 
 ## Corpus choice
@@ -77,23 +77,27 @@ evidence occurrences, writes and separately approves one canonical decision,
 proves current recall and source-plus-memory context, changes its exact source,
 then proves stale recall and stale-memory context exclusion.
 
-The [2026-07-28 provisional run](../../docs/research/phase0-product-benchmark-2026-07-28.md)
-passes every proposed numeric ceiling. The
+The
+[clean Ubuntu 24.04 attestation](../../docs/research/phase0-clean-benchmark-attestation-2026-07-29.md)
+passes every ratified numeric ceiling. The earlier
+[2026-07-28 provisional run](../../docs/research/phase0-product-benchmark-2026-07-28.md)
+records the development baseline. The
 [controlled comparative evaluation](../../docs/research/phase0-comparative-evaluation-2026-07-28.md)
 also passes: lexical evidence changes with the source, naive memory continues
 to expose the obsolete claim, and RepoWitness marks it stale and excludes it.
 The [Codex utility evaluation](../../docs/research/phase0-codex-utility-evaluation-2026-07-28.md)
-passes one paired run: both decisions are correct and source-grounded, current
-memory is used, stale memory is ignored, and both packets are rated useful. A
-real design-partner engineering-decision comparison remains.
+passes three paired runs: every decision is correct and source-grounded,
+current memory is used, stale memory is ignored, and every packet is rated
+useful. A real design-partner engineering-decision comparison remains.
 
 ## Budgets
 
 Correctness budgets are zero-tolerance for false confirmed claims, silent
-truncation, mixed-generation reads, and false automatic relinks. Resource and
-latency numbers remain proposals for this small corpus, not accepted release
-gates. Rerun from a clean exact RepoWitness revision and explicitly ratify or
-revise the budgets before making a Phase 0 completion claim.
+truncation, mixed-generation reads, and false automatic relinks. The resource
+and latency budgets are ratified for this versioned profile after the clean
+exact-revision release-platform run. Their broad margins on this small corpus
+do not establish scaling behavior. A corpus, workload, semantics-affecting
+configuration, or budget change requires a new review and clean attestation.
 
 ## Provenance
 

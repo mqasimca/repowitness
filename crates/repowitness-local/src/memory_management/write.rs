@@ -25,6 +25,13 @@ use crate::{
     generate_memory_yaml, parse_memory_record,
 };
 
+mod directory;
+mod outcome;
+use directory::RecordsDirectoryAuthority;
+pub use outcome::{
+    LocalMemoryFilePublicationStatus, MemoryFileIdentityStatus, MemoryFilePublicationStepStatus,
+};
+
 const MAX_INPUT_READ_CHUNK: usize = 16 * 1024;
 const TEMP_ATTEMPTS: u32 = 16;
 const WRITE_LEASE_NAME: &str = ".repowitness-write.lock";
@@ -34,7 +41,7 @@ static NEXT_TEMPORARY: AtomicU64 = AtomicU64::new(0);
 #[cfg(unix)]
 type DirectorySyncHandle = std::os::fd::OwnedFd;
 #[cfg(not(unix))]
-type DirectorySyncHandle = std::fs::File;
+struct DirectorySyncHandle;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PublicationStage {
@@ -47,6 +54,7 @@ enum PublicationStage {
     RemoveTemporary,
     VerifyTarget,
     SyncDirectory,
+    VerifyRecordsDirectory,
     CleanupTemporary,
 }
 
@@ -77,6 +85,7 @@ pub struct LocalMemoryWriteReceipt {
     revision: CanonicalMemoryDigest,
     created: bool,
     canonical_bytes: u64,
+    publication_status: LocalMemoryFilePublicationStatus,
 }
 
 impl LocalMemoryWriteReceipt {
@@ -96,6 +105,12 @@ impl LocalMemoryWriteReceipt {
     #[must_use]
     pub const fn canonical_bytes(self) -> u64 {
         self.canonical_bytes
+    }
+
+    /// Returns categorical truth about work attempted after atomic publication.
+    #[must_use]
+    pub const fn publication_status(self) -> LocalMemoryFilePublicationStatus {
+        self.publication_status
     }
 }
 
@@ -139,7 +154,9 @@ fn write_with_faults(
     let current = current_record(&worktree, record_id, cancelled.as_ref(), deadline)?;
     let created = validate_update(parsed.record(), current.as_ref())?;
     let target = target_name(record_id);
-    publish_with_faults(
+    let canonical_bytes = u64::try_from(canonical.len())
+        .map_err(|_| LocalMemoryManageError::CountNotRepresentable)?;
+    let publication_status = publish_with_faults(
         &records,
         &worktree,
         &target,
@@ -152,8 +169,8 @@ fn write_with_faults(
     Ok(LocalMemoryWriteReceipt {
         revision: parsed.digest(),
         created,
-        canonical_bytes: u64::try_from(canonical.len())
-            .map_err(|_| LocalMemoryManageError::CountNotRepresentable)?,
+        canonical_bytes,
+        publication_status,
     })
 }
 
@@ -235,12 +252,13 @@ fn open_records_directory(
     worktree: &Path,
     cancelled: &AtomicBool,
     deadline: Instant,
-) -> Result<(Dir, std::fs::File), LocalMemoryManageError> {
+) -> Result<(RecordsDirectoryAuthority, std::fs::File), LocalMemoryManageError> {
     let root = Dir::open_ambient_dir(worktree, ambient_authority())
         .map_err(|_| LocalMemoryManageError::RepositoryUnavailable)?;
     let memory = open_or_create_directory(&root, OsStr::new(".code-memory"))?;
     let lease = acquire_write_lease(&memory, cancelled, deadline)?;
     let records = open_or_create_directory(&memory, OsStr::new("records"))?;
+    let records = RecordsDirectoryAuthority::new(records, worktree)?;
     Ok((records, lease))
 }
 
@@ -341,7 +359,7 @@ fn validate_update(
     reason = "the private publication seam keeps every fault stage deterministic without widening public APIs"
 )]
 fn publish_with_faults(
-    records: &Dir,
+    records_authority: &RecordsDirectoryAuthority,
     worktree: &Path,
     target: &OsStr,
     canonical: &[u8],
@@ -349,13 +367,14 @@ fn publish_with_faults(
     cancelled: &AtomicBool,
     deadline: Instant,
     faults: &mut impl PublicationFaultInjector,
-) -> Result<(), LocalMemoryManageError> {
+) -> Result<LocalMemoryFilePublicationStatus, LocalMemoryManageError> {
+    let records = records_authority.directory();
     check_control(cancelled, deadline)?;
     faults.check(PublicationStage::OpenDirectorySync)?;
     let directory_sync = open_directory_sync_handle(records)?;
     faults.check(PublicationStage::CreateTemporary)?;
     let (temporary, mut file) = create_temporary(records)?;
-    let outcome = (|| {
+    let publication = (|| {
         faults.check(PublicationStage::WriteTemporary)?;
         file.write_all(canonical)
             .map_err(|_| LocalMemoryManageError::FilePublicationFailed)?;
@@ -379,6 +398,7 @@ fn publish_with_faults(
         match current {
             None => {
                 faults.check(PublicationStage::PublishTarget)?;
+                records_authority.verify_current_path()?;
                 records
                     .hard_link(&temporary, records, target)
                     .map_err(|error| {
@@ -392,27 +412,74 @@ fn publish_with_faults(
             Some(expected) => {
                 revalidate_current(worktree, target, expected, cancelled, deadline)?;
                 faults.check(PublicationStage::PublishTarget)?;
+                records_authority.verify_current_path()?;
                 records
                     .rename(&temporary, records, target)
                     .map_err(|_| LocalMemoryManageError::FilePublicationFailed)?;
             }
         }
-        if current.is_none() {
-            faults.check(PublicationStage::RemoveTemporary)?;
+        Ok(identity)
+    })();
+    let identity = match publication {
+        Ok(identity) => identity,
+        Err(error) => {
+            if faults.check(PublicationStage::CleanupTemporary).is_ok() {
+                let _ = records.remove_file(&temporary);
+            }
+            return Err(error);
+        }
+    };
+
+    let temporary_cleanup = if current.is_none() {
+        post_commit_step(faults, PublicationStage::RemoveTemporary, || {
+            check_control(cancelled, deadline)?;
             records
                 .remove_file(&temporary)
-                .map_err(|_| LocalMemoryManageError::FilePublicationFailed)?;
-        }
-        faults.check(PublicationStage::VerifyTarget)?;
-        verify_published_target(records, target, &identity, canonical, cancelled, deadline)?;
-        faults.check(PublicationStage::SyncDirectory)?;
-        sync_directory(&directory_sync)?;
-        Ok(())
-    })();
-    if outcome.is_err() && faults.check(PublicationStage::CleanupTemporary).is_ok() {
-        let _ = records.remove_file(&temporary);
+                .map_err(|_| LocalMemoryManageError::FilePublicationFailed)
+        })
+    } else {
+        MemoryFilePublicationStepStatus::NotRequired
+    };
+    let target_identity = if faults.check(PublicationStage::VerifyTarget).is_ok()
+        && verify_published_target(records, target, &identity, canonical, cancelled, deadline)
+            .is_ok()
+    {
+        MemoryFileIdentityStatus::ConfirmedAtFinalFence
+    } else {
+        MemoryFileIdentityStatus::ChangedAfterCommit
+    };
+    let directory_sync = post_commit_step(faults, PublicationStage::SyncDirectory, || {
+        check_control(cancelled, deadline)?;
+        sync_directory(&directory_sync)
+    });
+    let records_directory_identity = if faults
+        .check(PublicationStage::VerifyRecordsDirectory)
+        .is_ok()
+        && records_authority.verify_current_path().is_ok()
+    {
+        MemoryFileIdentityStatus::ConfirmedAtFinalFence
+    } else {
+        MemoryFileIdentityStatus::ChangedAfterCommit
+    };
+
+    Ok(LocalMemoryFilePublicationStatus::new(
+        temporary_cleanup,
+        target_identity,
+        records_directory_identity,
+        directory_sync,
+    ))
+}
+
+fn post_commit_step(
+    faults: &mut impl PublicationFaultInjector,
+    stage: PublicationStage,
+    operation: impl FnOnce() -> Result<(), LocalMemoryManageError>,
+) -> MemoryFilePublicationStepStatus {
+    if faults.check(stage).is_ok() && operation().is_ok() {
+        MemoryFilePublicationStepStatus::Complete
+    } else {
+        MemoryFilePublicationStepStatus::Deferred
     }
-    outcome
 }
 
 fn create_temporary(records: &Dir) -> Result<(OsString, File), LocalMemoryManageError> {
@@ -554,12 +621,9 @@ fn open_directory_sync_handle(
 
 #[cfg(not(unix))]
 fn open_directory_sync_handle(
-    directory: &Dir,
+    _directory: &Dir,
 ) -> Result<DirectorySyncHandle, LocalMemoryManageError> {
-    directory
-        .try_clone()
-        .map(Dir::into_std_file)
-        .map_err(|_| LocalMemoryManageError::FilePublicationFailed)
+    Ok(DirectorySyncHandle)
 }
 
 #[cfg(unix)]
@@ -568,10 +632,8 @@ fn sync_directory(directory: &DirectorySyncHandle) -> Result<(), LocalMemoryMana
 }
 
 #[cfg(not(unix))]
-fn sync_directory(directory: &DirectorySyncHandle) -> Result<(), LocalMemoryManageError> {
-    directory
-        .sync_all()
-        .map_err(|_| LocalMemoryManageError::FilePublicationFailed)
+fn sync_directory(_directory: &DirectorySyncHandle) -> Result<(), LocalMemoryManageError> {
+    Err(LocalMemoryManageError::FilePublicationFailed)
 }
 
 #[cfg(unix)]
@@ -582,8 +644,8 @@ fn has_one_link(metadata: &Metadata) -> bool {
 
 #[cfg(windows)]
 fn has_one_link(metadata: &Metadata) -> bool {
-    use cap_std::fs::MetadataExt as _;
-    metadata.number_of_links() == Some(1)
+    use cap_fs_ext::MetadataExt as _;
+    metadata.nlink() == 1
 }
 
 #[cfg(not(any(unix, windows)))]

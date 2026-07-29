@@ -42,7 +42,7 @@ fn pre_baseline_schema_versions_are_rejected_without_mutation() {
         let original_bytes = fs::read(&database).expect("legacy database should be readable");
         let error = open_index_writer(&database, 456)
             .expect_err("pre-baseline databases must require an explicit rebuild");
-        let expected = if legacy_version <= 2 {
+        let expected = if legacy_version <= 3 {
             SqliteStoreError::MigrationLedgerMismatch
         } else {
             SqliteStoreError::SchemaVersionMismatch
@@ -181,6 +181,10 @@ fn errors_are_stable_and_redacted() {
         SqliteStoreError::DatabaseOperationFailed,
         SqliteStoreError::CountNotRepresentable,
         SqliteStoreError::WorkspaceUnavailable,
+        SqliteStoreError::InvalidWorkspaceMembership,
+        SqliteStoreError::WorkspaceSourceSlotLimitExceeded,
+        SqliteStoreError::ConnectedWorkspaceUnavailable,
+        SqliteStoreError::InvalidWorkspaceView,
         SqliteStoreError::InvalidMemoryImport,
         SqliteStoreError::StaleSourceEpoch,
         SqliteStoreError::InvalidSourceEpoch,
@@ -193,6 +197,7 @@ fn errors_are_stable_and_redacted() {
         SqliteStoreError::WorkerUnavailable,
         SqliteStoreError::WorkerPanicked,
         SqliteStoreError::ReplyTimeout,
+        SqliteStoreError::MutationOutcomeUnknown,
         SqliteStoreError::InvalidSearchLimits,
         SqliteStoreError::InvalidProjectionRebuildLimits,
         SqliteStoreError::ProjectionRebuildRowLimitExceeded,

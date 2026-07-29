@@ -37,6 +37,7 @@ enum CliMemoryManageReport {
         revision: String,
         created: bool,
         canonical_bytes: u64,
+        publication: CliMemoryPublicationStatus,
     },
     Approve {
         revision: String,
@@ -56,6 +57,30 @@ enum CliMemoryManageReport {
         git_processes: u32,
         history_complete: bool,
     },
+}
+
+#[derive(Clone, Copy)]
+struct CliMemoryPublicationStatus {
+    complete: bool,
+    warning_count: u8,
+    temporary_cleanup: &'static str,
+    target_identity: &'static str,
+    records_directory_identity: &'static str,
+    directory_sync: &'static str,
+}
+
+impl CliMemoryPublicationStatus {
+    #[cfg(test)]
+    const fn complete() -> Self {
+        Self {
+            complete: true,
+            warning_count: 0,
+            temporary_cleanup: "complete",
+            target_identity: "confirmed_at_final_fence",
+            records_directory_identity: "confirmed_at_final_fence",
+            directory_sync: "complete",
+        }
+    }
 }
 
 fn manage_local_memory(
@@ -98,8 +123,37 @@ fn manage_local_memory_write(
         revision: hex(receipt.revision().as_bytes()),
         created: receipt.created(),
         canonical_bytes: receipt.canonical_bytes(),
+        publication: cli_memory_publication_status(receipt.publication_status()),
     })
     .map_err(|error| error.to_string())
+}
+
+fn cli_memory_publication_status(
+    status: repowitness_local::LocalMemoryFilePublicationStatus,
+) -> CliMemoryPublicationStatus {
+    CliMemoryPublicationStatus {
+        complete: status.is_complete(),
+        warning_count: status.warning_count(),
+        temporary_cleanup: cli_memory_publication_step(status.temporary_cleanup()),
+        target_identity: cli_memory_identity(status.target_identity()),
+        records_directory_identity: cli_memory_identity(status.records_directory_identity()),
+        directory_sync: cli_memory_publication_step(status.directory_sync()),
+    }
+}
+
+const fn cli_memory_identity(status: MemoryFileIdentityStatus) -> &'static str {
+    match status {
+        MemoryFileIdentityStatus::ConfirmedAtFinalFence => "confirmed_at_final_fence",
+        MemoryFileIdentityStatus::ChangedAfterCommit => "changed_after_commit",
+    }
+}
+
+const fn cli_memory_publication_step(status: MemoryFilePublicationStepStatus) -> &'static str {
+    match status {
+        MemoryFilePublicationStepStatus::NotRequired => "not_required",
+        MemoryFilePublicationStepStatus::Complete => "complete",
+        MemoryFilePublicationStepStatus::Deferred => "deferred",
+    }
 }
 
 fn manage_local_memory_approve(

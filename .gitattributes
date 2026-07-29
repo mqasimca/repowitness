@@ -1,0 +1,7 @@
+# The strict engineering-memory fixture bytes and generated golden outputs use LF only.
+crates/repowitness-local/tests/fixtures/memory-v1/* text eol=lf
+
+# These SQL files are embedded into checksummed persistent-schema inputs.
+crates/repowitness-local/src/sqlite/schema/*.sql text eol=lf
+crates/repowitness-local/src/sqlite/migrations/*.sql text eol=lf
+crates/repowitness-local/src/sqlite/writer/retention/*.sql text eol=lf

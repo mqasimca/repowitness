@@ -1,12 +1,31 @@
-fn prepare_with_artifact_reuse(
-    worktree: &Path,
-    database: &Path,
-    database_identity: Option<&FileIdentity>,
+struct ArtifactReusePreparationContext<'a> {
+    worktree: &'a Path,
+    database: &'a Path,
+    database_identity: Option<&'a FileIdentity>,
     artifacts: SourceArtifactIdentities,
-    preparation_limits: LocalRustIndexLimits,
-    cancelled: &Arc<AtomicBool>,
+    graph_identity: RustArtifactIdentity,
+    languages: SourceLanguageSelection,
+    package_scope: Option<&'a PackageScope>,
+    limits: LocalRustIndexLimits,
+    cancelled: &'a Arc<AtomicBool>,
     deadline: Instant,
+}
+
+fn prepare_with_artifact_reuse(
+    context: ArtifactReusePreparationContext<'_>,
 ) -> Result<crate::LocalRustIndexPreparation, LocalIndexError> {
+    let ArtifactReusePreparationContext {
+        worktree,
+        database,
+        database_identity,
+        artifacts,
+        graph_identity,
+        languages,
+        package_scope,
+        limits,
+        cancelled,
+        deadline,
+    } = context;
     let reuse_reader = if database.is_file() {
         match OwnedSqliteReader::start(database, deadline) {
             Ok(reader) => Some(reader),
@@ -16,18 +35,45 @@ fn prepare_with_artifact_reuse(
     } else {
         None
     };
-    let preparation = prepare_local_source_index_excluding_identity_with_reuse(
-        worktree,
-        artifacts,
-        preparation_limits,
-        cancelled.as_ref(),
-        database_identity,
+    let reuse_request = match package_scope {
+        Some(package_scope) => LocalSourceIndexReuseRequest::new_scoped(
+            worktree,
+            artifacts,
+            graph_identity,
+            languages,
+            package_scope,
+            limits,
+            cancelled.as_ref(),
+            database_identity,
+        ),
+        None => LocalSourceIndexReuseRequest::new(
+            worktree,
+            artifacts,
+            languages,
+            limits,
+            cancelled.as_ref(),
+            database_identity,
+        ),
+    };
+    let preparation = prepare_local_source_index_excluding_identity_with_full_reuse(
+        reuse_request,
         |language, requested, load_deadline| match &reuse_reader {
             Some(reader) => reader.load_reusable_artifacts_for_language(
                 requested,
                 language,
                 artifacts.for_language(language),
-                preparation_limits.preparation(),
+                limits.preparation(),
+                Arc::clone(cancelled),
+                load_deadline,
+            ),
+            None => Ok(Default::default()),
+        },
+        |requested, load_deadline| match &reuse_reader {
+            Some(reader) => reader.load_reusable_graph_artifacts(
+                requested,
+                graph_identity,
+                limits.preparation(),
+                repowitness_analysis::RustGraphAnalysisLimits::DEFAULT,
                 Arc::clone(cancelled),
                 load_deadline,
             ),
@@ -45,6 +91,266 @@ fn prepare_with_artifact_reuse(
             .map_err(|source| LocalIndexError::ArtifactReuse { source })?;
     }
     Ok(preparation)
+}
+
+struct LocalIndexPublicationPreparationContext<'a> {
+    worktree: &'a Path,
+    database: &'a Path,
+    database_identity: Option<&'a FileIdentity>,
+    repository: repowitness_domain::RepositoryIdentityDigest,
+    configuration_digest: ConfigurationDigest,
+    languages: SourceLanguageSelection,
+    limits: LocalRustIndexLimits,
+    cancelled: &'a Arc<AtomicBool>,
+    deadline: Instant,
+}
+
+fn prepare_local_index_publication(
+    context: LocalIndexPublicationPreparationContext<'_>,
+) -> Result<(PreparedLocalIndexPublication, ReportInput), LocalIndexError> {
+    let artifacts = phase0_local_source_artifact_identities();
+    let preparation = prepare_with_artifact_reuse(ArtifactReusePreparationContext {
+        worktree: context.worktree,
+        database: context.database,
+        database_identity: context.database_identity,
+        artifacts,
+        graph_identity: phase1_rust_graph_artifact_identity(),
+        languages: context.languages,
+        package_scope: None,
+        limits: remaining_preparation_limits(context.limits, context.deadline)?,
+        cancelled: context.cancelled,
+        deadline: context.deadline,
+    })?;
+    let report_input = ReportInput::from_preparation(&preparation);
+    let snapshot_profile =
+        phase0_local_source_snapshot_profile(artifacts, context.configuration_digest);
+    let identity = RustSourceSnapshotIdentity::new_supported_languages(
+        context.repository,
+        preparation.git_state(),
+        preparation.worktree_state(),
+        snapshot_profile.configuration,
+        snapshot_profile.producer_manifest,
+        snapshot_profile.analysis_schema,
+        snapshot_profile.canonicalization_version,
+    );
+    let coverage = RustIndexCoverage::new(
+        report_input.indexed_files,
+        report_input.skipped_paths()?,
+        report_input.syntax_error_nodes,
+        0,
+    );
+    let confirmed_database_identity = database_alias_identity(context.database)?;
+    if confirmed_database_identity.as_ref() != context.database_identity {
+        return Err(LocalIndexError::DatabaseChangedDuringIndexing);
+    }
+
+    let (prepared, graph_artifacts) = preparation.into_prepared_parts();
+    let graph = prepare_local_rust_graph_projection(
+        context.repository,
+        &prepared,
+        graph_artifacts,
+        context.cancelled.as_ref(),
+        context.deadline,
+    )
+    .map_err(|source| LocalIndexError::GraphPreparation { source })?;
+    Ok((
+        PreparedLocalIndexPublication {
+            identity,
+            prepared,
+            graph,
+            coverage,
+        },
+        report_input,
+    ))
+}
+
+struct ScopedLocalIndexPublicationPreparationContext<'a> {
+    worktree: &'a Path,
+    database: &'a Path,
+    database_identity: Option<&'a FileIdentity>,
+    connected_workspace: repowitness_domain::ConnectedWorkspaceId,
+    source_slot: repowitness_domain::SourceSlotId,
+    repository: repowitness_domain::RepositoryIdentityDigest,
+    configuration_digest: ConfigurationDigest,
+    languages: SourceLanguageSelection,
+    package_scope: &'a PackageScope,
+    limits: LocalRustIndexLimits,
+    cancelled: &'a Arc<AtomicBool>,
+    deadline: Instant,
+}
+
+fn prepare_scoped_local_index_publication(
+    context: ScopedLocalIndexPublicationPreparationContext<'_>,
+) -> Result<(PreparedLocalIndexPublication, ReportInput), LocalIndexError> {
+    let scoped_configuration =
+        connected_scope_configuration(context.configuration_digest, context.package_scope);
+    let artifacts = connected_scope_source_artifact_identities(scoped_configuration);
+    let graph_identity = connected_scope_artifact_identity(
+        phase1_rust_graph_artifact_identity(),
+        scoped_configuration,
+    );
+    let preparation = prepare_with_artifact_reuse(ArtifactReusePreparationContext {
+        worktree: context.worktree,
+        database: context.database,
+        database_identity: context.database_identity,
+        artifacts,
+        graph_identity,
+        languages: context.languages,
+        package_scope: Some(context.package_scope),
+        limits: remaining_preparation_limits(context.limits, context.deadline)?,
+        cancelled: context.cancelled,
+        deadline: context.deadline,
+    })?;
+    let report_input = ReportInput::from_preparation(&preparation);
+    let snapshot_profile = phase0_local_source_snapshot_profile(artifacts, scoped_configuration);
+    let identity = RustSourceSnapshotIdentity::new_supported_languages(
+        context.repository,
+        preparation.git_state(),
+        preparation.worktree_state(),
+        snapshot_profile.configuration,
+        snapshot_profile.producer_manifest,
+        snapshot_profile.analysis_schema,
+        snapshot_profile.canonicalization_version,
+    );
+    let coverage = RustIndexCoverage::new(
+        report_input.indexed_files,
+        report_input.skipped_paths()?,
+        report_input.syntax_error_nodes,
+        0,
+    );
+    let confirmed_database_identity = database_alias_identity(context.database)?;
+    if confirmed_database_identity.as_ref() != context.database_identity {
+        return Err(LocalIndexError::DatabaseChangedDuringIndexing);
+    }
+
+    let (prepared, graph_artifacts) = preparation.into_prepared_parts();
+    let graph = prepare_local_rust_graph_projection_for_source_slot(
+        context.connected_workspace,
+        context.source_slot,
+        &prepared,
+        graph_artifacts,
+        context.cancelled.as_ref(),
+        context.deadline,
+    )
+    .map_err(|source| LocalIndexError::GraphPreparation { source })?;
+    Ok((
+        PreparedLocalIndexPublication {
+            identity,
+            prepared,
+            graph,
+            coverage,
+        },
+        report_input,
+    ))
+}
+
+fn connected_scope_configuration(
+    configuration: ConfigurationDigest,
+    package_scope: &PackageScope,
+) -> ConfigurationDigest {
+    let mut hasher = Sha256::new();
+    hasher.update(CONNECTED_SCOPE_CONFIGURATION_DOMAIN);
+    hasher.update(CONNECTED_SCOPE_CONFIGURATION_VERSION.to_be_bytes());
+    hasher.update(configuration.as_bytes());
+    hasher.update(package_scope.semantic_digest().as_bytes());
+    ConfigurationDigest::new(hasher.finalize().into())
+}
+
+fn connected_scope_source_artifact_identities(
+    scoped_configuration: ConfigurationDigest,
+) -> SourceArtifactIdentities {
+    let base = phase0_local_source_artifact_identities();
+    SourceArtifactIdentities::new(
+        connected_scope_artifact_identity(
+            base.for_language(SourceLanguage::Rust),
+            scoped_configuration,
+        ),
+        connected_scope_artifact_identity(
+            base.for_language(SourceLanguage::Go),
+            scoped_configuration,
+        ),
+        connected_scope_artifact_identity(
+            base.for_language(SourceLanguage::TypeScript),
+            scoped_configuration,
+        ),
+        connected_scope_artifact_identity(
+            base.for_language(SourceLanguage::Tsx),
+            scoped_configuration,
+        ),
+        connected_scope_artifact_identity(
+            base.for_language(SourceLanguage::Python),
+            scoped_configuration,
+        ),
+    )
+}
+
+fn connected_scope_artifact_identity(
+    base: RustArtifactIdentity,
+    scoped_configuration: ConfigurationDigest,
+) -> RustArtifactIdentity {
+    let mut hasher = Sha256::new();
+    hasher.update(CONNECTED_SCOPE_ARTIFACT_CONFIGURATION_DOMAIN);
+    hasher.update(CONNECTED_SCOPE_CONFIGURATION_VERSION.to_be_bytes());
+    hasher.update(base.configuration().as_bytes());
+    hasher.update(scoped_configuration.as_bytes());
+    RustArtifactIdentity::new(
+        base.producer_manifest(),
+        ConfigurationDigest::new(hasher.finalize().into()),
+        base.schema(),
+        base.canonicalization_version(),
+    )
+}
+
+fn resolved_index_configuration(
+    explicit: Option<&ResolvedConfiguration>,
+) -> Result<Cow<'_, ResolvedConfiguration>, LocalIndexError> {
+    explicit.map_or_else(
+        || {
+            resolve_configuration(&[])
+                .map(Cow::Owned)
+                .map_err(|source| LocalIndexError::ConfigurationResolution { source })
+        },
+        |configuration| Ok(Cow::Borrowed(configuration)),
+    )
+}
+
+fn configured_index_inputs(
+    limits: LocalRustIndexLimits,
+    configuration: &ResolvedConfiguration,
+) -> Result<(LocalRustIndexLimits, SourceLanguageSelection), LocalIndexError> {
+    let source_read = limits.source_read();
+    let source_file_bytes = source_read
+        .file_bytes()
+        .min(*configuration.policy().max_source_file_bytes().effective());
+    let source_read = crate::SourceReadLimits::try_new(
+        source_read.deadline(),
+        source_file_bytes,
+        source_read.read_chunk_bytes(),
+    )
+    .map_err(|_| LocalIndexError::InvalidEffectiveConfiguration)?;
+
+    let preparation = limits.preparation();
+    let max_files = preparation
+        .max_files()
+        .min(*configuration.policy().max_source_files().effective());
+    let preparation = repowitness_application::RustIndexLimits::try_new(
+        max_files,
+        preparation.max_total_source_bytes(),
+        preparation.max_total_facts(),
+        preparation.per_file(),
+    )
+    .map_err(|_| LocalIndexError::InvalidEffectiveConfiguration)?;
+
+    let limits = LocalRustIndexLimits::new(
+        limits.deadline(),
+        limits.discovery(),
+        source_read,
+        preparation,
+    );
+    let languages = SourceLanguageSelection::from_allowed(
+        configuration.policy().allowed_languages().effective(),
+    );
+    Ok((limits, languages))
 }
 
 fn remaining_preparation_limits(
@@ -176,7 +482,7 @@ fn extend_local_artifact_identity(
     )
 }
 
-pub(super) fn local_producer_implementation_fingerprint_inputs() -> [&'static [u8]; 11] {
+pub(super) fn local_producer_implementation_fingerprint_inputs() -> [&'static [u8]; 12] {
     [
         include_bytes!("../contained_source.rs"),
         include_bytes!("../contained_source/exact_session.rs"),
@@ -188,6 +494,7 @@ pub(super) fn local_producer_implementation_fingerprint_inputs() -> [&'static [u
         include_bytes!("../source_state.rs"),
         include_bytes!("../source_state/parsing.rs"),
         include_bytes!("../local_index.rs"),
+        include_bytes!("../local_index/final_fence.rs"),
         include_bytes!("../local_index/preparation.rs"),
     ]
 }
@@ -202,6 +509,7 @@ struct LocalSourceSnapshotProfile {
 
 fn phase0_local_source_snapshot_profile(
     artifacts: SourceArtifactIdentities,
+    resolved_configuration: ConfigurationDigest,
 ) -> LocalSourceSnapshotProfile {
     let base = phase0_source_snapshot_profile();
     let mut hasher = Sha256::new();
@@ -219,8 +527,13 @@ fn phase0_local_source_snapshot_profile(
         update_length_prefixed(&mut hasher, language.as_str().as_bytes());
         hasher.update(artifact.producer_manifest().as_bytes());
     }
+    let mut configuration_hasher = Sha256::new();
+    configuration_hasher.update(LOCAL_SNAPSHOT_CONFIGURATION_DOMAIN);
+    configuration_hasher.update(LOCAL_SNAPSHOT_CONFIGURATION_VERSION.to_be_bytes());
+    configuration_hasher.update(base.configuration().as_bytes());
+    configuration_hasher.update(resolved_configuration.as_bytes());
     LocalSourceSnapshotProfile {
-        configuration: base.configuration(),
+        configuration: ConfigurationDigest::new(configuration_hasher.finalize().into()),
         producer_manifest: ProducerManifestDigest::new(hasher.finalize().into()),
         analysis_schema: base.analysis_schema(),
         canonicalization_version: base.canonicalization_version(),
@@ -241,6 +554,7 @@ struct ReportInput {
     indexed_typescript_files: u64,
     indexed_tsx_files: u64,
     indexed_python_files: u64,
+    skipped_policy_paths: u64,
     skipped_unsupported_paths: u64,
     total_source_bytes: u64,
     total_facts: u64,
@@ -268,6 +582,7 @@ impl ReportInput {
             indexed_typescript_files: preparation.selected_typescript_files(),
             indexed_tsx_files: preparation.selected_tsx_files(),
             indexed_python_files: preparation.selected_python_files(),
+            skipped_policy_paths: preparation.skipped_policy_paths(),
             skipped_unsupported_paths: preparation.skipped_unsupported_paths(),
             total_source_bytes: preparation.prepared().total_source_bytes(),
             total_facts: preparation.prepared().total_facts(),
@@ -287,6 +602,14 @@ impl ReportInput {
             analyzed_python_files: preparation.prepared().analyzed_python_files(),
         }
     }
+
+    fn skipped_paths(&self) -> Result<u64, LocalIndexError> {
+        self.skipped_policy_paths
+            .checked_add(self.skipped_unsupported_paths)
+            .ok_or(LocalIndexError::Preparation {
+                source: LocalRustIndexError::SourceByteCountOverflowed,
+            })
+    }
 }
 
 fn activated_report(
@@ -305,6 +628,7 @@ fn activated_report(
         indexed_typescript_files: input.indexed_typescript_files,
         indexed_tsx_files: input.indexed_tsx_files,
         indexed_python_files: input.indexed_python_files,
+        skipped_policy_paths: input.skipped_policy_paths,
         skipped_unsupported_paths: input.skipped_unsupported_paths,
         total_source_bytes: input.total_source_bytes,
         total_facts: input.total_facts,

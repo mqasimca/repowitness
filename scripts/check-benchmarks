@@ -694,4 +694,6 @@ if (@errors) {
     exit 1;
 }
 
+system('perl', './scripts/check-phase1-benchmarks') == 0
+  or exit 1;
 print 'benchmark checks passed for ', scalar(@manifests), " manifest(s)\n";

@@ -79,7 +79,7 @@ impl std::error::Error for ByteSpanError {}
 /// Empty spans are valid and identify a point or insertion boundary. Content
 /// owners must separately validate that both offsets are within the referenced
 /// blob.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct ByteSpan {
     start: ByteOffset,
     end: ByteOffset,

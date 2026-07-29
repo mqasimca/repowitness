@@ -42,17 +42,57 @@ fn manage_mcp_memory_write(
             record_yaml.as_bytes(),
             &service.repository_identity,
         )
+        .with_configuration(&service.configuration)
         .with_deadline(timeout),
         cancelled,
     )
     .map(|receipt| {
-        MemoryManageOutput::write(
+        MemoryManageOutput::write_with_publication(
             hex(receipt.revision().as_bytes()),
             receipt.created(),
             receipt.canonical_bytes(),
+            mcp_memory_publication_status(receipt.publication_status()),
         )
     })
     .map_err(|_| RepositoryServiceError::MemoryManage)
+}
+
+fn mcp_memory_publication_status(
+    status: repowitness_local::LocalMemoryFilePublicationStatus,
+) -> MemoryManagePublicationStatus {
+    MemoryManagePublicationStatus {
+        complete: status.is_complete(),
+        warning_count: status.warning_count(),
+        temporary_cleanup: mcp_memory_publication_step(status.temporary_cleanup()),
+        target_identity: mcp_memory_identity(status.target_identity()),
+        records_directory_identity: mcp_memory_identity(status.records_directory_identity()),
+        directory_sync: mcp_memory_publication_step(status.directory_sync()),
+    }
+}
+
+const fn mcp_memory_identity(
+    status: MemoryFileIdentityStatus,
+) -> MemoryManageFileIdentityStatus {
+    match status {
+        MemoryFileIdentityStatus::ConfirmedAtFinalFence => {
+            MemoryManageFileIdentityStatus::ConfirmedAtFinalFence
+        }
+        MemoryFileIdentityStatus::ChangedAfterCommit => {
+            MemoryManageFileIdentityStatus::ChangedAfterCommit
+        }
+    }
+}
+
+const fn mcp_memory_publication_step(
+    status: MemoryFilePublicationStepStatus,
+) -> MemoryManagePublicationStepStatus {
+    match status {
+        MemoryFilePublicationStepStatus::NotRequired => {
+            MemoryManagePublicationStepStatus::NotRequired
+        }
+        MemoryFilePublicationStepStatus::Complete => MemoryManagePublicationStepStatus::Complete,
+        MemoryFilePublicationStepStatus::Deferred => MemoryManagePublicationStepStatus::Deferred,
+    }
 }
 
 fn manage_mcp_memory_approve(
@@ -75,6 +115,7 @@ fn manage_mcp_memory_approve(
             now,
             now,
         )
+        .with_configuration(&service.configuration)
         .with_deadline(timeout),
         cancelled,
     )
@@ -130,6 +171,7 @@ fn manage_mcp_memory_review(
             now,
             now,
         )
+        .with_configuration(&service.configuration)
         .with_deadline(timeout),
         cancelled,
     )
@@ -156,6 +198,7 @@ fn manage_mcp_memory_history(
             now,
             now,
         )
+        .with_configuration(&service.configuration)
         .with_deadline(timeout),
         cancelled,
     )

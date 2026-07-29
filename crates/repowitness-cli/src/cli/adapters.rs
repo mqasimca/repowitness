@@ -19,13 +19,21 @@ struct IndexInvocation {
 }
 
 trait RepositoryIndexer {
-    fn index(&self, invocation: &IndexInvocation) -> Result<CliIndexReport, String>;
+    fn index(
+        &self,
+        invocation: &IndexInvocation,
+        configuration: &ResolvedConfiguration,
+    ) -> Result<CliIndexReport, String>;
 }
 
 struct LocalRepositoryIndexer;
 
 impl RepositoryIndexer for LocalRepositoryIndexer {
-    fn index(&self, invocation: &IndexInvocation) -> Result<CliIndexReport, String> {
+    fn index(
+        &self,
+        invocation: &IndexInvocation,
+        configuration: &ResolvedConfiguration,
+    ) -> Result<CliIndexReport, String> {
         let repository_identity = invocation
             .repository_identity
             .to_str()
@@ -41,7 +49,8 @@ impl RepositoryIndexer for LocalRepositoryIndexer {
                 &invocation.database,
                 repository_identity,
                 applied_at_unix_ms,
-            ),
+            )
+            .with_configuration(configuration),
             Arc::new(AtomicBool::new(false)),
         )
         .map(CliIndexReport::from)
@@ -57,13 +66,21 @@ struct SearchInvocation {
 }
 
 trait RepositorySearcher {
-    fn search(&self, invocation: &SearchInvocation) -> Result<CliSearchReport, String>;
+    fn search(
+        &self,
+        invocation: &SearchInvocation,
+        configuration: &ResolvedConfiguration,
+    ) -> Result<CliSearchReport, String>;
 }
 
 struct LocalRepositorySearcher;
 
 impl RepositorySearcher for LocalRepositorySearcher {
-    fn search(&self, invocation: &SearchInvocation) -> Result<CliSearchReport, String> {
+    fn search(
+        &self,
+        invocation: &SearchInvocation,
+        configuration: &ResolvedConfiguration,
+    ) -> Result<CliSearchReport, String> {
         let repository_identity = invocation
             .repository_identity
             .to_str()
@@ -74,7 +91,8 @@ impl RepositorySearcher for LocalRepositorySearcher {
             .ok_or_else(|| "query text is not valid UTF-8".to_owned())?;
         let request = LocalCodeSearchRequest::new(&invocation.database, repository_identity, query)
             .with_max_results(invocation.max_results)
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| error.to_string())?
+            .with_configuration(configuration);
         search_local_index(request, Arc::new(AtomicBool::new(false)))
             .map_err(|error| error.to_string())
             .and_then(CliSearchReport::try_from)
@@ -369,126 +387,6 @@ fn is_unicode_display_control(character: char) -> bool {
     )
 }
 
-struct LocalMcpRepositoryService {
-    root: PathBuf,
-    database: PathBuf,
-    repository_identity: String,
-    memory_actor: Option<String>,
-}
-
-impl RepositoryService for LocalMcpRepositoryService {
-    fn code_search(
-        &self,
-        request: CodeSearchServiceRequest,
-        cancelled: Arc<AtomicBool>,
-    ) -> Result<CodeSearchOutput, RepositoryServiceError> {
-        let local_request =
-            LocalCodeSearchRequest::new(&self.database, &self.repository_identity, request.query())
-                .with_max_results(request.max_results())
-                .map_err(|_| RepositoryServiceError::CodeSearch)?
-                .with_deadline(request.timeout());
-        search_local_index(local_request, cancelled)
-            .map_err(|_| RepositoryServiceError::CodeSearch)
-            .and_then(|result| {
-                mcp_search_output(result).map_err(|_| RepositoryServiceError::CodeSearch)
-            })
-    }
-
-    fn context_build(
-        &self,
-        request: ContextBuildServiceRequest,
-        cancelled: Arc<AtomicBool>,
-    ) -> Result<ContextBuildOutput, RepositoryServiceError> {
-        let local_request = LocalContextBuildRequest::new(
-            &self.root,
-            &self.database,
-            &self.repository_identity,
-            request.intent(),
-        )
-        .with_budget_units(request.budget_units())
-        .map_err(|_| RepositoryServiceError::ContextBuild)?
-        .with_max_provider_results(request.max_provider_results())
-        .map_err(|_| RepositoryServiceError::ContextBuild)?
-        .with_deadline(request.timeout());
-        build_local_context(local_request, cancelled)
-            .map_err(|_| RepositoryServiceError::ContextBuild)
-            .and_then(|result| {
-                mcp_context_output(result).map_err(|_| RepositoryServiceError::ContextBuild)
-            })
-    }
-
-    fn diagnostics(
-        &self,
-        request: DiagnosticsServiceRequest,
-        cancelled: Arc<AtomicBool>,
-    ) -> Result<DiagnosticsOutput, RepositoryServiceError> {
-        let local_request =
-            LocalRepositoryDiagnosticsRequest::new(&self.database, &self.repository_identity)
-                .with_deadline(request.timeout());
-        diagnose_local_repository(local_request, cancelled)
-            .map_err(|_| RepositoryServiceError::Diagnostics)
-            .map(mcp_diagnostics_output)
-    }
-
-    fn memory_recall(
-        &self,
-        request: MemoryRecallServiceRequest,
-        cancelled: Arc<AtomicBool>,
-    ) -> Result<MemoryRecallOutput, RepositoryServiceError> {
-        let selection = match request.selection() {
-            MemoryRecallServiceSelection::All => LocalMemoryRecallSelection::All,
-            MemoryRecallServiceSelection::Query(query) => {
-                LocalMemoryRecallSelection::Query(query.as_str())
-            }
-        };
-        let local_request =
-            LocalMemoryRecallRequest::new(&self.database, &self.repository_identity, selection)
-                .with_max_results(request.max_results())
-                .map_err(|_| RepositoryServiceError::MemoryRecall)?
-                .with_deadline(request.timeout());
-        recall_local_memory(local_request, cancelled)
-            .map_err(|_| RepositoryServiceError::MemoryRecall)
-            .and_then(|result| {
-                mcp_memory_output(result).map_err(|_| RepositoryServiceError::MemoryRecall)
-            })
-    }
-
-    fn memory_manage(
-        &self,
-        request: MemoryManageServiceRequest,
-        cancelled: Arc<AtomicBool>,
-    ) -> Result<MemoryManageOutput, RepositoryServiceError> {
-        manage_mcp_memory(self, request, cancelled)
-    }
-
-    fn symbol_get(
-        &self,
-        request: SymbolGetServiceRequest,
-        cancelled: Arc<AtomicBool>,
-    ) -> Result<SymbolGetOutput, RepositoryServiceError> {
-        let selector = LocalSymbolSelectorText::new(
-            request.snapshot_sha256(),
-            request.generation(),
-            request.path(),
-            request.content_sha256(),
-            request.artifact_sha256(),
-            request.fact_ordinal(),
-        );
-        let local_request = LocalSymbolGetRequest::new(
-            &self.root,
-            &self.database,
-            &self.repository_identity,
-            selector,
-        )
-        .with_deadline(request.timeout());
-        get_local_symbol(local_request, cancelled)
-            .map_err(|_| RepositoryServiceError::SymbolGet)
-            .and_then(|result| {
-                mcp_symbol_output(result).map_err(|_| RepositoryServiceError::SymbolGet)
-            })
-    }
-}
-
 fn mcp_search_output(result: LocalCodeSearchResult) -> Result<CodeSearchOutput, String> {
     let mut matches = Vec::with_capacity(result.evidence().as_slice().len());
     for evidence in result.evidence().as_slice() {
@@ -618,6 +516,7 @@ struct CliIndexReport {
     indexed_typescript_files: u64,
     indexed_tsx_files: u64,
     indexed_python_files: u64,
+    skipped_policy_paths: u64,
     skipped_unsupported_paths: u64,
     total_source_bytes: u64,
     total_facts: u64,
@@ -647,6 +546,7 @@ impl From<LocalIndexReport> for CliIndexReport {
             indexed_typescript_files: report.indexed_typescript_files(),
             indexed_tsx_files: report.indexed_tsx_files(),
             indexed_python_files: report.indexed_python_files(),
+            skipped_policy_paths: report.skipped_policy_paths(),
             skipped_unsupported_paths: report.skipped_unsupported_paths(),
             total_source_bytes: report.total_source_bytes(),
             total_facts: report.total_facts(),

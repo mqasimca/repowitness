@@ -1,7 +1,7 @@
 # Engineering standard
 
 - Status: Active
-- Last reviewed: 2026-07-28
+- Last reviewed: 2026-07-29
 
 This document defines the default implementation and review standard. Exceptions require an ADR with motivation, scope, owner, tests, and a review or removal date.
 
@@ -296,12 +296,16 @@ The MCP server contract is tested at three levels: wire DTO and bounded-line
 unit tests; in-process SDK initialization, schema, tool, semaphore,
 cancellation, and encoded-output tests; and an installed-binary stdio
 round-trip. The black-box test indexes a temporary five-language worktree,
-negotiates MCP `2025-11-25`, lists exactly `context_build`, `code_search`,
-`diagnostics`, `memory_recall`, and `symbol_get`, retrieves exact declarations
-from every language, builds one exact UTF-8 source context, reindexes, and
-proves the old generation selector fails.
-Focused protocol tests cover the context, memory, and diagnostic schemas,
-read-only annotations, cancellation, backpressure, and encoded-output bounds.
+negotiates MCP `2025-11-25`, and lists exactly eleven read-only tools:
+`code_search`, `context_build`, `diagnostics`, `graph_architecture`,
+`graph_evidence`, `graph_search`, `graph_status`, `graph_trace`,
+`impact_analyze`, `memory_recall`, and `symbol_get`. It retrieves exact
+declarations from every language, builds one exact UTF-8 source context,
+round-trips Rust graph status/search/evidence/architecture/trace/impact,
+reindexes, and proves the old generation selector fails.
+Focused protocol tests cover context, memory, diagnostics, graph schemas,
+read-only annotations, exact view/generation pinning, categorical evidence,
+coverage, truncation, cancellation, backpressure, and encoded-output bounds.
 Stdout is parsed only as JSON-RPC and shutdown must leave stderr empty. A
 durable ignored variant exercises the same index-to-exact-retrieval-and-context
 path against a configured real supported-language worktree:
@@ -344,12 +348,14 @@ It covers release SQLite publication, exact unchanged and one-file
 incremental reuse, all required evidence targets, repeated query latency,
 canonical memory write and local approval, current/stale revalidation and
 context eligibility, default-read-only stdio MCP, database/WAL size, result
-size, and peak RSS. A dirty development run is provisional evidence; release
-attestation requires an exact clean RepoWitness revision and explicit
-ratification of the manifest budgets. The manifest pins ten warm-query
-samples. The manual `Phase 0 benchmark` GitHub Actions workflow runs this gate
+size, and peak RSS. A dirty development run is provisional evidence. Release
+attestation requires an exact clean RepoWitness revision and a reviewed
+manifest. The Phase 0 manifest pins ten warm-query samples and has ratified
+budgets. The manual `Phase 0 benchmark` GitHub Actions workflow runs this gate
 only from `main` on Ubuntu 24.04 with read-only repository permission and
-retains the public checksummed output for review.
+retains the public checksummed output for review. Its first clean attestation
+is recorded in the
+[Phase 0 release evidence](research/phase0-clean-benchmark-attestation-2026-07-29.md).
 
 The opt-in downstream-agent evaluation obtains the actual structured
 `context_build` result through stdio MCP and supplies it to an ephemeral
@@ -395,6 +401,7 @@ When the Rust workspace and dependency-policy configuration exist, the baseline 
 
 ```text
 cargo fmt --all -- --check
+./scripts/check-rust-source-lines
 cargo check --workspace --all-targets --all-features --locked
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo test --workspace --locked

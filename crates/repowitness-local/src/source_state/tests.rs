@@ -136,7 +136,7 @@ fn null_device() -> OsString {
 
 fn limits(paths: u64) -> GitPathDiscoveryLimits {
     GitPathDiscoveryLimits::new(
-        Duration::from_secs(1),
+        Duration::from_secs(5),
         4096,
         paths,
         RepositoryPathLimits::new(1024, 32),

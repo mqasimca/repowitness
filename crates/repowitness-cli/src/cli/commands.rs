@@ -5,8 +5,20 @@
 /// operation failure, and `74` for output failure. The `inspect-paths` command
 /// is read-only and never creates an index.
 pub fn run(args: impl IntoIterator<Item = OsString>, stdout: impl Write, stderr: impl Write) -> u8 {
+    let mut arguments = args.into_iter();
+    let program = arguments.next();
+    let command = arguments.next();
+    let is_watch = command.as_deref() == Some(OsStr::new("watch"));
+    let is_gc = command.as_deref() == Some(OsStr::new("gc"));
+    let arguments = program.into_iter().chain(command).chain(arguments);
+    if is_watch {
+        return run_watch(arguments, stdout, stderr);
+    }
+    if is_gc {
+        return run_gc(arguments, stdout, stderr);
+    }
     run_with_adapters(
-        args,
+        arguments,
         stdout,
         stderr,
         &LocalRepositoryPathInspector,
@@ -14,6 +26,7 @@ pub fn run(args: impl IntoIterator<Item = OsString>, stdout: impl Write, stderr:
         &LocalRepositorySearcher,
         &LocalRepositorySymbolGetter,
         &LocalRepositoryMemory,
+        &LocalConfigurationLoader,
     )
 }
 
@@ -30,6 +43,7 @@ fn run_with_adapters(
     searcher: &impl RepositorySearcher,
     symbol_getter: &impl RepositorySymbolGetter,
     memory: &impl RepositoryMemory,
+    configuration_loader: &impl ConfigurationLoader,
 ) -> u8 {
     let mut args = args.into_iter();
     let _program = args.next();
@@ -41,31 +55,37 @@ fn run_with_adapters(
         );
     };
 
-    if command == OsStr::new("--help") || command == OsStr::new("-h") {
-        if args.next().is_some() {
-            return emit_error(
-                &mut stderr,
-                EXIT_USAGE,
-                "error: --help accepts no additional arguments\n",
-            );
-        }
-        return emit_output(&mut stdout, HELP);
+    if let Some(exit) = run_metadata_command(
+        command.as_os_str(),
+        &mut args,
+        &mut stdout,
+        &mut stderr,
+    ) {
+        return exit;
     }
-    if command == OsStr::new("--version") || command == OsStr::new("-V") {
-        if args.next().is_some() {
-            return emit_error(
-                &mut stderr,
-                EXIT_USAGE,
-                "error: --version accepts no additional arguments\n",
-            );
-        }
-        return emit_version(&mut stdout);
+    if command == OsStr::new("identity") {
+        return run_identity(args, &mut stdout, &mut stderr, &OsIdentityGenerator);
+    }
+    if command == OsStr::new("config") {
+        return run_config(args, &mut stdout, &mut stderr, configuration_loader);
+    }
+    if command == OsStr::new("doctor") {
+        return run_doctor(args, &mut stdout, &mut stderr, configuration_loader);
     }
     if command == OsStr::new("inspect-paths") {
         return run_inspect_paths(args, &mut stdout, &mut stderr, inspector);
     }
     if command == OsStr::new("index") {
-        return run_index(args, &mut stdout, &mut stderr, indexer);
+        return run_index(
+            args,
+            &mut stdout,
+            &mut stderr,
+            indexer,
+            configuration_loader,
+        );
+    }
+    if command == OsStr::new("workspace") {
+        return run_workspace(args, &mut stdout, &mut stderr, configuration_loader);
     }
     if command == OsStr::new("context-build") {
         return run_context_build(
@@ -73,6 +93,7 @@ fn run_with_adapters(
             &mut stdout,
             &mut stderr,
             &LocalRepositoryContextBuilder,
+            configuration_loader,
         );
     }
     if command == OsStr::new("diagnostics") {
@@ -81,10 +102,26 @@ fn run_with_adapters(
             &mut stdout,
             &mut stderr,
             &LocalRepositoryDiagnosticsReader,
+            configuration_loader,
+        );
+    }
+    if command == OsStr::new("graph") {
+        return run_graph(
+            args,
+            &mut stdout,
+            &mut stderr,
+            &LocalRepositoryGraphReader,
+            configuration_loader,
         );
     }
     if command == OsStr::new("search") {
-        return run_search(args, &mut stdout, &mut stderr, searcher);
+        return run_search(
+            args,
+            &mut stdout,
+            &mut stderr,
+            searcher,
+            configuration_loader,
+        );
     }
     if command == OsStr::new("symbol-get") {
         return run_symbol_get(args, &mut stdout, &mut stderr, symbol_getter);
@@ -93,7 +130,13 @@ fn run_with_adapters(
         return run_memory_revalidate(args, &mut stdout, &mut stderr, memory);
     }
     if command == OsStr::new("memory-recall") {
-        return run_memory_recall(args, &mut stdout, &mut stderr, memory);
+        return run_memory_recall(
+            args,
+            &mut stdout,
+            &mut stderr,
+            memory,
+            configuration_loader,
+        );
     }
     if command == OsStr::new("memory-manage") {
         return run_memory_manage(args, &mut stdout, &mut stderr, memory);
@@ -106,11 +149,43 @@ fn run_with_adapters(
     )
 }
 
+fn run_metadata_command(
+    command: &OsStr,
+    args: &mut impl Iterator<Item = OsString>,
+    stdout: &mut impl Write,
+    stderr: &mut impl Write,
+) -> Option<u8> {
+    if command == OsStr::new("--help") || command == OsStr::new("-h") {
+        return Some(if args.next().is_some() {
+            emit_error(
+                stderr,
+                EXIT_USAGE,
+                "error: --help accepts no additional arguments\n",
+            )
+        } else {
+            emit_output(stdout, HELP)
+        });
+    }
+    if command == OsStr::new("--version") || command == OsStr::new("-V") {
+        return Some(if args.next().is_some() {
+            emit_error(
+                stderr,
+                EXIT_USAGE,
+                "error: --version accepts no additional arguments\n",
+            )
+        } else {
+            emit_version(stdout)
+        });
+    }
+    None
+}
+
 fn run_search(
     args: impl Iterator<Item = OsString>,
     stdout: &mut impl Write,
     stderr: &mut impl Write,
     searcher: &impl RepositorySearcher,
+    configuration_loader: &impl ConfigurationLoader,
 ) -> u8 {
     let arguments: Vec<OsString> = args.take(MAX_SEARCH_ARGUMENTS + 1).collect();
     if arguments.len() > MAX_SEARCH_ARGUMENTS {
@@ -124,11 +199,26 @@ fn run_search(
     {
         return emit_output(stdout, SEARCH_HELP);
     }
+    let (arguments, configuration_invocation) =
+        match extract_configuration_arguments(&arguments, &[]) {
+            Ok(parsed) => parsed,
+            Err(message) => return emit_error(stderr, EXIT_USAGE, message),
+        };
     let invocation = match parse_search_arguments(&arguments) {
         Ok(invocation) => invocation,
         Err(message) => return emit_error(stderr, EXIT_USAGE, message),
     };
-    match searcher.search(&invocation) {
+    let configuration = match configuration_loader.load(&configuration_invocation) {
+        Ok(configuration) => configuration,
+        Err(_) => {
+            return emit_error(
+                stderr,
+                EXIT_SOFTWARE,
+                "error: configuration resolution failed\n",
+            );
+        }
+    };
+    match searcher.search(&invocation, &configuration) {
         Ok(report) => emit_search_report(stdout, &report),
         Err(_) => emit_error(stderr, EXIT_SOFTWARE, "error: code search failed\n"),
     }
@@ -379,6 +469,7 @@ fn run_index(
     stdout: &mut impl Write,
     stderr: &mut impl Write,
     indexer: &impl RepositoryIndexer,
+    configuration_loader: &impl ConfigurationLoader,
 ) -> u8 {
     let arguments: Vec<OsString> = args.take(MAX_INDEX_ARGUMENTS + 1).collect();
     if arguments.len() > MAX_INDEX_ARGUMENTS {
@@ -393,11 +484,26 @@ fn run_index(
         return emit_output(stdout, INDEX_HELP);
     }
 
+    let (arguments, configuration_invocation) =
+        match extract_configuration_arguments(&arguments, &[]) {
+            Ok(parsed) => parsed,
+            Err(message) => return emit_error(stderr, EXIT_USAGE, message),
+        };
     let invocation = match parse_index_arguments(&arguments) {
         Ok(invocation) => invocation,
         Err(message) => return emit_error(stderr, EXIT_USAGE, message),
     };
-    match indexer.index(&invocation) {
+    let configuration = match configuration_loader.load(&configuration_invocation) {
+        Ok(configuration) => configuration,
+        Err(_) => {
+            return emit_error(
+                stderr,
+                EXIT_SOFTWARE,
+                "error: configuration resolution failed\n",
+            );
+        }
+    };
+    match indexer.index(&invocation, &configuration) {
         Ok(report) => emit_index_report(stdout, report),
         Err(_) => emit_error(stderr, EXIT_SOFTWARE, "error: indexing failed\n"),
     }

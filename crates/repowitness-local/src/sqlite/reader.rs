@@ -12,8 +12,11 @@ use std::{
 };
 
 use repowitness_analysis::{
-    RUST_CORRESPONDENCE_PROFILE_ID, RUST_CORRESPONDENCE_PROFILE_VERSION, RustAnalysisLimits,
-    RustOccurrenceFingerprint, RustSourceAnalysis, RustSymbolFact, RustSymbolKind,
+    RUST_CORRESPONDENCE_PROFILE_ID, RUST_CORRESPONDENCE_PROFILE_VERSION,
+    RUST_GRAPH_SITE_PROFILE_VERSION, RustAnalysisLimits, RustGraphAnalysisControl,
+    RustGraphAnalysisError, RustGraphAnalysisLimits, RustGraphEnclosingDefinition, RustGraphSite,
+    RustGraphSiteAnalysis, RustGraphSiteKind, RustGraphSiteOrdinal, RustOccurrenceFingerprint,
+    RustSourceAnalysis, RustSymbolFact, RustSymbolKind,
 };
 use repowitness_application::{
     CodeSearchCandidate, CodeSearchLimits, CodeSearchPort, CodeSearchPortResult, CodeSearchQuery,
@@ -33,7 +36,10 @@ use rusqlite::{
 };
 
 use super::{
-    GenerationId, SqliteStoreError, memory_reader::recall_active_memory, open_index_reader,
+    GenerationId, PinnedWorkspaceView, SqliteStoreError,
+    graph::{RustGraphPreparationControl, RustGraphPreparationError},
+    memory_reader::recall_active_memory,
+    open_index_reader,
 };
 
 const MAX_QUERY_BYTES: usize = 256;
@@ -50,17 +56,23 @@ type SearchReply = SyncSender<Result<SearchResults, SqliteStoreError>>;
 type SymbolReply = SyncSender<Result<SymbolLookupResults, SqliteStoreError>>;
 type ArtifactReply =
     SyncSender<Result<BTreeMap<AnalysisArtifactDigest, RustSourceAnalysis>, SqliteStoreError>>;
+type GraphArtifactReply =
+    SyncSender<Result<BTreeMap<AnalysisArtifactDigest, RustGraphSiteAnalysis>, SqliteStoreError>>;
 type MemoryRecallReply =
     SyncSender<Result<MemoryRecallPortResult<GenerationId, i64>, SqliteStoreError>>;
 type DiagnosticsReply =
     SyncSender<Result<RepositoryDiagnosticsPortResult<GenerationId, i64>, SqliteStoreError>>;
+type WorkspaceViewReply = SyncSender<Result<Option<PinnedWorkspaceView>, SqliteStoreError>>;
 
 enum ReaderCommand {
     Search(Box<SearchCommand>),
     GetSymbol(Box<SymbolCommand>),
     LoadArtifacts(Box<ArtifactCommand>),
+    LoadGraphArtifacts(Box<GraphArtifactCommand>),
     RecallMemory(Box<MemoryRecallCommand>),
     Diagnostics(Box<DiagnosticsCommand>),
+    WorkspaceView(Box<WorkspaceViewCommand>),
+    Graph(Box<GraphCommand>),
     Shutdown {
         reply: SyncSender<Result<(), SqliteStoreError>>,
     },
@@ -95,6 +107,16 @@ struct ArtifactCommand {
     reply: ArtifactReply,
 }
 
+struct GraphArtifactCommand {
+    requested: Box<[AnalysisArtifactDigest]>,
+    identity: RustArtifactIdentity,
+    limits: RustIndexLimits,
+    graph_limits: RustGraphAnalysisLimits,
+    cancelled: Arc<AtomicBool>,
+    deadline: Instant,
+    reply: GraphArtifactReply,
+}
+
 struct MemoryRecallCommand {
     repository: RepositoryIdentityDigest,
     query: Option<String>,
@@ -109,6 +131,14 @@ struct DiagnosticsCommand {
     cancelled: Arc<AtomicBool>,
     deadline: Instant,
     reply: DiagnosticsReply,
+}
+
+struct WorkspaceViewCommand {
+    connected_workspace: repowitness_domain::ConnectedWorkspaceId,
+    requested_view: Option<i64>,
+    cancelled: Arc<AtomicBool>,
+    deadline: Instant,
+    reply: WorkspaceViewReply,
 }
 
 /// Inclusive row and encoded-output limits for one lexical search.
@@ -500,64 +530,6 @@ impl OwnedSqliteReader {
         }
     }
 
-    /// Loads only exact, complete, integrity-checked artifacts requested by preparation.
-    #[cfg(test)]
-    pub(crate) fn load_reusable_artifacts(
-        &self,
-        requested: &[AnalysisArtifactDigest],
-        identity: RustArtifactIdentity,
-        limits: RustIndexLimits,
-        cancelled: Arc<AtomicBool>,
-        deadline: Instant,
-    ) -> Result<BTreeMap<AnalysisArtifactDigest, RustSourceAnalysis>, SqliteStoreError> {
-        self.load_reusable_artifacts_for_language(
-            requested,
-            SourceLanguage::Rust,
-            identity,
-            limits,
-            cancelled,
-            deadline,
-        )
-    }
-
-    pub(crate) fn load_reusable_artifacts_for_language(
-        &self,
-        requested: &[AnalysisArtifactDigest],
-        language: SourceLanguage,
-        identity: RustArtifactIdentity,
-        limits: RustIndexLimits,
-        cancelled: Arc<AtomicBool>,
-        deadline: Instant,
-    ) -> Result<BTreeMap<AnalysisArtifactDigest, RustSourceAnalysis>, SqliteStoreError> {
-        let requested_count =
-            u64::try_from(requested.len()).map_err(|_| SqliteStoreError::CountNotRepresentable)?;
-        if requested_count > limits.max_files()
-            || requested.windows(2).any(|pair| pair[0] >= pair[1])
-        {
-            return Err(SqliteStoreError::IntegrityCheckFailed);
-        }
-        let (reply, receiver) = mpsc::sync_channel(1);
-        self.send(
-            ReaderCommand::LoadArtifacts(Box::new(ArtifactCommand {
-                requested: requested.to_vec().into_boxed_slice(),
-                language,
-                identity,
-                limits,
-                cancelled: Arc::clone(&cancelled),
-                deadline,
-                reply,
-            })),
-            deadline,
-        )?;
-        match receive_reply(&receiver, deadline) {
-            Ok(results) => Ok(results),
-            Err(error) => {
-                cancelled.store(true, Ordering::Release);
-                Err(error)
-            }
-        }
-    }
-
     /// Recalls records only from a complete projection of the current active source.
     pub fn recall_memory(
         &self,
@@ -646,9 +618,18 @@ impl OwnedSqliteReader {
 }
 
 include!("reader/adapters.rs");
+include!("reader/artifact_commands.rs");
 include!("reader/artifacts.rs");
+include!("reader/graph_artifact_reuse.rs");
 include!("reader/diagnostics.rs");
+include!("reader/graph_commands.rs");
+include!("reader/graph_decode.rs");
+include!("reader/graph_receipt.rs");
+include!("reader/graph_query.rs");
+include!("reader/graph_relationships.rs");
+include!("reader/graph_traversal.rs");
 include!("reader/query.rs");
+include!("reader/workspace.rs");
 
 #[cfg(test)]
 mod tests;

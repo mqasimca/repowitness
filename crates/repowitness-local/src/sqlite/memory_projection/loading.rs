@@ -125,7 +125,7 @@ pub(super) fn load_active_source(
     let row = connection
         .query_row(
             "SELECT workspace.workspace_id, generation.generation_id,
-                    workspace.source_epoch, generation.snapshot_digest,
+                    generation.source_epoch, generation.snapshot_digest,
                     snapshot.git_state_digest, generation.searched_count,
                     generation.skipped_count, generation.unresolved_count,
                     generation.truncated_count
@@ -138,7 +138,6 @@ pub(super) fn load_active_source(
               AND snapshot.repository_identity = workspace.repository_identity
              WHERE workspace.repository_identity = ?1
                AND generation.lifecycle_state = 'active'
-               AND generation.source_epoch = workspace.source_epoch
                AND snapshot.lifecycle_state = 'complete'",
             [repository.as_bytes().as_slice()],
             |row| {
@@ -172,6 +171,35 @@ pub(super) fn load_active_source(
         unresolved_count: nonnegative(row.7)?,
         truncated_count: nonnegative(row.8)?,
     })
+}
+
+pub(super) fn require_current_write_source(
+    connection: &Connection,
+    source: MemoryProjectionSource,
+    control: WriteControl<'_>,
+) -> Result<(), SqliteStoreError> {
+    check_control(control)?;
+    let is_current = connection
+        .query_row(
+            "SELECT EXISTS(
+                SELECT 1
+                FROM workspaces
+                WHERE workspace_id = ?1
+                  AND repository_identity = ?2
+                  AND source_epoch = ?3
+            )",
+            params![
+                source.workspace_id,
+                source.repository.as_bytes().as_slice(),
+                fixed_integer(source.source_epoch)?,
+            ],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(|_| control_database_error(control))?;
+    if !is_current {
+        return Err(SqliteStoreError::StaleSourceEpoch);
+    }
+    Ok(())
 }
 
 fn unique_approval_git_source(

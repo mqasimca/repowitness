@@ -33,7 +33,7 @@ fn emit_inspection_report(writer: &mut impl Write, stats: GitPathDiscoveryStats)
 }
 
 fn emit_index_report(writer: &mut impl Write, report: CliIndexReport) -> u8 {
-    if report.known_parser_limitation_nodes > report.syntax_error_nodes {
+    if !index_report_is_consistent(&report) {
         return EXIT_SOFTWARE;
     }
     let result = writeln!(writer, "status=ok")
@@ -97,6 +97,13 @@ fn emit_index_report(writer: &mut impl Write, report: CliIndexReport) -> u8 {
         .and_then(|()| {
             writeln!(
                 writer,
+                "skipped_policy_paths={}",
+                report.skipped_policy_paths
+            )
+        })
+        .and_then(|()| {
+            writeln!(
+                writer,
                 "skipped_unsupported_paths={}",
                 report.skipped_unsupported_paths
             )
@@ -116,6 +123,59 @@ fn emit_index_report(writer: &mut impl Write, report: CliIndexReport) -> u8 {
     } else {
         EXIT_IO
     }
+}
+
+fn index_report_is_consistent(report: &CliIndexReport) -> bool {
+    if report.known_parser_limitation_nodes > report.syntax_error_nodes {
+        return false;
+    }
+
+    let language_counts = [
+        (
+            report.indexed_rust_files,
+            report.reused_rust_files,
+            report.analyzed_rust_files,
+        ),
+        (
+            report.indexed_go_files,
+            report.reused_go_files,
+            report.analyzed_go_files,
+        ),
+        (
+            report.indexed_typescript_files,
+            report.reused_typescript_files,
+            report.analyzed_typescript_files,
+        ),
+        (
+            report.indexed_tsx_files,
+            report.reused_tsx_files,
+            report.analyzed_tsx_files,
+        ),
+        (
+            report.indexed_python_files,
+            report.reused_python_files,
+            report.analyzed_python_files,
+        ),
+    ];
+    if language_counts
+        .into_iter()
+        .any(|(indexed, reused, analyzed)| reused.checked_add(analyzed) != Some(indexed))
+    {
+        return false;
+    }
+
+    [
+        report.indexed_rust_files,
+        report.indexed_go_files,
+        report.indexed_typescript_files,
+        report.indexed_tsx_files,
+        report.indexed_python_files,
+        report.skipped_policy_paths,
+        report.skipped_unsupported_paths,
+    ]
+    .into_iter()
+    .try_fold(0_u64, u64::checked_add)
+        == Some(report.discovered_paths)
 }
 
 fn emit_search_report(writer: &mut impl Write, report: &CliSearchReport) -> u8 {
@@ -217,10 +277,7 @@ fn emit_symbol_report(writer: &mut impl Write, report: &CliSymbolReport) -> u8 {
 fn write_symbol_report(writer: &mut impl Write, report: &CliSymbolReport) -> std::io::Result<()> {
     writeln!(writer, "status=ok")?;
     writeln!(writer, "operation=symbol-get")?;
-    writeln!(
-        writer,
-        "schema_version={CLI_SYMBOL_REPORT_SCHEMA_VERSION}"
-    )?;
+    writeln!(writer, "schema_version={CLI_SYMBOL_REPORT_SCHEMA_VERSION}")?;
     writeln!(writer, "symbol_profile={SYMBOL_GET_PROFILE_VERSION}")?;
     writeln!(writer, "snapshot_sha256={}", report.snapshot)?;
     writeln!(writer, "generation={}", report.generation)?;
@@ -267,8 +324,7 @@ fn write_symbol_data(writer: &mut impl Write, symbol: &CliSymbolData) -> std::io
         "declaration_encoding={}",
         symbol.declaration_encoding
     )?;
-    let declaration =
-        serde_json::to_string(&symbol.declaration).map_err(std::io::Error::other)?;
+    let declaration = serde_json::to_string(&symbol.declaration).map_err(std::io::Error::other)?;
     writeln!(writer, "declaration_data_json={declaration}")
 }
 

@@ -19,6 +19,52 @@ const MEMORY_YAML: &str = include_str!(
     "../../../repowitness-local/tests/fixtures/memory-v1/commit.yaml"
 );
 
+#[cfg(windows)]
+use repowitness_local::{LocalMemoryWriteRequest, write_local_memory};
+
+fn memory_write_state(repository: &Path) -> (bool, bool, bool, bool, bool) {
+    let memory = repository.join(".code-memory");
+    let records = memory.join("records");
+    let target = records.join("mem_00000000000000000000000000.yaml");
+    let temporary_exists = fs::read_dir(&records)
+        .ok()
+        .into_iter()
+        .flatten()
+        .any(|entry| {
+            entry
+                .ok()
+                .is_some_and(|entry| entry.file_name().to_string_lossy().ends_with(".tmp"))
+        });
+    (
+        memory.is_dir(),
+        records.is_dir(),
+        memory.join(".repowitness-write.lock").is_file(),
+        target.is_file(),
+        temporary_exists,
+    )
+}
+
+#[cfg(windows)]
+#[test]
+fn local_memory_write_is_available_before_the_mcp_contract() {
+    let directory = TempDirectory::new();
+    let repository = fixture_repository(&directory);
+    let yaml = MEMORY_YAML.replace(
+        "rwi1:h:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        REPOSITORY_ID,
+    );
+    let result = write_local_memory(
+        LocalMemoryWriteRequest::from_bytes(&repository, yaml.as_bytes(), REPOSITORY_ID),
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    );
+
+    assert!(
+        result.is_ok(),
+        "direct local memory write failed with a safe category: {:?}",
+        result.err()
+    );
+}
+
 #[test]
 fn mcp_memory_manage_is_process_level_default_deny_and_explicitly_enabled() {
     let directory = TempDirectory::new();
@@ -92,10 +138,17 @@ fn mcp_memory_manage_is_process_level_default_deny_and_explicitly_enabled() {
         }),
     );
     assert_eq!(written["id"], serde_json::json!(22));
+    let state = memory_write_state(&repository);
     assert_eq!(
         written["result"]["isError"],
         serde_json::json!(false),
-        "memory write returned a tool error"
+        "memory write returned a tool error; response={written}; \
+         state=(memory_directory={}, records_directory={}, write_lease={}, target={}, temporary={})",
+        state.0,
+        state.1,
+        state.2,
+        state.3,
+        state.4,
     );
     let written = written["result"]["structuredContent"]
         .as_object()
@@ -115,9 +168,79 @@ fn mcp_memory_manage_is_process_level_default_deny_and_explicitly_enabled() {
 }
 
 #[test]
+fn mcp_configuration_policy_fails_before_transport_startup() {
+    let directory = TempDirectory::new();
+    let repository = directory.repository();
+    let database = directory.database();
+    let user = directory.0.join("user.toml");
+    let repository_configuration = directory.0.join("repository.toml");
+    fs::write(
+        &user,
+        "schema_version = 1\n[policy]\ndeny_memory_writes = true\n",
+    )
+    .expect("user configuration should be written");
+    fs::write(
+        &repository_configuration,
+        "schema_version = 1\n[policy]\ndeny_memory_writes = false\n",
+    )
+    .expect("repository configuration should be written");
+
+    let denied = Command::new(env!("CARGO_BIN_EXE_repowitness"))
+        .args(["mcp-serve", "--repository-id", REPOSITORY_ID, "--database"])
+        .arg(&database)
+        .arg("--root")
+        .arg(&repository)
+        .arg("--repository-config")
+        .arg(&repository_configuration)
+        .args([
+            "--enable-memory-writes",
+            "--memory-actor",
+            "contract-test-actor",
+            "--user-config",
+        ])
+        .arg(&user)
+        .output()
+        .expect("denied MCP server should stop");
+    assert_eq!(denied.status.code(), Some(70));
+    assert!(denied.stdout.is_empty());
+    assert_eq!(
+        denied.stderr,
+        b"error: MCP memory writes are denied by configuration\n"
+    );
+    assert!(!database.exists());
+
+    fs::write(
+        &repository_configuration,
+        "schema_version = 1\n[preferences]\nmcp_tool_profile = \"minimal\"\n",
+    )
+    .expect("unsupported profile configuration should be written");
+    let unavailable = Command::new(env!("CARGO_BIN_EXE_repowitness"))
+        .args(["mcp-serve", "--repository-id", REPOSITORY_ID, "--database"])
+        .arg(&database)
+        .arg("--root")
+        .arg(&repository)
+        .arg("--repository-config")
+        .arg(&repository_configuration)
+        .output()
+        .expect("unsupported MCP profile should stop");
+    assert_eq!(unavailable.status.code(), Some(70));
+    assert!(unavailable.stdout.is_empty());
+    assert_eq!(
+        unavailable.stderr,
+        b"error: configured MCP tool profile is unavailable\n"
+    );
+    assert!(!database.exists());
+}
+
+#[test]
 fn mcp_stdio_indexes_searches_retrieves_and_rejects_a_stale_selector() {
     let directory = TempDirectory::new();
     let repository = fixture_repository(&directory);
+    fs::write(
+        repository.join("src/lib.rs"),
+        "pub struct Widget;\npub fn run() {}\npub fn invoke() { run(); }\n",
+    )
+    .expect("Rust graph fixture should be written");
     fs::write(
         repository.join("src/frontend.ts"),
         "export function loadFrontend() {}\n",
@@ -194,6 +317,7 @@ fn mcp_stdio_indexes_searches_retrieves_and_rejects_a_stale_selector() {
         b"def send(self): pass",
     );
     assert_mcp_diagnostics_and_absent_memory(&mut input, &mut output, 15, 16);
+    assert_mcp_native_graph(&mut input, &mut output);
 
     assert!(
         index(&repository, &database, REPOSITORY_ID)
@@ -341,6 +465,33 @@ fn start_mcp(
     (child, input, output)
 }
 
+fn start_mcp_with_graph_workspace(
+    repository: &Path,
+    database: &Path,
+    connected_workspace: &str,
+    source_slot: &str,
+) -> (std::process::Child, ChildStdin, BufReader<ChildStdout>) {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_repowitness"))
+        .args(["mcp-serve", "--repository-id", REPOSITORY_ID, "--database"])
+        .arg(database)
+        .arg("--root")
+        .arg(repository)
+        .args([
+            "--connected-workspace-id",
+            connected_workspace,
+            "--source-slot-id",
+            source_slot,
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("connected-workspace MCP server must start");
+    let input = child.stdin.take().expect("piped stdin");
+    let output = BufReader::new(child.stdout.take().expect("piped stdout"));
+    (child, input, output)
+}
+
 fn start_mcp_with_memory_writes(
     repository: &Path,
     database: &Path,
@@ -395,9 +546,25 @@ fn initialize_mcp(input: &mut ChildStdin, output: &mut BufReader<ChildStdout>) {
 
 include!("mcp_contract/read_tools.rs");
 
-fn stop_mcp(child: std::process::Child, input: ChildStdin, output: BufReader<ChildStdout>) {
+fn stop_mcp(
+    mut child: std::process::Child,
+    input: ChildStdin,
+    output: BufReader<ChildStdout>,
+) {
     drop(input);
     drop(output);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        if child.try_wait().expect("MCP server status").is_some() {
+            break;
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("MCP server did not stop within the bounded shutdown window");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
     let completed = child.wait_with_output().expect("MCP server must stop");
     assert!(completed.status.success());
     assert!(completed.stdout.is_empty());

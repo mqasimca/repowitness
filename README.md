@@ -33,10 +33,14 @@ context exclusion. A separate pinned historical comparison checks bounded
 lexical search and naive memory against the same before/after evidence. An
 opt-in isolated Codex evaluation makes the correct decision at both revisions,
 uses current memory, ignores stale memory, and rates the packet useful. One
-immutable Phase 0 SQLite baseline and compatible version-2 migration
-contains the five-language artifact format, append-only memory journal,
+immutable Phase 0 SQLite baseline, compatible accepted version-2 migration,
+and provisional version-3 connected-workspace migration contain the
+five-language artifact format, append-only memory journal,
 memory-revalidation projection, reviewed correspondence, and exact review-event
-idempotency. It persists each artifact's exact language and prepared Rust, Go,
+idempotency. Version 3 adds bounded source-slot membership, atomic immutable
+workspace views, a generation-scoped Rust graph, and explicit bounded
+generation-retention plan/apply; its defaults and migration remain provisional.
+The store persists each artifact's exact language and prepared Rust, Go,
 TypeScript, TSX, or Python facts through owned writer and reader connections
 and publishes immutable
 source and memory generations atomically, prevents competing process mutation
@@ -68,13 +72,16 @@ failures, output errors, mixed-language reuse and invalidation,
 index-to-search generation replacement, exact declaration retrieval for all
 five supported languages, and rejection of stale generations and modified
 source. The CLI also exposes memory revalidation/recall, context compilation,
-and repository diagnostics. The local stdio MCP server exposes the same read
-path as `context_build`, `code_search`, `diagnostics`, `memory_recall`, and
-`symbol_get`, fixes repository identity, root, and database at process startup,
-bounds input, output, concurrency, timeout, and cancellation, and keeps stdout
-protocol-only. Protocol and installed-binary tests cover initialization, exact
-schemas, all five tools, stale selectors, cancellation, backpressure, and
-configured real supported-language repositories.
+repository diagnostics, and generation-pinned Rust graph status, search,
+evidence, architecture, trace, and impact reads. The local stdio MCP server
+exposes eleven read-only tools: `code_search`, `context_build`, `diagnostics`,
+`graph_architecture`, `graph_evidence`, `graph_search`, `graph_status`,
+`graph_trace`, `impact_analyze`, `memory_recall`, and `symbol_get`. It fixes
+repository identity, root, and database at process startup, bounds input,
+output, concurrency, timeout, and cancellation, and keeps stdout protocol-only.
+Protocol and installed-binary tests cover initialization, exact schemas, all
+eleven tools, stale selectors, graph evidence and traversal, cancellation,
+backpressure, and configured real supported-language repositories.
 
 The accepted memory-record domain model, strict byte parser, canonicalizer, and
 deterministic writer are implemented. A capability-contained boundary admits
@@ -97,6 +104,10 @@ Context compilation deterministically fuses exact declaration bytes and
 eligible current memory under a conservative byte budget, while diagnostics
 reports the matching source/projection state, raw parser-error coverage, its
 non-subtractive recognized-limitation subset, capabilities, and limitations.
+Diagnostics profile 3 identifies the bounded Rust syntax graph capability and
+states that graph coverage is syntax-derived and Rust-only: package-aware
+resolution, macro expansion, SCIP, dynamic dispatch, and cross-language edges
+remain unavailable or explicitly unresolved.
 Exact declarations are directly readable UTF-8 when valid and display-safe,
 and use an explicitly labeled lowercase-hexadecimal fallback otherwise. CLI
 output JSON-escapes the untrusted declaration in one report field; MCP carries
@@ -130,13 +141,13 @@ recorded here. Publicly reproducible evidence comes from temporary
 mixed-language fixtures and explicitly public pinned benchmark corpora.
 
 The remaining Phase 0 milestone is deliberately narrow. The complete local
-product loop and pinned correctness scenario are implemented and pass every
-proposed numeric budget in a development run. The rewritten-history, review,
+product loop, pinned correctness scenario, rewritten-history, review,
 split/merge, canonical-file/SQLite publication-fault matrix, and controlled
-public baseline comparison also pass. Maintainers must still ratify or revise
-the proposed memory ADRs and benchmark budgets, rerun from a clean exact
-RepoWitness revision, and demonstrate on a real design-partner task that the
-evidence-backed memory changes a useful engineering decision.
+public baseline comparison pass. A clean exact-revision Ubuntu 24.04 run also
+passes the ratified benchmark budgets. ADR-0017, ADR-0019, and ADR-0023 are
+accepted. One real design-partner task must still show that evidence-backed
+memory changes a useful engineering decision before maintainers decide
+ADR-0018 and ADR-0021.
 
 ## Local verification
 
@@ -172,10 +183,11 @@ queries. Maintainers can run the same gate on Ubuntu 24.04 through the manual
 `Phase 0 benchmark` GitHub Actions workflow. The workflow accepts only `main`,
 uses the exact dispatched revision, and retains its public result as a
 checksummed artifact. See the
-[provisional product benchmark](docs/research/phase0-product-benchmark-2026-07-28.md)
+[clean benchmark attestation](docs/research/phase0-clean-benchmark-attestation-2026-07-29.md),
+[provisional development benchmark](docs/research/phase0-product-benchmark-2026-07-28.md),
 and
 [controlled comparative evaluation](docs/research/phase0-comparative-evaluation-2026-07-28.md)
-for the latest environment, results, and remaining ratification limits.
+for the latest environment, results, and remaining product gate.
 
 Run the opt-in Codex usefulness evaluation against the same clean public
 checkout with:
@@ -197,6 +209,27 @@ Build the binary:
 ```text
 cargo build -p repowitness-cli --locked
 ```
+
+Runtime configuration is explicit. `index`, `workspace index`, `watch`, `gc`,
+`search`, `graph`, `memory-recall`, `context-build`, `diagnostics`, and
+`mcp-serve` accept any combination of:
+
+```text
+--user-config /path/to/user/repowitness.toml
+--workspace-config /path/to/workspace/repowitness.toml
+--repository-config ../repository/repowitness.toml
+```
+
+Only supplied files are read. They resolve in user, workspace, then repository
+order regardless of option order. Ordinary preferences use that precedence,
+while policy remains monotonic: a repository can tighten language, resource,
+tool-profile, or memory-write policy but cannot grant authority denied by a
+higher-trust layer. Configuration files are bounded to 65,536 bytes and fail
+before repository/database work or MCP runtime initialization. Use
+`repowitness config explain` for the path-free effective values and provenance,
+and `repowitness doctor` to validate configuration plus optional explicit
+repository/database targets. The strict format is documented in the
+[configuration schema](docs/schemas/configuration-v1.md).
 
 Create or update one local supported-language index using a stable
 caller-assigned repository identity:
@@ -223,6 +256,44 @@ an identity-checked file guard and revalidates the path after SQLite opens but
 before connection policy, migration, recovery, or publication can write. If a
 newly reserved database fails before startup completes, only that verified new
 file is removed; an existing database is never deleted by startup cleanup.
+
+Atomically index an explicitly authorized connected workspace with a separately
+selected manifest:
+
+```text
+target/debug/repowitness workspace index \
+  --manifest /path/to/connected-workspace.toml \
+  --database /path/outside/the/worktree/repowitness.sqlite3
+```
+
+The command has no ambient source discovery: the manifest is the complete,
+bounded authorization set. Relative roots resolve only from its admitted parent
+directory. Default output contains opaque digests and aggregate counts, never
+roots, selector text, or manifest contents. The contract is defined by the
+[connected-workspace manifest proposal](docs/adr/0032-explicit-connected-workspace-manifest.md).
+
+Plan bounded generation retention without opening a writer or changing the
+database, then explicitly apply that exact plan:
+
+```text
+target/debug/repowitness gc plan \
+  --database /path/outside/the/worktree/repowitness.sqlite3
+
+target/debug/repowitness gc apply \
+  --database /path/outside/the/worktree/repowitness.sqlite3 \
+  --plan-digest <retention_plan_sha256>
+```
+
+Planning emits only policy/plan digests and aggregate candidate, byte, root,
+unresolved, truncation, and shared logical-row-work metrics. Apply recomputes
+the policy, pins, roots, and candidate set and rejects a stale digest without
+deletion. An exact committed retry returns the original aggregate receipt. If
+an apply reports an unknown outcome, it may have committed: do not create a new
+plan or change its pins or configuration. Re-run the identical apply command
+with the same plan digest to recover the authoritative receipt.
+Both commands have bounded deadlines and cooperative cancellation. `index` and
+`watch` never run garbage collection automatically, and collection does not
+run `VACUUM` or promise immediate SQLite file shrinkage.
 
 Search the active generation with bounded literal terms:
 
@@ -345,14 +416,49 @@ CLI puts their data in one JSON-escaped field so source text cannot forge
 report lines.
 
 Inspect the exact active generation, optional matching memory projection, raw
-and recognized parser diagnostics, coverage, capabilities, and limitations
-without mutation:
+and recognized parser diagnostics, coverage, capabilities, limitations, and
+the path-free resolved configuration digest/schema/resolver/profile without
+mutation:
 
 ```text
 target/debug/repowitness diagnostics \
   --repository-id rwi1:h:0000000000000000000000000000000000000000000000000000000000000001 \
   --database /path/outside/the/worktree/repowitness.sqlite3
 ```
+
+Read the native immutable Rust syntax graph:
+
+```text
+target/debug/repowitness graph status \
+  --repository-id rwi1:h:0000000000000000000000000000000000000000000000000000000000000001 \
+  --database /path/outside/the/worktree/repowitness.sqlite3
+
+target/debug/repowitness graph search \
+  --repository-id rwi1:h:0000000000000000000000000000000000000000000000000000000000000001 \
+  --database /path/outside/the/worktree/repowitness.sqlite3 \
+  --query run
+```
+
+For a graph read from a connected-workspace index, replace `--repository-id`
+with both explicit selectors. RepoWitness never chooses an arbitrary member of
+a multi-source view:
+
+```text
+target/debug/repowitness graph status \
+  --connected-workspace-id cwi1:h:0000000000000000000000000000000000000000000000000000000000000001 \
+  --source-slot-id ssi1:h:0000000000000000000000000000000000000000000000000000000000000001 \
+  --database /path/outside/the/worktree/repowitness.sqlite3
+```
+
+The `status`, `search`, `evidence`, `architecture`, `trace`, and `impact`
+operations return bounded JSON with the concrete workspace view, graph
+generation, complete publication receipt, categorical evidence, coverage, and
+truncation. Copy exact definition or site JSON from one response into
+`--start-json` or `--site-json`; optionally repeat the returned
+`--workspace-view` and `--graph-generation` pair to read the same immutable
+context. `trace` and `impact` require one or more `--edge-kind` values from
+`import`, `reference`, and `call`. These are Rust-only syntax-derived
+relationships, not compiler- or package-resolved claims.
 
 Serve the same active index to Codex over local stdio:
 
@@ -366,9 +472,19 @@ target/debug/repowitness mcp-serve \
 The repository must be indexed first. To expose the mutation tool, the
 operator must add both `--enable-memory-writes` and one fixed
 `--memory-actor <local-actor>` to `mcp-serve`. Without both options, the server
-lists only the five read tools. The enabled `memory_manage` tool cannot choose
-the repository identity, root, database, actor, host input path, timestamp,
-deadline policy, history revision, or resource limits.
+lists only read tools. The default canonical profile lists eleven. A user-owned
+configuration may opt into the incumbent-compatible profile, which adds seven
+bounded read-only aliases. Startup requires the configured tool profile to
+remain authorized and refuses mutation when any effective layer denies memory
+writes. The enabled `memory_manage` tool cannot choose the repository identity,
+root, database, actor, host input path, timestamp, deadline policy, history
+revision, or resource limits.
+
+When the database contains a connected workspace, add
+`--connected-workspace-id <cwi1:h:...>` and `--source-slot-id <ssi1:h:...>`
+together at `mcp-serve` startup to select the graph source. The graph tools
+then read that exact source slot; the other MCP tools retain the configured
+repository context.
 
 Register the default read-only built binary with Codex:
 
@@ -402,11 +518,14 @@ Restart the Codex client after changing configuration, then use `/mcp` in the
 terminal UI to inspect the connection. Codex CLI, the IDE extension, and the
 ChatGPT desktop app share the local Codex MCP configuration; see the current
 [Codex MCP documentation](https://learn.chatgpt.com/docs/extend/mcp). The
-server exposes the read-only `context_build`, `code_search`, `diagnostics`,
-`memory_recall`, and `symbol_get` tools by default. Call `code_search` first
-and pass its complete exact selector unchanged to `symbol_get` when retrieving
-a declaration directly. Enable mutation only in a trusted local configuration
-whose operator intends to grant that capability.
+server exposes the read-only `code_search`, `context_build`, `diagnostics`,
+`graph_architecture`, `graph_evidence`, `graph_search`, `graph_status`,
+`graph_trace`, `impact_analyze`, `memory_recall`, and `symbol_get` tools by
+default. Call `code_search` first and pass its complete exact selector unchanged
+to `symbol_get` when retrieving a declaration directly. Call `graph_search`
+before graph trace or impact so its exact selector and immutable context can be
+reused unchanged. Enable mutation only in a trusted local configuration whose
+operator intends to grant that capability.
 
 To inspect only aggregate repository-path discovery facts without indexing:
 

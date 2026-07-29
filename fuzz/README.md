@@ -5,11 +5,24 @@ structured mutations of both accepted version-1 golden profiles. Any accepted
 record is generated again, reparsed, and required to preserve its domain value,
 canonical JSON, and canonical digest.
 
+The `phase1_inputs` target sends bounded arbitrary bytes through every strict
+Phase 1 native-graph and compatibility-MCP request decoder plus the three
+configuration-file layers. It also applies bounded byte mutations to accepted
+synthetic configuration, status, search, and architecture request seeds, so
+validation code is reached from an accepted representation. It does not
+perform filesystem, database, Git, network, or MCP transport I/O.
+
 Install the official runner and use a supported nightly toolchain:
 
 ```text
 cargo install cargo-fuzz --locked
 cargo +nightly fuzz run memory_record -- \
+  -max_total_time=60 \
+  -timeout=2 \
+  -max_len=65537 \
+  -print_final_stats=1
+
+cargo +nightly fuzz run phase1_inputs -- \
   -max_total_time=60 \
   -timeout=2 \
   -max_len=65537 \

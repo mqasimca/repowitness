@@ -71,7 +71,21 @@ pub struct McpDiagnosticsMemoryProjection {
     pub coverage: McpMemoryCoverage,
 }
 
-/// Version-2 structured response for read-only repository diagnostics.
+/// Path-free identity for the resolved semantic configuration in effect.
+#[derive(Clone, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct McpConfigurationIdentity {
+    /// Canonical semantic configuration SHA-256.
+    pub digest_sha256: String,
+    /// Admitted local configuration schema version.
+    pub schema_version: u16,
+    /// Deterministic configuration resolver version.
+    pub resolver_version: u16,
+    /// Selected built-in configuration profile.
+    pub profile: String,
+}
+
+/// Version-3 structured response for read-only repository diagnostics.
 #[derive(Clone, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct DiagnosticsOutput {
@@ -79,6 +93,8 @@ pub struct DiagnosticsOutput {
     pub schema_version: u16,
     /// Repository-diagnostics profile version.
     pub diagnostics_profile: u16,
+    /// Path-free resolved semantic configuration identity.
+    pub configuration: McpConfigurationIdentity,
     /// Exact active source snapshot SHA-256.
     pub snapshot_sha256: String,
     /// Exact active generation.
@@ -139,5 +155,34 @@ mod tests {
             .is_err()
         );
         assert!(serde_json::from_str::<DiagnosticsInput>(r#"{"repository":"/private"}"#).is_err());
+    }
+
+    #[test]
+    fn configuration_identity_wire_shape_is_exact_and_path_free() {
+        let identity = McpConfigurationIdentity {
+            digest_sha256: "11".repeat(32),
+            schema_version: 1,
+            resolver_version: 1,
+            profile: "local".to_owned(),
+        };
+        let encoded = serde_json::to_value(identity).expect("serialize configuration identity");
+        let object = encoded.as_object().expect("configuration object");
+        let keys = object
+            .keys()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            keys,
+            std::collections::BTreeSet::from([
+                "digest_sha256",
+                "profile",
+                "resolver_version",
+                "schema_version"
+            ])
+        );
+        let text = encoded.to_string();
+        assert!(!text.contains('/'));
+        assert!(!text.contains('\\'));
+        assert!(!text.contains("config"));
     }
 }
