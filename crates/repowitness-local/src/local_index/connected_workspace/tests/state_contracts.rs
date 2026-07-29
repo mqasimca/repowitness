@@ -25,7 +25,7 @@ use crate::local_index::post_commit::{PostCommitMaintenancePhase, PostCommitMain
 #[cfg(unix)]
 use crate::{MAX_LOCAL_CONNECTED_WORKSPACE_MANIFEST_BYTES, read_bounded_regular_file_with_parent};
 
-#[cfg(any(unix, windows))]
+#[cfg(unix)]
 #[test]
 fn valid_database_replacement_after_writer_open_fails_before_view_publication() {
     let directory = TempDirectory::new();
@@ -73,7 +73,57 @@ fn valid_database_replacement_after_writer_open_fails_before_view_publication() 
     assert_eq!(active_view(&database, connected_workspace), initial.view());
 }
 
-#[cfg(any(unix, windows))]
+#[cfg(windows)]
+#[test]
+fn valid_opened_database_replacement_is_blocked_by_the_platform() {
+    let directory = TempDirectory::new();
+    let repository_path = fixture_repository(&directory, "replacement");
+    let database = directory.database();
+    let configuration = default_configuration();
+    let connected_workspace = connected(31);
+    let make_request = || {
+        request(
+            connected_workspace,
+            &database,
+            vec![slot(
+                source_slot(1),
+                repository(1),
+                &repository_path,
+                "worktree-head",
+                PackageScope::whole_repository(),
+                &configuration,
+            )],
+        )
+    };
+    let _initial = index(make_request());
+    let replacement = directory.repository("replacement.sqlite3");
+    fs::copy(&database, &replacement).expect("valid replacement database should be copied");
+    let displaced = directory.repository("displaced.sqlite3");
+    let mut replacement_blocked = false;
+
+    let _report = index_connected_workspace_with_control_hooks(
+        make_request(),
+        Arc::new(AtomicBool::new(false)),
+        |phase, _| {
+            if phase == CoordinatorPhase::WorkspaceRegistered {
+                replacement_blocked = fs::rename(&database, &displaced).is_err();
+                if !replacement_blocked {
+                    fs::rename(&replacement, &database)
+                        .expect("replacement should occupy the database path");
+                }
+            }
+        },
+        |_, deadline| deadline,
+    )
+    .expect("the original database remains authoritative when replacement is blocked");
+
+    assert!(
+        replacement_blocked,
+        "Windows must block replacement of the opened database"
+    );
+}
+
+#[cfg(unix)]
 #[test]
 fn newly_created_database_replacement_is_not_adopted_after_registration() {
     let seed_directory = TempDirectory::new();
@@ -131,6 +181,68 @@ fn newly_created_database_replacement_is_not_adopted_after_registration() {
         error,
         ConnectedWorkspaceIndexError::DatabaseIsolation { .. }
     ));
+}
+
+#[cfg(windows)]
+#[test]
+fn newly_opened_database_replacement_is_blocked_by_the_platform() {
+    let seed_directory = TempDirectory::new();
+    let seed_repository = fixture_repository(&seed_directory, "seed");
+    let seed_database = seed_directory.database();
+    let seed_configuration = default_configuration();
+    let _seed = index(request(
+        connected(32),
+        &seed_database,
+        vec![slot(
+            source_slot(1),
+            repository(1),
+            &seed_repository,
+            "worktree-head",
+            PackageScope::whole_repository(),
+            &seed_configuration,
+        )],
+    ));
+
+    let directory = TempDirectory::new();
+    let repository_path = fixture_repository(&directory, "new-database-race");
+    let database = directory.database();
+    let replacement = directory.repository("replacement.sqlite3");
+    fs::copy(&seed_database, &replacement).expect("valid replacement database should be copied");
+    let displaced = directory.repository("displaced.sqlite3");
+    let configuration = default_configuration();
+    let mut replacement_blocked = false;
+
+    let _report = index_connected_workspace_with_control_hooks(
+        request(
+            connected(33),
+            &database,
+            vec![slot(
+                source_slot(1),
+                repository(2),
+                &repository_path,
+                "worktree-head",
+                PackageScope::whole_repository(),
+                &configuration,
+            )],
+        ),
+        Arc::new(AtomicBool::new(false)),
+        |phase, _| {
+            if phase == CoordinatorPhase::WorkspaceRegistered {
+                replacement_blocked = fs::rename(&database, &displaced).is_err();
+                if !replacement_blocked {
+                    fs::rename(&replacement, &database)
+                        .expect("replacement should occupy the database path");
+                }
+            }
+        },
+        |_, deadline| deadline,
+    )
+    .expect("the newly opened database remains authoritative when replacement is blocked");
+
+    assert!(
+        replacement_blocked,
+        "Windows must block replacement of the newly opened database"
+    );
 }
 
 #[test]

@@ -251,7 +251,14 @@ fn update_preserves_old_bytes_before_commit_and_reports_warnings_after_commit() 
         };
         assert_eq!(receipt.publication_status(), expected_status);
         assert!(!receipt.publication_status().is_complete());
-        assert_eq!(receipt.publication_status().warning_count(), 1);
+        let expected_warning_count = u8::from(stage != PublicationStage::SyncDirectory)
+            + u8::from(
+                DIRECTORY_SYNC_AFTER_PUBLICATION == MemoryFilePublicationStepStatus::Deferred,
+            );
+        assert_eq!(
+            receipt.publication_status().warning_count(),
+            expected_warning_count
+        );
         assert_eq!(
             fs::read(fixture.target()).expect("new target should remain readable"),
             expected,

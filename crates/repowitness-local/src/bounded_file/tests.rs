@@ -12,10 +12,14 @@ struct TempDirectory(PathBuf);
 
 impl TempDirectory {
     fn new() -> Self {
-        let ordinal = NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed);
         let physical_temporary_directory = std::fs::canonicalize(std::env::temp_dir())
             .expect("canonicalize temporary directory for no-follow fixture");
-        let path = physical_temporary_directory.join(format!(
+        Self::new_in(&physical_temporary_directory)
+    }
+
+    fn new_in(parent: &Path) -> Self {
+        let ordinal = NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed);
+        let path = parent.join(format!(
             "repowitness-bounded-file-{}-{ordinal}",
             std::process::id()
         ));
@@ -63,14 +67,14 @@ fn one_byte_over_limit_and_unbounded_requests_fail_closed() {
 
 #[test]
 fn absolute_relative_dot_and_parent_spellings_name_the_same_file() {
-    let directory = TempDirectory::new();
+    let current = std::env::current_dir().expect("current directory");
+    let directory = TempDirectory::new_in(&current);
     let child = directory.0.join("child");
     fs::create_dir(&child).expect("create child");
     let path = directory.0.join("control");
     fs::write(&path, b"safe").expect("write control file");
     let absolute = read_bounded_regular_file(&path, 4).expect("absolute path");
 
-    let current = std::env::current_dir().expect("current directory");
     let relative_control = relative_path(&current, &path).expect("paths share an absolute root");
     let child_path = relative_path(&current, &child).expect("paths share an absolute root");
     let relative = read_bounded_regular_file(&Path::new(".").join(relative_control), 4);
@@ -184,6 +188,7 @@ fn final_replacement_after_open_is_detected() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn parent_replacement_after_open_is_detected() {
     let directory = TempDirectory::new();
@@ -201,6 +206,27 @@ fn parent_replacement_after_open_is_detected() {
         result.expect_err("detect parent replacement"),
         BoundedFileReadError::Changed
     );
+}
+
+#[cfg(windows)]
+#[test]
+fn parent_replacement_after_open_is_blocked_by_the_platform() {
+    let directory = TempDirectory::new();
+    let parent = directory.0.join("parent");
+    let old_parent = directory.0.join("old-parent");
+    fs::create_dir(&parent).expect("create parent");
+    let path = parent.join("control");
+    fs::write(&path, b"same").expect("write original");
+
+    let contents = read_bounded_regular_file_with_hook(&path, 4, || {
+        assert!(
+            fs::rename(&parent, &old_parent).is_err(),
+            "Windows must block replacement of an open parent directory"
+        );
+    })
+    .expect("the original file remains readable when replacement is blocked");
+
+    assert_eq!(contents.bytes(), b"same");
 }
 
 #[test]
@@ -246,6 +272,7 @@ fn admitted_parent_revalidation_detects_final_file_mutation() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn admitted_parent_revalidation_detects_ancestor_replacement() {
     let directory = TempDirectory::new();
@@ -267,6 +294,28 @@ fn admitted_parent_revalidation_detects_ancestor_replacement() {
             .expect_err("detect ancestor replacement"),
         BoundedFileReadError::Changed
     );
+}
+
+#[cfg(windows)]
+#[test]
+fn admitted_parent_ancestor_replacement_is_blocked_by_the_platform() {
+    let directory = TempDirectory::new();
+    let ancestor = directory.0.join("ancestor");
+    let parent = ancestor.join("manifest-parent");
+    let path = parent.join("repowitness-workspace.toml");
+    fs::create_dir_all(&parent).expect("create manifest parent");
+    fs::write(&path, b"safe").expect("write manifest");
+    let (_contents, admitted_parent) =
+        read_bounded_regular_file_with_parent(&path, 4).expect("admit manifest and parent");
+    let moved = directory.0.join("moved-ancestor");
+
+    assert!(
+        fs::rename(&ancestor, &moved).is_err(),
+        "Windows must block replacement of an admitted ancestor"
+    );
+    admitted_parent
+        .revalidate()
+        .expect("the original admitted chain remains valid");
 }
 
 #[test]
