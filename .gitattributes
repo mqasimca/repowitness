@@ -1,5 +1,5 @@
-# The strict engineering-memory fixtures intentionally use LF-only YAML.
-crates/repowitness-local/tests/fixtures/memory-v1/*.yaml text eol=lf
+# The strict engineering-memory fixture bytes and generated golden outputs use LF only.
+crates/repowitness-local/tests/fixtures/memory-v1/* text eol=lf
 
 # These SQL files are embedded into checksummed persistent-schema inputs.
 crates/repowitness-local/src/sqlite/schema/*.sql text eol=lf
