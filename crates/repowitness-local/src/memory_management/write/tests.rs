@@ -13,6 +13,13 @@ const REPOSITORY_ID: &str =
 const RECORD_ID: &str = "mem_00000000000000000000000000";
 const MEMORY_YAML: &[u8] = include_bytes!("../../../tests/fixtures/memory-v1/commit.yaml");
 
+#[cfg(unix)]
+const DIRECTORY_SYNC_AFTER_PUBLICATION: MemoryFilePublicationStepStatus =
+    MemoryFilePublicationStepStatus::Complete;
+#[cfg(not(unix))]
+const DIRECTORY_SYNC_AFTER_PUBLICATION: MemoryFilePublicationStepStatus =
+    MemoryFilePublicationStepStatus::Deferred;
+
 struct TestDirectory(PathBuf);
 
 impl TestDirectory {
@@ -141,13 +148,13 @@ fn create_reports_precommit_failures_and_postcommit_warnings() {
                 MemoryFilePublicationStepStatus::Deferred,
                 MemoryFileIdentityStatus::ChangedAfterCommit,
                 MemoryFileIdentityStatus::ConfirmedAtFinalFence,
-                MemoryFilePublicationStepStatus::Complete,
+                DIRECTORY_SYNC_AFTER_PUBLICATION,
             ),
             PublicationStage::VerifyTarget => LocalMemoryFilePublicationStatus::new(
                 MemoryFilePublicationStepStatus::Complete,
                 MemoryFileIdentityStatus::ChangedAfterCommit,
                 MemoryFileIdentityStatus::ConfirmedAtFinalFence,
-                MemoryFilePublicationStepStatus::Complete,
+                DIRECTORY_SYNC_AFTER_PUBLICATION,
             ),
             PublicationStage::SyncDirectory => LocalMemoryFilePublicationStatus::new(
                 MemoryFilePublicationStepStatus::Complete,
@@ -159,7 +166,7 @@ fn create_reports_precommit_failures_and_postcommit_warnings() {
                 MemoryFilePublicationStepStatus::Complete,
                 MemoryFileIdentityStatus::ConfirmedAtFinalFence,
                 MemoryFileIdentityStatus::ChangedAfterCommit,
-                MemoryFilePublicationStepStatus::Complete,
+                DIRECTORY_SYNC_AFTER_PUBLICATION,
             ),
             _ => unreachable!("the post-publication fixture names every stage"),
         };
@@ -226,7 +233,7 @@ fn update_preserves_old_bytes_before_commit_and_reports_warnings_after_commit() 
                 MemoryFilePublicationStepStatus::NotRequired,
                 MemoryFileIdentityStatus::ChangedAfterCommit,
                 MemoryFileIdentityStatus::ConfirmedAtFinalFence,
-                MemoryFilePublicationStepStatus::Complete,
+                DIRECTORY_SYNC_AFTER_PUBLICATION,
             ),
             PublicationStage::SyncDirectory => LocalMemoryFilePublicationStatus::new(
                 MemoryFilePublicationStepStatus::NotRequired,
@@ -238,7 +245,7 @@ fn update_preserves_old_bytes_before_commit_and_reports_warnings_after_commit() 
                 MemoryFilePublicationStepStatus::NotRequired,
                 MemoryFileIdentityStatus::ConfirmedAtFinalFence,
                 MemoryFileIdentityStatus::ChangedAfterCommit,
-                MemoryFilePublicationStepStatus::Complete,
+                DIRECTORY_SYNC_AFTER_PUBLICATION,
             ),
             _ => unreachable!("the post-publication fixture names every stage"),
         };
@@ -290,7 +297,7 @@ fn a_concurrent_temporary_hard_link_cannot_be_reported_as_published() {
             MemoryFilePublicationStepStatus::Complete,
             MemoryFileIdentityStatus::ChangedAfterCommit,
             MemoryFileIdentityStatus::ConfirmedAtFinalFence,
-            MemoryFilePublicationStepStatus::Complete,
+            DIRECTORY_SYNC_AFTER_PUBLICATION,
         ),
         "the alias must be reported as an unconfirmed final target"
     );
@@ -331,7 +338,7 @@ fn a_target_replacement_before_verification_cannot_be_reported_as_published() {
             MemoryFilePublicationStepStatus::Complete,
             MemoryFileIdentityStatus::ChangedAfterCommit,
             MemoryFileIdentityStatus::ConfirmedAtFinalFence,
-            MemoryFilePublicationStepStatus::Complete,
+            DIRECTORY_SYNC_AFTER_PUBLICATION,
         ),
         "the replacement must be reported without claiming rollback"
     );
@@ -384,7 +391,7 @@ fn same_file_byte_mutation_before_verification_cannot_be_reported_as_published()
             MemoryFilePublicationStepStatus::Complete,
             MemoryFileIdentityStatus::ChangedAfterCommit,
             MemoryFileIdentityStatus::ConfirmedAtFinalFence,
-            MemoryFilePublicationStepStatus::Complete,
+            DIRECTORY_SYNC_AFTER_PUBLICATION,
         ),
         "the mutation must be reported without claiming rollback"
     );
