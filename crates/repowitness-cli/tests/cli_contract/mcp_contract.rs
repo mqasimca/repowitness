@@ -19,6 +19,28 @@ const MEMORY_YAML: &str = include_str!(
     "../../../repowitness-local/tests/fixtures/memory-v1/commit.yaml"
 );
 
+fn memory_write_state(repository: &Path) -> (bool, bool, bool, bool, bool) {
+    let memory = repository.join(".code-memory");
+    let records = memory.join("records");
+    let target = records.join("mem_00000000000000000000000000.yaml");
+    let temporary_exists = fs::read_dir(&records)
+        .ok()
+        .into_iter()
+        .flatten()
+        .any(|entry| {
+            entry
+                .ok()
+                .is_some_and(|entry| entry.file_name().to_string_lossy().ends_with(".tmp"))
+        });
+    (
+        memory.is_dir(),
+        records.is_dir(),
+        memory.join(".repowitness-write.lock").is_file(),
+        target.is_file(),
+        temporary_exists,
+    )
+}
+
 #[test]
 fn mcp_memory_manage_is_process_level_default_deny_and_explicitly_enabled() {
     let directory = TempDirectory::new();
@@ -92,10 +114,17 @@ fn mcp_memory_manage_is_process_level_default_deny_and_explicitly_enabled() {
         }),
     );
     assert_eq!(written["id"], serde_json::json!(22));
+    let state = memory_write_state(&repository);
     assert_eq!(
         written["result"]["isError"],
         serde_json::json!(false),
-        "memory write returned a tool error"
+        "memory write returned a tool error; response={written}; \
+         state=(memory_directory={}, records_directory={}, write_lease={}, target={}, temporary={})",
+        state.0,
+        state.1,
+        state.2,
+        state.3,
+        state.4,
     );
     let written = written["result"]["structuredContent"]
         .as_object()
