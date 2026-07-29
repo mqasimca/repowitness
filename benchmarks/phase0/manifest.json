@@ -1,8 +1,8 @@
 {
   "schema_version": 2,
   "benchmark_id": "phase0-rust-evidence-memory-v1",
-  "status": "proposed",
-  "reviewed_on": "2026-07-28",
+  "status": "ratified",
+  "reviewed_on": "2026-07-29",
   "source_policy": {
     "mode": "external-reference-only",
     "vendored_content": false
@@ -175,7 +175,7 @@
     }
   ],
   "budgets": {
-    "status": "proposed",
+    "status": "ratified",
     "correctness": {
       "max_false_confirmed_claims": 0,
       "max_silent_truncations": 0,

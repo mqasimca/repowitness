@@ -115,9 +115,79 @@ fn mcp_memory_manage_is_process_level_default_deny_and_explicitly_enabled() {
 }
 
 #[test]
+fn mcp_configuration_policy_fails_before_transport_startup() {
+    let directory = TempDirectory::new();
+    let repository = directory.repository();
+    let database = directory.database();
+    let user = directory.0.join("user.toml");
+    let repository_configuration = directory.0.join("repository.toml");
+    fs::write(
+        &user,
+        "schema_version = 1\n[policy]\ndeny_memory_writes = true\n",
+    )
+    .expect("user configuration should be written");
+    fs::write(
+        &repository_configuration,
+        "schema_version = 1\n[policy]\ndeny_memory_writes = false\n",
+    )
+    .expect("repository configuration should be written");
+
+    let denied = Command::new(env!("CARGO_BIN_EXE_repowitness"))
+        .args(["mcp-serve", "--repository-id", REPOSITORY_ID, "--database"])
+        .arg(&database)
+        .arg("--root")
+        .arg(&repository)
+        .arg("--repository-config")
+        .arg(&repository_configuration)
+        .args([
+            "--enable-memory-writes",
+            "--memory-actor",
+            "contract-test-actor",
+            "--user-config",
+        ])
+        .arg(&user)
+        .output()
+        .expect("denied MCP server should stop");
+    assert_eq!(denied.status.code(), Some(70));
+    assert!(denied.stdout.is_empty());
+    assert_eq!(
+        denied.stderr,
+        b"error: MCP memory writes are denied by configuration\n"
+    );
+    assert!(!database.exists());
+
+    fs::write(
+        &repository_configuration,
+        "schema_version = 1\n[preferences]\nmcp_tool_profile = \"minimal\"\n",
+    )
+    .expect("unsupported profile configuration should be written");
+    let unavailable = Command::new(env!("CARGO_BIN_EXE_repowitness"))
+        .args(["mcp-serve", "--repository-id", REPOSITORY_ID, "--database"])
+        .arg(&database)
+        .arg("--root")
+        .arg(&repository)
+        .arg("--repository-config")
+        .arg(&repository_configuration)
+        .output()
+        .expect("unsupported MCP profile should stop");
+    assert_eq!(unavailable.status.code(), Some(70));
+    assert!(unavailable.stdout.is_empty());
+    assert_eq!(
+        unavailable.stderr,
+        b"error: configured MCP tool profile is unavailable\n"
+    );
+    assert!(!database.exists());
+}
+
+#[test]
 fn mcp_stdio_indexes_searches_retrieves_and_rejects_a_stale_selector() {
     let directory = TempDirectory::new();
     let repository = fixture_repository(&directory);
+    fs::write(
+        repository.join("src/lib.rs"),
+        "pub struct Widget;\npub fn run() {}\npub fn invoke() { run(); }\n",
+    )
+    .expect("Rust graph fixture should be written");
     fs::write(
         repository.join("src/frontend.ts"),
         "export function loadFrontend() {}\n",
@@ -194,6 +264,7 @@ fn mcp_stdio_indexes_searches_retrieves_and_rejects_a_stale_selector() {
         b"def send(self): pass",
     );
     assert_mcp_diagnostics_and_absent_memory(&mut input, &mut output, 15, 16);
+    assert_mcp_native_graph(&mut input, &mut output);
 
     assert!(
         index(&repository, &database, REPOSITORY_ID)
@@ -336,6 +407,33 @@ fn start_mcp(
         .stderr(Stdio::piped())
         .spawn()
         .expect("MCP server must start");
+    let input = child.stdin.take().expect("piped stdin");
+    let output = BufReader::new(child.stdout.take().expect("piped stdout"));
+    (child, input, output)
+}
+
+fn start_mcp_with_graph_workspace(
+    repository: &Path,
+    database: &Path,
+    connected_workspace: &str,
+    source_slot: &str,
+) -> (std::process::Child, ChildStdin, BufReader<ChildStdout>) {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_repowitness"))
+        .args(["mcp-serve", "--repository-id", REPOSITORY_ID, "--database"])
+        .arg(database)
+        .arg("--root")
+        .arg(repository)
+        .args([
+            "--connected-workspace-id",
+            connected_workspace,
+            "--source-slot-id",
+            source_slot,
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("connected-workspace MCP server must start");
     let input = child.stdin.take().expect("piped stdin");
     let output = BufReader::new(child.stdout.take().expect("piped stdout"));
     (child, input, output)

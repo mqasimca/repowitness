@@ -101,6 +101,7 @@ fn saturated_drop_detaches_instead_of_waiting_without_shutdown() {
     let store = OwnedSqliteIndex {
         commands,
         worker: Some(worker),
+        opened_database_identity: None,
     };
 
     let started = Instant::now();
@@ -375,8 +376,7 @@ fn every_memory_import_stage_failure_rolls_back_the_whole_journal_transaction() 
 
         let (store, _) =
             OwnedSqliteIndex::start(&database, 456, deadline()).expect("store should reopen");
-        let error =
-        store
+        let error = store
             .import_memory_version(
                 repository,
                 record,
@@ -409,17 +409,17 @@ fn every_memory_import_stage_failure_rolls_back_the_whole_journal_transaction() 
 fn memory_row_count(database: &Path) -> i64 {
     let raw = Connection::open(database).expect("database should reopen");
     raw.query_row(
-            "SELECT
+        "SELECT
                     (SELECT count(*) FROM memory_versions) +
                     (SELECT count(*) FROM memory_version_parents) +
                     (SELECT count(*) FROM memory_validity_commits) +
                     (SELECT count(*) FROM memory_evidence) +
                     (SELECT count(*) FROM memory_relationships) +
                     (SELECT count(*) FROM memory_audit)",
-            [],
-            |row| row.get(0),
-        )
-        .expect("memory row count should be readable")
+        [],
+        |row| row.get(0),
+    )
+    .expect("memory row count should be readable")
 }
 
 #[test]

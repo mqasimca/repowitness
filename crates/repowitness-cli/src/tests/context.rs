@@ -7,7 +7,11 @@ struct FakeContextBuilder {
 }
 
 impl RepositoryContextBuilder for FakeContextBuilder {
-    fn build(&self, invocation: &ContextInvocation) -> Result<ContextBuildOutput, String> {
+    fn build(
+        &self,
+        invocation: &ContextInvocation,
+        _configuration: &ResolvedConfiguration,
+    ) -> Result<ContextBuildOutput, String> {
         self.calls.set(self.calls.get() + 1);
         assert_eq!(invocation.root, Path::new("../repository"));
         assert_eq!(invocation.database, Path::new("../index.db"));
@@ -22,7 +26,11 @@ impl RepositoryContextBuilder for FakeContextBuilder {
 struct FailingContextBuilder;
 
 impl RepositoryContextBuilder for FailingContextBuilder {
-    fn build(&self, _invocation: &ContextInvocation) -> Result<ContextBuildOutput, String> {
+    fn build(
+        &self,
+        _invocation: &ContextInvocation,
+        _configuration: &ResolvedConfiguration,
+    ) -> Result<ContextBuildOutput, String> {
         Err("sensitive adapter detail: ../private-repository".to_owned())
     }
 }
@@ -107,7 +115,13 @@ fn context_command_passes_explicit_bounds_and_emits_safe_evidence() {
     .map(OsString::from);
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
-    let code = run_context_build(arguments, &mut stdout, &mut stderr, &builder);
+    let code = run_context_build(
+        arguments,
+        &mut stdout,
+        &mut stderr,
+        &builder,
+        &LocalConfigurationLoader,
+    );
     assert_eq!(code, EXIT_SUCCESS);
     assert!(stderr.is_empty());
     assert_eq!(builder.calls.get(), 1);
@@ -235,7 +249,13 @@ fn context_failure_is_generic_and_redacted() {
     .map(OsString::from);
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
-    let code = run_context_build(arguments, &mut stdout, &mut stderr, &FailingContextBuilder);
+    let code = run_context_build(
+        arguments,
+        &mut stdout,
+        &mut stderr,
+        &FailingContextBuilder,
+        &LocalConfigurationLoader,
+    );
     assert_eq!(code, EXIT_SOFTWARE);
     assert!(stdout.is_empty());
     assert_eq!(stderr, b"error: context build failed\n");

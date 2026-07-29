@@ -360,6 +360,7 @@ fn output_failures_return_the_io_exit_code() {
         &searcher,
         &symbol_getter,
         &FakeMemory,
+        &LocalConfigurationLoader,
     );
     assert_eq!(code, EXIT_IO);
 
@@ -372,6 +373,7 @@ fn output_failures_return_the_io_exit_code() {
         &searcher,
         &symbol_getter,
         &FakeMemory,
+        &LocalConfigurationLoader,
     );
     assert_eq!(code, EXIT_IO);
 
@@ -384,6 +386,7 @@ fn output_failures_return_the_io_exit_code() {
         &searcher,
         &symbol_getter,
         &FakeMemory,
+        &LocalConfigurationLoader,
     );
     assert_eq!(code, EXIT_IO);
 
@@ -401,6 +404,7 @@ fn output_failures_return_the_io_exit_code() {
         &searcher,
         &symbol_getter,
         &FakeMemory,
+        &LocalConfigurationLoader,
     );
     assert_eq!(code, EXIT_IO);
 
@@ -418,6 +422,7 @@ fn output_failures_return_the_io_exit_code() {
         &searcher,
         &symbol_getter,
         &FakeMemory,
+        &LocalConfigurationLoader,
     );
     assert_eq!(code, EXIT_IO);
 
@@ -442,6 +447,7 @@ fn output_failures_return_the_io_exit_code() {
         &searcher,
         &symbol_getter,
         &FakeMemory,
+        &LocalConfigurationLoader,
     );
     assert_eq!(code, EXIT_IO);
 
@@ -476,6 +482,7 @@ fn search_output_failure_returns_the_io_exit_code() {
         &searcher,
         &symbol_getter,
         &FakeMemory,
+        &LocalConfigurationLoader,
     );
     assert_eq!(code, EXIT_IO);
 }

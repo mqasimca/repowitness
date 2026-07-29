@@ -14,8 +14,8 @@ use crate::{
     MemoryEffectiveState, MemoryRecallProjectionCoverage, RustIndexCoverage, SourceLanguage,
 };
 
-/// Version of the stable Phase 0 repository-diagnostics contract.
-pub const REPOSITORY_DIAGNOSTICS_PROFILE_VERSION: u16 = 2;
+/// Version of the stable repository-diagnostics contract.
+pub const REPOSITORY_DIAGNOSTICS_PROFILE_VERSION: u16 = 3;
 
 const SUPPORTED_LANGUAGES: [SourceLanguage; 5] = [
     SourceLanguage::Rust,
@@ -25,29 +25,32 @@ const SUPPORTED_LANGUAGES: [SourceLanguage; 5] = [
     SourceLanguage::Python,
 ];
 
-const CAPABILITIES: [RepositoryDiagnosticCapability; 4] = [
+const CAPABILITIES: [RepositoryDiagnosticCapability; 5] = [
     RepositoryDiagnosticCapability::LexicalSourceSearch,
     RepositoryDiagnosticCapability::ExactSymbolSource,
+    RepositoryDiagnosticCapability::BoundedRustSyntaxGraph,
     RepositoryDiagnosticCapability::CurrentMemoryRecall,
     RepositoryDiagnosticCapability::BoundedContextBuild,
 ];
 
 const LIMITATIONS: [RepositoryDiagnosticLimitation; 6] = [
-    RepositoryDiagnosticLimitation::NoReferenceIndex,
-    RepositoryDiagnosticLimitation::NoStructuralGraph,
+    RepositoryDiagnosticLimitation::RustGraphSyntaxDerivedOnly,
+    RepositoryDiagnosticLimitation::NoPackageMacroScipDynamicOrCrossLanguageGraph,
     RepositoryDiagnosticLimitation::NoHistorySearch,
     RepositoryDiagnosticLimitation::NoVectorRetrieval,
     RepositoryDiagnosticLimitation::NoModelTokenizer,
     RepositoryDiagnosticLimitation::NoRemoteTransport,
 ];
 
-/// Implemented evidence capability available to the Phase 0 context path.
+/// Implemented evidence capability available to repository read paths.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum RepositoryDiagnosticCapability {
     /// Literal FTS5 retrieval over the active source generation.
     LexicalSourceSearch,
     /// Exact selector expansion with declaration-content verification.
     ExactSymbolSource,
+    /// Bounded generation-pinned Rust syntax graph reads with categorical evidence.
+    BoundedRustSyntaxGraph,
     /// Retrieval from the complete current-memory projection when present.
     CurrentMemoryRecall,
     /// Deterministic bounded fusion of exact source and current memory.
@@ -61,19 +64,21 @@ impl RepositoryDiagnosticCapability {
         match self {
             Self::LexicalSourceSearch => "lexical_source_search",
             Self::ExactSymbolSource => "exact_symbol_source",
+            Self::BoundedRustSyntaxGraph => "bounded_rust_syntax_graph",
             Self::CurrentMemoryRecall => "current_memory_recall",
             Self::BoundedContextBuild => "bounded_context_build",
         }
     }
 }
 
-/// Explicit functionality that the Phase 0 read path does not provide.
+/// Explicit functionality that repository read paths do not provide.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum RepositoryDiagnosticLimitation {
-    /// Cross-file references are not indexed.
-    NoReferenceIndex,
-    /// General structural or call-graph traversal is unavailable.
-    NoStructuralGraph,
+    /// Native graph coverage is Rust-only and derived from pinned syntax.
+    RustGraphSyntaxDerivedOnly,
+    /// Package-aware resolution, macro expansion, SCIP, dynamic dispatch, and
+    /// cross-language edges are unavailable or explicitly unresolved.
+    NoPackageMacroScipDynamicOrCrossLanguageGraph,
     /// Git-history retrieval is unavailable.
     NoHistorySearch,
     /// Vector retrieval is unavailable.
@@ -89,8 +94,10 @@ impl RepositoryDiagnosticLimitation {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::NoReferenceIndex => "no_reference_index",
-            Self::NoStructuralGraph => "no_structural_graph",
+            Self::RustGraphSyntaxDerivedOnly => "rust_graph_syntax_derived_only",
+            Self::NoPackageMacroScipDynamicOrCrossLanguageGraph => {
+                "no_package_macro_scip_dynamic_or_cross_language_graph"
+            }
             Self::NoHistorySearch => "no_history_search",
             Self::NoVectorRetrieval => "no_vector_retrieval",
             Self::NoModelTokenizer => "no_model_tokenizer",
@@ -339,7 +346,7 @@ impl<G, P> RepositoryDiagnosticsResult<G, P> {
         &CAPABILITIES
     }
 
-    /// Returns explicit Phase 0 limitations in stable order.
+    /// Returns explicit repository-read limitations in stable order.
     #[must_use]
     pub const fn limitations(&self) -> &'static [RepositoryDiagnosticLimitation] {
         &LIMITATIONS

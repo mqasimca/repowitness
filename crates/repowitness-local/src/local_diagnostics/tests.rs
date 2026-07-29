@@ -133,7 +133,7 @@ fn indexed_repository_reports_exact_source_and_absent_memory_projection() {
     assert_eq!(diagnostics.index_coverage().searched(), 1);
     assert_eq!(diagnostics.memory_projection(), None);
     assert_eq!(diagnostics.supported_languages().len(), 5);
-    assert_eq!(diagnostics.capabilities().len(), 4);
+    assert_eq!(diagnostics.capabilities().len(), 5);
     assert_eq!(diagnostics.limitations().len(), 6);
 }
 

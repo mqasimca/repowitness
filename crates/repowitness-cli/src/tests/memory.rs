@@ -78,7 +78,11 @@ impl RepositoryMemory for RecordingMemory {
             .map_err(str::to_owned)
     }
 
-    fn recall(&self, invocation: &MemoryRecallInvocation) -> Result<MemoryRecallOutput, String> {
+    fn recall(
+        &self,
+        invocation: &MemoryRecallInvocation,
+        _configuration: &ResolvedConfiguration,
+    ) -> Result<MemoryRecallOutput, String> {
         self.recall_calls.set(self.recall_calls.get() + 1);
         self.database.replace(Some(invocation.database.clone()));
         self.repository_identity
@@ -113,6 +117,7 @@ fn invoke_memory(arguments: &[&str], memory: &impl RepositoryMemory) -> (u8, Str
         &FakeSearcher::failure("must not be called"),
         &FakeSymbolGetter::failure("must not be called"),
         memory,
+        &LocalConfigurationLoader,
     );
     (
         code,

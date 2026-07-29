@@ -22,7 +22,11 @@ trait RepositoryMemory {
         invocation: &MemoryRevalidationInvocation,
     ) -> Result<CliMemoryRevalidationReport, String>;
 
-    fn recall(&self, invocation: &MemoryRecallInvocation) -> Result<MemoryRecallOutput, String>;
+    fn recall(
+        &self,
+        invocation: &MemoryRecallInvocation,
+        configuration: &ResolvedConfiguration,
+    ) -> Result<MemoryRecallOutput, String>;
 
     fn manage(
         &self,
@@ -57,7 +61,11 @@ impl RepositoryMemory for LocalRepositoryMemory {
         .map_err(|error| error.to_string())
     }
 
-    fn recall(&self, invocation: &MemoryRecallInvocation) -> Result<MemoryRecallOutput, String> {
+    fn recall(
+        &self,
+        invocation: &MemoryRecallInvocation,
+        configuration: &ResolvedConfiguration,
+    ) -> Result<MemoryRecallOutput, String> {
         let repository_identity = invocation
             .repository_identity
             .to_str()
@@ -73,7 +81,8 @@ impl RepositoryMemory for LocalRepositoryMemory {
         let request =
             LocalMemoryRecallRequest::new(&invocation.database, repository_identity, selection)
                 .with_max_results(invocation.max_results)
-                .map_err(|error| error.to_string())?;
+                .map_err(|error| error.to_string())?
+                .with_configuration(configuration);
         recall_local_memory(request, Arc::new(AtomicBool::new(false)))
             .map_err(|error| error.to_string())
             .and_then(mcp_memory_output)

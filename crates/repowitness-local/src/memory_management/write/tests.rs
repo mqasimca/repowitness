@@ -67,7 +67,7 @@ fn contained_directory_sync_uses_a_sync_capable_handle() {
 }
 
 #[test]
-fn every_create_publication_stage_has_an_explicit_atomic_failure_outcome() {
+fn create_reports_precommit_failures_and_postcommit_warnings() {
     let before_publication = [
         PublicationStage::OpenDirectorySync,
         PublicationStage::CreateTemporary,
@@ -80,6 +80,7 @@ fn every_create_publication_stage_has_an_explicit_atomic_failure_outcome() {
         PublicationStage::RemoveTemporary,
         PublicationStage::VerifyTarget,
         PublicationStage::SyncDirectory,
+        PublicationStage::VerifyRecordsDirectory,
     ];
     let expected = canonical(MEMORY_YAML);
 
@@ -99,22 +100,57 @@ fn every_create_publication_stage_has_an_explicit_atomic_failure_outcome() {
 
     for stage in after_publication {
         let fixture = TestDirectory::new("create-after");
-        assert_eq!(
-            write_with_stage_fault(&fixture, MEMORY_YAML, stage),
-            Err(LocalMemoryManageError::FilePublicationFailed),
-            "fault stage {stage:?} must fail"
-        );
+        let receipt = write_with_stage_fault(&fixture, MEMORY_YAML, stage)
+            .expect("the atomic publication already committed");
+        let expected_status = match stage {
+            PublicationStage::RemoveTemporary => LocalMemoryFilePublicationStatus::new(
+                MemoryFilePublicationStepStatus::Deferred,
+                MemoryFileIdentityStatus::ChangedAfterCommit,
+                MemoryFileIdentityStatus::ConfirmedAtFinalFence,
+                MemoryFilePublicationStepStatus::Complete,
+            ),
+            PublicationStage::VerifyTarget => LocalMemoryFilePublicationStatus::new(
+                MemoryFilePublicationStepStatus::Complete,
+                MemoryFileIdentityStatus::ChangedAfterCommit,
+                MemoryFileIdentityStatus::ConfirmedAtFinalFence,
+                MemoryFilePublicationStepStatus::Complete,
+            ),
+            PublicationStage::SyncDirectory => LocalMemoryFilePublicationStatus::new(
+                MemoryFilePublicationStepStatus::Complete,
+                MemoryFileIdentityStatus::ConfirmedAtFinalFence,
+                MemoryFileIdentityStatus::ConfirmedAtFinalFence,
+                MemoryFilePublicationStepStatus::Deferred,
+            ),
+            PublicationStage::VerifyRecordsDirectory => LocalMemoryFilePublicationStatus::new(
+                MemoryFilePublicationStepStatus::Complete,
+                MemoryFileIdentityStatus::ConfirmedAtFinalFence,
+                MemoryFileIdentityStatus::ChangedAfterCommit,
+                MemoryFilePublicationStepStatus::Complete,
+            ),
+            _ => unreachable!("the post-publication fixture names every stage"),
+        };
+        assert_eq!(receipt.publication_status(), expected_status);
+        assert!(!receipt.publication_status().is_complete());
+        assert!(receipt.publication_status().warning_count() > 0);
         assert_eq!(
             fs::read(fixture.target()).expect("published target should remain readable"),
             expected,
             "fault stage {stage:?} may leave only the complete canonical target"
         );
-        assert_no_temporary_files(&fixture);
+        if stage == PublicationStage::RemoveTemporary {
+            assert_eq!(
+                temporary_files(&fixture).len(),
+                1,
+                "deferred cleanup must remain explicit"
+            );
+        } else {
+            assert_no_temporary_files(&fixture);
+        }
     }
 }
 
 #[test]
-fn every_update_publication_stage_preserves_either_old_or_complete_new_bytes() {
+fn update_preserves_old_bytes_before_commit_and_reports_warnings_after_commit() {
     let before_publication = [
         PublicationStage::OpenDirectorySync,
         PublicationStage::CreateTemporary,
@@ -126,6 +162,7 @@ fn every_update_publication_stage_preserves_either_old_or_complete_new_bytes() {
     let after_publication = [
         PublicationStage::VerifyTarget,
         PublicationStage::SyncDirectory,
+        PublicationStage::VerifyRecordsDirectory,
     ];
 
     for stage in before_publication {
@@ -148,11 +185,32 @@ fn every_update_publication_stage_preserves_either_old_or_complete_new_bytes() {
         let fixture = TestDirectory::new("update-after");
         let (_, update) = create_update(&fixture);
         let expected = canonical(update.as_bytes());
-        assert_eq!(
-            write_with_stage_fault(&fixture, update.as_bytes(), stage),
-            Err(LocalMemoryManageError::FilePublicationFailed),
-            "fault stage {stage:?} must fail"
-        );
+        let receipt = write_with_stage_fault(&fixture, update.as_bytes(), stage)
+            .expect("the atomic replacement already committed");
+        let expected_status = match stage {
+            PublicationStage::VerifyTarget => LocalMemoryFilePublicationStatus::new(
+                MemoryFilePublicationStepStatus::NotRequired,
+                MemoryFileIdentityStatus::ChangedAfterCommit,
+                MemoryFileIdentityStatus::ConfirmedAtFinalFence,
+                MemoryFilePublicationStepStatus::Complete,
+            ),
+            PublicationStage::SyncDirectory => LocalMemoryFilePublicationStatus::new(
+                MemoryFilePublicationStepStatus::NotRequired,
+                MemoryFileIdentityStatus::ConfirmedAtFinalFence,
+                MemoryFileIdentityStatus::ConfirmedAtFinalFence,
+                MemoryFilePublicationStepStatus::Deferred,
+            ),
+            PublicationStage::VerifyRecordsDirectory => LocalMemoryFilePublicationStatus::new(
+                MemoryFilePublicationStepStatus::NotRequired,
+                MemoryFileIdentityStatus::ConfirmedAtFinalFence,
+                MemoryFileIdentityStatus::ChangedAfterCommit,
+                MemoryFilePublicationStepStatus::Complete,
+            ),
+            _ => unreachable!("the post-publication fixture names every stage"),
+        };
+        assert_eq!(receipt.publication_status(), expected_status);
+        assert!(!receipt.publication_status().is_complete());
+        assert_eq!(receipt.publication_status().warning_count(), 1);
         assert_eq!(
             fs::read(fixture.target()).expect("new target should remain readable"),
             expected,
@@ -191,10 +249,16 @@ fn a_concurrent_temporary_hard_link_cannot_be_reported_as_published() {
         linked,
         "the hard-link race must execute, result: {result:?}"
     );
+    let receipt = result.expect("the target publication must remain a committed outcome");
     assert_eq!(
-        result,
-        Err(LocalMemoryManageError::FilePublicationFailed),
-        "an aliased target must never be reported as successfully published"
+        receipt.publication_status(),
+        LocalMemoryFilePublicationStatus::new(
+            MemoryFilePublicationStepStatus::Complete,
+            MemoryFileIdentityStatus::ChangedAfterCommit,
+            MemoryFileIdentityStatus::ConfirmedAtFinalFence,
+            MemoryFilePublicationStepStatus::Complete,
+        ),
+        "the alias must be reported as an unconfirmed final target"
     );
     assert_eq!(
         fs::read(&alias).expect("the hostile alias should remain readable"),
@@ -226,10 +290,16 @@ fn a_target_replacement_before_verification_cannot_be_reported_as_published() {
     );
 
     assert!(replaced, "the target replacement race must execute");
+    let receipt = result.expect("the earlier atomic publication must remain visible");
     assert_eq!(
-        result,
-        Err(LocalMemoryManageError::FilePublicationFailed),
-        "a replaced target must never be reported as successfully published"
+        receipt.publication_status(),
+        LocalMemoryFilePublicationStatus::new(
+            MemoryFilePublicationStepStatus::Complete,
+            MemoryFileIdentityStatus::ChangedAfterCommit,
+            MemoryFileIdentityStatus::ConfirmedAtFinalFence,
+            MemoryFilePublicationStepStatus::Complete,
+        ),
+        "the replacement must be reported without claiming rollback"
     );
     assert_eq!(
         fs::read(target).expect("replacement should remain readable"),
@@ -273,16 +343,102 @@ fn same_file_byte_mutation_before_verification_cannot_be_reported_as_published()
     );
 
     assert!(mutated, "the same-file mutation race must execute");
+    let receipt = result.expect("the earlier atomic publication must remain visible");
     assert_eq!(
-        result,
-        Err(LocalMemoryManageError::FilePublicationFailed),
-        "mutated canonical bytes must never receive a publication receipt"
+        receipt.publication_status(),
+        LocalMemoryFilePublicationStatus::new(
+            MemoryFilePublicationStepStatus::Complete,
+            MemoryFileIdentityStatus::ChangedAfterCommit,
+            MemoryFileIdentityStatus::ConfirmedAtFinalFence,
+            MemoryFilePublicationStepStatus::Complete,
+        ),
+        "the mutation must be reported without claiming rollback"
     );
     assert_eq!(
         fs::read(target).expect("mutated target should remain readable"),
         hostile
     );
     assert_no_temporary_files(&fixture);
+}
+
+#[cfg(unix)]
+#[test]
+fn records_directory_replacement_before_commit_prevents_publication() {
+    let fixture = TestDirectory::new("records-directory-precommit");
+    let records = fixture.records();
+    let detached = fixture.path().join(".code-memory/records-detached");
+    let records_for_hook = records.clone();
+    let detached_for_hook = detached.clone();
+    let mut replaced = false;
+    let mut faults = |stage| {
+        if stage == PublicationStage::PublishTarget {
+            fs::rename(&records_for_hook, &detached_for_hook)
+                .expect("authorized records directory should be detached");
+            fs::create_dir(&records_for_hook)
+                .expect("replacement records directory should be created");
+            replaced = true;
+        }
+        Ok(())
+    };
+
+    let result = write_with_faults(
+        LocalMemoryWriteRequest::from_bytes(fixture.path(), MEMORY_YAML, REPOSITORY_ID),
+        Arc::new(AtomicBool::new(false)),
+        &mut faults,
+    );
+
+    assert!(replaced, "the records-directory race must execute");
+    assert_eq!(result, Err(LocalMemoryManageError::FilePublicationFailed));
+    assert!(!fixture.target().exists());
+    assert!(
+        !detached.join(format!("{RECORD_ID}.yaml")).exists(),
+        "the detached authority must not receive a committed target"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn records_directory_replacement_after_commit_is_a_categorical_warning() {
+    let fixture = TestDirectory::new("records-directory-postcommit");
+    let records = fixture.records();
+    let detached = fixture.path().join(".code-memory/records-detached");
+    let records_for_hook = records.clone();
+    let detached_for_hook = detached.clone();
+    let mut replaced = false;
+    let mut faults = |stage| {
+        if stage == PublicationStage::VerifyRecordsDirectory {
+            fs::rename(&records_for_hook, &detached_for_hook)
+                .expect("authorized records directory should be detached");
+            fs::create_dir(&records_for_hook)
+                .expect("replacement records directory should be created");
+            replaced = true;
+        }
+        Ok(())
+    };
+
+    let receipt = write_with_faults(
+        LocalMemoryWriteRequest::from_bytes(fixture.path(), MEMORY_YAML, REPOSITORY_ID),
+        Arc::new(AtomicBool::new(false)),
+        &mut faults,
+    )
+    .expect("the atomic publication already committed");
+
+    assert!(replaced, "the records-directory race must execute");
+    assert_eq!(
+        receipt.publication_status(),
+        LocalMemoryFilePublicationStatus::new(
+            MemoryFilePublicationStepStatus::Complete,
+            MemoryFileIdentityStatus::ConfirmedAtFinalFence,
+            MemoryFileIdentityStatus::ChangedAfterCommit,
+            MemoryFilePublicationStepStatus::Complete,
+        )
+    );
+    assert!(!fixture.target().exists());
+    assert_eq!(
+        fs::read(detached.join(format!("{RECORD_ID}.yaml")))
+            .expect("committed detached target should remain readable"),
+        canonical(MEMORY_YAML)
+    );
 }
 
 #[test]
@@ -389,7 +545,7 @@ fn temporary_files(fixture: &TestDirectory) -> Vec<PathBuf> {
 fn assert_no_temporary_files(fixture: &TestDirectory) {
     assert!(
         temporary_files(fixture).is_empty(),
-        "failed publication must clean its temporary file"
+        "publication must not leave an unreported temporary file"
     );
 }
 

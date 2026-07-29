@@ -1,5 +1,11 @@
 use super::*;
-use crate::McpDiagnosticsMemoryProjection;
+use crate::{
+    GraphArchitectureOutput, GraphEvidenceOutput, GraphImpactOutput, GraphReadServiceOutput,
+    GraphReadServiceRequest, GraphSearchOutput, GraphStatusOutput, GraphTraceOutput,
+    McpConfigurationIdentity, McpDiagnosticsMemoryProjection, McpGraphContext, McpGraphPublication,
+    McpGraphTrace, McpGraphTraceCoverage, McpGraphTraceTruncation,
+};
+use rmcp::model::JsonObject;
 
 pub(super) fn coverage() -> McpCoverage {
     McpCoverage {
@@ -8,6 +14,10 @@ pub(super) fn coverage() -> McpCoverage {
         unresolved: 0,
         truncated: 0,
     }
+}
+
+pub(super) fn json_object(value: serde_json::Value) -> JsonObject {
+    value.as_object().expect("fixture is an object").clone()
 }
 
 pub(super) fn search_output() -> CodeSearchOutput {
@@ -100,8 +110,14 @@ pub(super) fn context_output() -> ContextBuildOutput {
 
 pub(super) fn diagnostics_output() -> DiagnosticsOutput {
     DiagnosticsOutput {
-        schema_version: 2,
-        diagnostics_profile: 2,
+        schema_version: 3,
+        diagnostics_profile: 3,
+        configuration: McpConfigurationIdentity {
+            digest_sha256: "66".repeat(32),
+            schema_version: 1,
+            resolver_version: 1,
+            profile: "local".to_owned(),
+        },
         snapshot_sha256: "11".repeat(32),
         generation: 9,
         source_epoch: 2,
@@ -123,7 +139,7 @@ pub(super) fn diagnostics_output() -> DiagnosticsOutput {
             "python".to_owned(),
         ],
         capabilities: vec!["lexical_source_search".to_owned()],
-        limitations: vec!["no_reference_index".to_owned()],
+        limitations: vec!["rust_graph_syntax_derived_only".to_owned()],
     }
 }
 
@@ -154,6 +170,147 @@ pub(super) fn symbol_output() -> SymbolGetOutput {
             declaration_encoding: "utf8".to_owned(),
             declaration: "pub fn run() {}".to_owned(),
         }),
+    }
+}
+
+pub(super) fn graph_output(request: GraphReadServiceRequest) -> GraphReadServiceOutput {
+    use repowitness_application::RustGraphReadOperation;
+
+    let operation = request.into_operation();
+    match operation {
+        RustGraphReadOperation::Status => GraphReadServiceOutput::Status(GraphStatusOutput {
+            schema_version: 1,
+            context: graph_context(),
+            availability: "complete".to_owned(),
+        }),
+        RustGraphReadOperation::Search { .. } => {
+            GraphReadServiceOutput::Search(GraphSearchOutput {
+                schema_version: 1,
+                context: graph_context(),
+                matches_returned: 0,
+                matches_total: 0,
+                truncated: false,
+                output_bytes: 0,
+                definitions: Vec::new(),
+            })
+        }
+        RustGraphReadOperation::Evidence { .. } => {
+            GraphReadServiceOutput::Evidence(GraphEvidenceOutput {
+                schema_version: 1,
+                context: graph_context(),
+                found: false,
+                evidence: None,
+            })
+        }
+        RustGraphReadOperation::Architecture { .. } => {
+            GraphReadServiceOutput::Architecture(GraphArchitectureOutput {
+                schema_version: 1,
+                context: graph_context(),
+                definitions_by_kind: Vec::new(),
+                edges_by_kind: Vec::new(),
+            })
+        }
+        RustGraphReadOperation::Trace { .. } => GraphReadServiceOutput::Trace(GraphTraceOutput {
+            schema_version: 1,
+            context: graph_context(),
+            trace: empty_graph_trace(),
+        }),
+        RustGraphReadOperation::Impact { .. } => {
+            GraphReadServiceOutput::Impact(GraphImpactOutput {
+                schema_version: 1,
+                context: graph_context(),
+                trace: empty_graph_trace(),
+                impacts: Vec::new(),
+                unknown_coverage: false,
+                output_bytes: 0,
+            })
+        }
+    }
+}
+
+pub(super) fn graph_definition_json() -> serde_json::Value {
+    serde_json::json!({
+        "source_slot": format!("ssi1:h:{}", "11".repeat(32).to_uppercase()),
+        "source_generation": 9,
+        "path": "rwp1:h:7372632F6C69622E7273",
+        "content_sha256": "22".repeat(32),
+        "artifact_sha256": "33".repeat(32),
+        "fact_ordinal": 7,
+        "symbol_kind": "function",
+        "name": "run",
+        "qualified_name": "fixture::run",
+        "name_span": {"start": 7, "end": 10},
+        "declaration_span": {"start": 0, "end": 13},
+    })
+}
+
+pub(super) fn graph_site_json() -> serde_json::Value {
+    serde_json::json!({
+        "source_slot": format!("ssi1:h:{}", "11".repeat(32).to_uppercase()),
+        "path": "rwp1:h:7372632F6C69622E7273",
+        "artifact_sha256": "33".repeat(32),
+        "ordinal": 1,
+        "site_kind": "call",
+        "occurrence_span": {"start": 0, "end": 13},
+        "target_span": {"start": 7, "end": 10},
+    })
+}
+
+fn graph_context() -> McpGraphContext {
+    McpGraphContext {
+        connected_workspace: format!("cwi1:h:{}", "11".repeat(32).to_uppercase()),
+        workspace_view: 4,
+        graph_generation: 9,
+        publication: Some(McpGraphPublication {
+            resolver_profile: 1,
+            input_sha256: "44".repeat(32),
+            output_sha256: "55".repeat(32),
+            source_count: 1,
+            artifact_count: 1,
+            definition_count: 1,
+            site_count: 0,
+            unresolved_count: 0,
+            unique_count: 0,
+            ambiguous_count: 0,
+            unsupported_count: 0,
+            truncated_site_count: 0,
+            retained_candidate_count: 0,
+            edge_count: 0,
+            input_text_bytes: 0,
+            output_bytes: 0,
+            syntax_error_nodes: 0,
+            macro_sites: 0,
+            test_marker_sites: 0,
+            heuristic_sites: 0,
+        }),
+    }
+}
+
+fn empty_graph_trace() -> McpGraphTrace {
+    McpGraphTrace {
+        edges: Vec::new(),
+        visited_nodes: 1,
+        visited_edges: 0,
+        maximum_completed_depth: 0,
+        truncation: McpGraphTraceTruncation {
+            depth: false,
+            visited_nodes: false,
+            visited_edges: false,
+            frontier: false,
+            results: false,
+        },
+        coverage: McpGraphTraceCoverage {
+            unresolved_sites: 0,
+            unsupported_sites: 0,
+            ambiguous_sites: 0,
+            truncated_sites: 0,
+            unlinked_sites: 0,
+            macro_sites: 0,
+            conditional_sites: 0,
+            heuristic_sites: 0,
+        },
+        input_bytes: 0,
+        output_bytes: 0,
     }
 }
 

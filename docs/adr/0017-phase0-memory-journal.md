@@ -1,8 +1,8 @@
 # ADR-0017: Persist an append-only Phase 0 memory journal in SQLite
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-07-27
-- Last reviewed: 2026-07-28
+- Last reviewed: 2026-07-29
 - Owners: Project maintainers
 - Scope: Schema-v5 memory versions, observations, local approval, and writer ownership
 
@@ -168,6 +168,10 @@ shutdown ownership without creating an independent security boundary.
 
 ## Follow-up
 
+- Accepted 2026-07-29 after the append-only import, trust-separation,
+  idempotency, corruption, rollback, reopen, backup, hostile-path, and complete
+  release-matrix tests passed. The clean release-platform product benchmark
+  also passed without changing the journal contract.
 - Implemented 2026-07-27: schema version 5, the application import port, the
   local owned-writer adapter, and capability-contained worktree admission,
   including migration, idempotency, rollback, corruption, reopen, and online

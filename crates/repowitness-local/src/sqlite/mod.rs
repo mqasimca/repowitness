@@ -1,14 +1,19 @@
 mod backup;
+mod doctor;
+mod error;
+mod graph;
 pub(crate) mod memory_projection;
 mod memory_reader;
 pub(crate) mod memory_review;
 mod reader;
+mod retention;
+mod retention_read;
 mod schema;
 mod worker;
+mod workspace;
 mod writer;
 
 use std::{
-    fmt,
     fs::{self, File, OpenOptions},
     io,
     path::{Path, PathBuf},
@@ -24,189 +29,51 @@ use sha2::{Digest, Sha256};
 
 use crate::contained_source::FileIdentity;
 
-pub use self::backup::{BackupLimits, BackupOutcome, create_online_backup};
+pub use self::backup::{
+    BackupIdentityStatus, BackupLimits, BackupMaintenanceStatus, BackupOutcome,
+    BackupPublicationStatus, create_online_backup,
+};
+#[cfg(test)]
+pub(crate) use self::doctor::create_valid_test_database;
+pub(crate) use self::doctor::{inspect_sqlite_environment, validate_database_read_only};
+pub use self::error::SqliteStoreError;
+pub use self::graph::{
+    PreparedRustGraphArtifact, PreparedRustGraphGeneration, RustGraphArchitectureSummary,
+    RustGraphAvailability, RustGraphCandidateRecord, RustGraphDefinitionRecord, RustGraphDirection,
+    RustGraphEdgeKind, RustGraphEdgeKinds, RustGraphEdgeRecord, RustGraphEvidenceResult,
+    RustGraphImpactClass, RustGraphImpactResult, RustGraphImpactedDefinition,
+    RustGraphOutcomeRecord, RustGraphPreparationControl, RustGraphPreparationError,
+    RustGraphPublicationSummary, RustGraphReadError, RustGraphReadLimits,
+    RustGraphRelationshipCardinality, RustGraphSiteSelector, RustGraphSource,
+    RustGraphSymbolSearchResult, RustGraphTraceCoverage, RustGraphTraceResult, RustGraphTraceStart,
+    RustGraphTraceTruncation, prepare_rust_graph_generation,
+};
 pub use self::reader::{
     OwnedSqliteReader, SearchHit, SearchLimits, SearchResults, SymbolLookupResults,
 };
+pub use self::retention::*;
+pub(crate) use self::retention_read::load_retention_apply_outcome_read_only;
+pub use self::retention_read::plan_generation_retention_read_only;
 use self::schema::{
-    APPLICATION_ID, MIGRATION_1, MIGRATION_1_NAME, MIGRATION_2, MIGRATION_2_NAME, SCHEMA_VERSION,
+    APPLICATION_ID, MIGRATION_1, MIGRATION_1_NAME, MIGRATION_2, MIGRATION_2_NAME, MIGRATION_3,
+    MIGRATION_3_NAME, SCHEMA_VERSION,
 };
-pub(crate) use self::worker::SqliteMutationLease;
+pub(crate) use self::worker::{CompletedWorkspaceSource, SqliteMutationLease};
 pub use self::worker::{IndexStoreStartup, OwnedSqliteIndex};
+pub use self::workspace::{
+    MAX_CONNECTED_WORKSPACE_SOURCE_SLOTS, PinnedWorkspaceView, PinnedWorkspaceViewMember,
+    SourceSlotGeneration, SourceSlotState, WorkspaceSourceSlot, WorkspaceViewId,
+    WorkspaceViewMember,
+};
 pub use self::writer::{
     CheckpointOutcome, GenerationId, ProjectionRebuildLimits, ProjectionRebuildOutcome,
 };
 pub use repowitness_application::RustIndexCoverage as GenerationCoverage;
+pub use repowitness_application::SourceSlotEpoch;
 
 const MINIMUM_SQLITE_VERSION: i32 = 3_051_003;
 const BUSY_TIMEOUT: Duration = Duration::from_millis(250);
 const STARTUP_PROGRESS_INSTRUCTIONS: i32 = 1_000;
-
-/// Stable failure at the Phase 0 SQLite trust boundary.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum SqliteStoreError {
-    /// The bundled SQLite does not contain the required WAL-reset fix.
-    UnsupportedSqliteVersion,
-    /// The database could not be opened.
-    OpenFailed,
-    /// Required connection policy could not be applied.
-    ConfigurationFailed,
-    /// An existing file has a different application identity.
-    ApplicationIdMismatch,
-    /// The file uses an unknown or unsupported schema version.
-    SchemaVersionMismatch,
-    /// The exact compiled migration ledger does not match the database.
-    MigrationLedgerMismatch,
-    /// Schema creation or migration failed.
-    MigrationFailed,
-    /// Required FTS5 support is unavailable.
-    Fts5Unavailable,
-    /// The process-level database mutation lease could not be opened or locked.
-    MutationLeaseUnavailable,
-    /// The database path stopped naming the file authorized before startup.
-    DatabaseIdentityChanged,
-    /// Incomplete generations exceeded the bounded startup recovery budget.
-    RecoveryGenerationLimitExceeded,
-    /// A newly reserved database could not be removed after startup failed.
-    DatabaseStartupCleanupFailed,
-    /// A database operation failed without exposing raw SQLite text.
-    DatabaseOperationFailed,
-    /// A fixed-width count could not be represented by SQLite.
-    CountNotRepresentable,
-    /// The requested repository workspace is not registered.
-    WorkspaceUnavailable,
-    /// Supplied memory import values failed adapter-boundary validation.
-    InvalidMemoryImport,
-    /// A correspondence review selector or target was not exact and current.
-    InvalidMemoryCorrespondenceReview,
-    /// Correspondence review history exceeded its fixed per-evidence bound.
-    MemoryCorrespondenceReviewLimitExceeded,
-    /// The supplied source epoch was not the current workspace epoch.
-    StaleSourceEpoch,
-    /// A requested source epoch transition was not monotonic.
-    InvalidSourceEpoch,
-    /// No complete memory projection matches the current active source generation.
-    MemoryProjectionUnavailable,
-    /// The prepared index did not match the declared snapshot semantics.
-    PreparedIdentityMismatch,
-    /// Persisted rows failed an exact count or identity check.
-    IntegrityCheckFailed,
-    /// The requested generation does not exist in the required state.
-    GenerationUnavailable,
-    /// The write was cancelled before a complete result.
-    Cancelled,
-    /// The absolute write deadline elapsed.
-    DeadlineExceeded,
-    /// The capacity-one owner queue is occupied.
-    QueueFull,
-    /// The owner thread is unavailable.
-    WorkerUnavailable,
-    /// The owner thread panicked.
-    WorkerPanicked,
-    /// A bounded reply did not arrive before its deadline.
-    ReplyTimeout,
-    /// Lexical search limits are zero or exceed Phase 0 ceilings.
-    InvalidSearchLimits,
-    /// Search-projection rebuild limits are zero or exceed Phase 0 ceilings.
-    InvalidProjectionRebuildLimits,
-    /// Memory-projection load or result limits are invalid.
-    InvalidMemoryProjectionLimits,
-    /// Memory projection input or output exceeded a declared complete bound.
-    MemoryProjectionLimitExceeded,
-    /// A prepared memory projection violates the adapter contract.
-    InvalidMemoryProjection,
-    /// Authoritative searchable facts exceed the requested rebuild row limit.
-    ProjectionRebuildRowLimitExceeded,
-    /// The untrusted lexical query violates the literal query profile.
-    InvalidSearchQuery,
-    /// Search results exceeded the encoded-output byte limit.
-    SearchOutputLimitExceeded,
-    /// Memory recall exceeded its conservative encoded-output byte limit.
-    MemoryRecallOutputLimitExceeded,
-    /// Memory recall exceeded its canonical-record read byte limit.
-    MemoryRecallScanLimitExceeded,
-    /// Persisted reusable artifacts exceeded the bounded load budget.
-    ArtifactReuseLimitExceeded,
-    /// Online-backup limits are zero or exceed Phase 0 ceilings.
-    InvalidBackupLimits,
-    /// The backup destination or private temporary path is unavailable.
-    BackupDestinationUnavailable,
-    /// SQLite online backup or validation failed.
-    BackupFailed,
-    /// The backup exceeded its maximum number of page steps.
-    BackupStepLimitExceeded,
-    /// A completed backup was published but its private temporary link remained.
-    BackupCleanupFailed,
-}
-
-impl fmt::Display for SqliteStoreError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::UnsupportedSqliteVersion => "SQLite version does not meet the Phase 0 minimum",
-            Self::OpenFailed => "SQLite database could not be opened",
-            Self::ConfigurationFailed => "SQLite connection policy could not be applied",
-            Self::ApplicationIdMismatch => "SQLite application identity does not match RepoWitness",
-            Self::SchemaVersionMismatch => "SQLite schema version is unsupported",
-            Self::MigrationLedgerMismatch => {
-                "SQLite migration ledger does not match compiled schema"
-            }
-            Self::MigrationFailed => "SQLite schema migration failed",
-            Self::Fts5Unavailable => "SQLite FTS5 support is unavailable",
-            Self::MutationLeaseUnavailable => "SQLite mutation lease is unavailable",
-            Self::DatabaseIdentityChanged => "SQLite database identity changed during startup",
-            Self::RecoveryGenerationLimitExceeded => "SQLite recovery generation limit exceeded",
-            Self::DatabaseStartupCleanupFailed => "SQLite failed-startup database cleanup failed",
-            Self::DatabaseOperationFailed => "SQLite index operation failed",
-            Self::CountNotRepresentable => "SQLite index count is not representable",
-            Self::WorkspaceUnavailable => "SQLite workspace is unavailable",
-            Self::InvalidMemoryImport => "memory import input is invalid",
-            Self::InvalidMemoryCorrespondenceReview => {
-                "memory correspondence review input is invalid"
-            }
-            Self::MemoryCorrespondenceReviewLimitExceeded => {
-                "memory correspondence review limit exceeded"
-            }
-            Self::StaleSourceEpoch => "SQLite source epoch is stale",
-            Self::InvalidSourceEpoch => "SQLite source epoch transition is invalid",
-            Self::MemoryProjectionUnavailable => "SQLite current-memory projection is unavailable",
-            Self::PreparedIdentityMismatch => "prepared index identity is inconsistent",
-            Self::IntegrityCheckFailed => "SQLite index integrity validation failed",
-            Self::GenerationUnavailable => "SQLite generation is unavailable",
-            Self::Cancelled => "SQLite index operation cancelled",
-            Self::DeadlineExceeded => "SQLite index operation deadline exceeded",
-            Self::QueueFull => "SQLite writer queue is full",
-            Self::WorkerUnavailable => "SQLite writer is unavailable",
-            Self::WorkerPanicked => "SQLite writer terminated unexpectedly",
-            Self::ReplyTimeout => "SQLite writer reply deadline exceeded",
-            Self::InvalidSearchLimits => "SQLite search limits are invalid",
-            Self::InvalidProjectionRebuildLimits => {
-                "SQLite search projection rebuild limits are invalid"
-            }
-            Self::InvalidMemoryProjectionLimits => "SQLite memory projection limits are invalid",
-            Self::MemoryProjectionLimitExceeded => "SQLite memory projection limit exceeded",
-            Self::InvalidMemoryProjection => "SQLite memory projection input is invalid",
-            Self::ProjectionRebuildRowLimitExceeded => {
-                "SQLite search projection rebuild row limit exceeded"
-            }
-            Self::InvalidSearchQuery => "SQLite search query is invalid",
-            Self::SearchOutputLimitExceeded => "SQLite search output byte limit exceeded",
-            Self::MemoryRecallOutputLimitExceeded => {
-                "SQLite memory-recall output byte limit exceeded"
-            }
-            Self::MemoryRecallScanLimitExceeded => {
-                "SQLite memory-recall canonical scan byte limit exceeded"
-            }
-            Self::ArtifactReuseLimitExceeded => "SQLite reusable artifact load limit exceeded",
-            Self::InvalidBackupLimits => "SQLite backup limits are invalid",
-            Self::BackupDestinationUnavailable => "SQLite backup destination is unavailable",
-            Self::BackupFailed => "SQLite online backup failed",
-            Self::BackupStepLimitExceeded => "SQLite online backup step limit exceeded",
-            Self::BackupCleanupFailed => "SQLite backup temporary file cleanup failed",
-        })
-    }
-}
-
-impl std::error::Error for SqliteStoreError {}
 
 /// Opens, configures, migrates, and validates the one writer-owned connection.
 #[cfg(test)]
@@ -237,8 +104,8 @@ fn open_index_writer_with_identity_until(
     applied_at_unix_ms: u64,
     cancelled: Arc<AtomicBool>,
     deadline: Instant,
-) -> Result<Connection, SqliteStoreError> {
-    open_index_writer_with_identity_and_hook(
+) -> Result<(Connection, FileIdentity), SqliteStoreError> {
+    open_index_writer_with_identity_and_identity_hook(
         path,
         expected_identity,
         applied_at_unix_ms,
@@ -248,6 +115,7 @@ fn open_index_writer_with_identity_until(
     )
 }
 
+#[cfg(test)]
 fn open_index_writer_with_identity_and_hook(
     path: &Path,
     expected_identity: Option<FileIdentity>,
@@ -256,6 +124,25 @@ fn open_index_writer_with_identity_and_hook(
     deadline: Option<Instant>,
     after_sqlite_open: impl FnOnce(),
 ) -> Result<Connection, SqliteStoreError> {
+    open_index_writer_with_identity_and_identity_hook(
+        path,
+        expected_identity,
+        applied_at_unix_ms,
+        cancelled,
+        deadline,
+        after_sqlite_open,
+    )
+    .map(|(connection, _identity)| connection)
+}
+
+fn open_index_writer_with_identity_and_identity_hook(
+    path: &Path,
+    expected_identity: Option<FileIdentity>,
+    applied_at_unix_ms: u64,
+    cancelled: Option<Arc<AtomicBool>>,
+    deadline: Option<Instant>,
+    after_sqlite_open: impl FnOnce(),
+) -> Result<(Connection, FileIdentity), SqliteStoreError> {
     check_startup_control(cancelled.as_deref(), deadline)?;
     validate_runtime()?;
     let path = canonical_database_path(path)?;
@@ -319,7 +206,7 @@ fn open_index_writer_with_identity_and_hook(
         }
         (Ok(()), Ok(())) => {}
     }
-    Ok(connection)
+    Ok((connection, database_file.identity))
 }
 
 fn check_startup_control(
@@ -349,7 +236,9 @@ fn startup_error_at_control(
     }
 }
 
-fn database_file_identity(path: &Path) -> Result<Option<FileIdentity>, SqliteStoreError> {
+pub(crate) fn database_file_identity(
+    path: &Path,
+) -> Result<Option<FileIdentity>, SqliteStoreError> {
     match FileIdentity::from_path(path) {
         Ok(identity) => Ok(Some(identity)),
         Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(None),
@@ -644,10 +533,11 @@ fn validate_migration_ledger_through(
     Ok(())
 }
 
-const fn migrations() -> [(i64, &'static str, &'static str); 2] {
+const fn migrations() -> [(i64, &'static str, &'static str); 3] {
     [
         (1, MIGRATION_1_NAME, MIGRATION_1),
         (2, MIGRATION_2_NAME, MIGRATION_2),
+        (3, MIGRATION_3_NAME, MIGRATION_3),
     ]
 }
 

@@ -1,0 +1,166 @@
+#!/usr/bin/env perl
+
+use strict;
+use warnings;
+
+use JSON::PP qw(decode_json);
+
+my $path = 'benchmarks/phase1/manifest.json';
+my @errors;
+
+sub report {
+    my ($message) = @_;
+    push @errors, "$path: $message";
+}
+
+sub is_object {
+    my ($value) = @_;
+    return ref $value eq 'HASH';
+}
+
+sub is_array {
+    my ($value) = @_;
+    return ref $value eq 'ARRAY';
+}
+
+sub is_non_empty_string {
+    my ($value) = @_;
+    return defined $value && !ref $value && $value ne '';
+}
+
+sub is_non_negative_integer {
+    my ($value) = @_;
+    return defined $value && !ref $value
+      && $value =~ /\A(?:0|[1-9][0-9]*)\z/;
+}
+
+sub is_positive_integer {
+    my ($value) = @_;
+    return is_non_negative_integer($value) && $value > 0;
+}
+
+open my $handle, '<:raw', $path
+  or die "$path: cannot read: $!\n";
+local $/;
+my $content = <$handle>;
+close $handle;
+
+my $manifest = eval { decode_json($content) };
+die "$path: invalid JSON: $@\n"
+  if !$manifest || $@ || !is_object($manifest);
+
+report("benchmark_id must identify the Phase 1 contract")
+  if !defined $manifest->{benchmark_id}
+  || $manifest->{benchmark_id} ne 'phase1-trustworthy-local-core-v1';
+
+my @required_workloads = qw(
+  atomic-two-source-publication
+  compatibility-schema-suite
+  moving-selector-final-fence
+  native-graph-read-suite
+  package-scope-clean-incremental-equivalence
+  quiet-polling-no-publication
+  retention-plan-apply-restart
+  same-repository-two-worktrees
+);
+my %required_workloads = map { $_ => 1 } @required_workloads;
+my %seen_workloads;
+my $workloads = $manifest->{phase1_workloads};
+report('phase1_workloads must be an array')
+  if !is_array($workloads);
+if (is_array($workloads)) {
+    for my $workload (@$workloads) {
+        if (!is_object($workload)) {
+            report('every Phase 1 workload must be an object');
+            next;
+        }
+        my $id = $workload->{id};
+        report('Phase 1 workload id is invalid')
+          if !is_non_empty_string($id) || !$required_workloads{$id};
+        report("duplicate Phase 1 workload '$id'")
+          if is_non_empty_string($id) && $seen_workloads{$id}++;
+        report("Phase 1 workload '$id' iterations must be 1 through 1000")
+          if !is_positive_integer($workload->{iterations})
+          || $workload->{iterations} > 1_000;
+    }
+    for my $id (@required_workloads) {
+        report("missing Phase 1 workload '$id'") if !$seen_workloads{$id};
+    }
+    report('Phase 1 workload inventory contains unexpected entries')
+      if keys(%seen_workloads) != @required_workloads;
+}
+
+my $budgets = $manifest->{budgets};
+report('budgets must be an object') if !is_object($budgets);
+if (is_object($budgets)) {
+    my $correctness = $budgets->{correctness};
+    report('Phase 1 correctness budgets must be an object')
+      if !is_object($correctness);
+    if (is_object($correctness)) {
+        for my $field (
+            qw(
+            max_partial_workspace_views
+            max_selector_retargets
+            max_unreported_scope_omissions
+            max_quiet_poll_publications
+            max_retention_root_deletions
+            max_compatibility_overclaims
+            )
+          )
+        {
+            report("Phase 1 correctness budget $field must equal zero")
+              if !is_non_negative_integer($correctness->{$field})
+              || $correctness->{$field} != 0;
+        }
+    }
+
+    my $resources = $budgets->{phase1_resources};
+    report('phase1_resources must be an object')
+      if !is_object($resources);
+    if (is_object($resources)) {
+        for my $field (
+            qw(
+            max_two_source_publication_wall_ms
+            max_quiet_poll_p95_ms
+            max_native_graph_read_p95_ms
+            max_retention_plan_wall_ms
+            max_retention_apply_wall_ms
+            max_retained_generations_per_source_slot_after_collection
+            )
+          )
+        {
+            report("Phase 1 resource budget $field must be positive")
+              if !is_positive_integer($resources->{$field});
+        }
+        report('max_unchanged_generation_delta must equal zero')
+          if !is_non_negative_integer(
+            $resources->{max_unchanged_generation_delta}
+          )
+          || $resources->{max_unchanged_generation_delta} != 0;
+    }
+}
+
+my @required_capture = qw(
+  sqlite_version
+  git_version
+  selector_profile
+  package_scope_digest
+  compatibility_profile
+);
+my $environment = $manifest->{run_environment};
+if (!is_object($environment) || !is_array($environment->{capture})) {
+    report('Phase 1 run_environment.capture must be an array');
+} else {
+    my %captured = map { $_ => 1 } @{$environment->{capture}};
+    for my $field (@required_capture) {
+        report("Phase 1 run_environment.capture omits '$field'")
+          if !$captured{$field};
+    }
+}
+
+if (@errors) {
+    print STDERR join("\n", @errors), "\n";
+    exit 1;
+}
+
+print "Phase 1 benchmark contract checks passed\n";

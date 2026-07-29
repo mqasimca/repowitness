@@ -298,6 +298,87 @@ fn cli_indexes_searches_retrieves_and_reuses_python_and_stub_files() {
     assert!(second.contains("analyzed_python_files=0\n"));
 }
 
+#[test]
+fn explicit_configuration_controls_real_index_search_and_diagnostics() {
+    let directory = TempDirectory::new();
+    let repository = fixture_repository(&directory);
+    let database = directory.database();
+    let configuration = directory.0.join("repository.toml");
+    fs::write(
+        &configuration,
+        concat!(
+            "schema_version = 1\n",
+            "[preferences]\n",
+            "query_results = 1\n",
+            "[policy]\n",
+            "allowed_languages = [\"rust\"]\n",
+        ),
+    )
+    .expect("configuration fixture should be written");
+
+    let indexed = repowitness_os([
+        OsStr::new("index"),
+        OsStr::new("--repository-config"),
+        configuration.as_os_str(),
+        OsStr::new("--repository-id"),
+        OsStr::new(REPOSITORY_ID),
+        OsStr::new("--database"),
+        database.as_os_str(),
+        repository.as_os_str(),
+    ]);
+    assert!(indexed.status.success());
+    assert!(indexed.stderr.is_empty());
+    let indexed = String::from_utf8(indexed.stdout).expect("index report must be UTF-8");
+    assert!(indexed.contains("indexed_rust_files=1\n"));
+    assert!(indexed.contains("indexed_go_files=0\n"));
+    assert!(indexed.contains("skipped_policy_paths=1\n"));
+    assert!(!indexed.contains(configuration.to_string_lossy().as_ref()));
+
+    let searched = repowitness_os([
+        OsStr::new("search"),
+        OsStr::new("--repository-id"),
+        OsStr::new(REPOSITORY_ID),
+        OsStr::new("--query"),
+        OsStr::new("Widget"),
+        OsStr::new("--limit"),
+        OsStr::new("20"),
+        OsStr::new("--repository-config"),
+        configuration.as_os_str(),
+        OsStr::new("--database"),
+        database.as_os_str(),
+    ]);
+    assert!(searched.status.success());
+    assert!(searched.stderr.is_empty());
+    let searched = String::from_utf8(searched.stdout).expect("search report must be UTF-8");
+    assert!(searched.contains("matches_returned=1\n"));
+    assert!(searched.contains("matches_total=2\n"));
+    assert!(searched.contains("coverage_truncated=1\n"));
+
+    let diagnostics = repowitness_os([
+        OsStr::new("diagnostics"),
+        OsStr::new("--repository-config"),
+        configuration.as_os_str(),
+        OsStr::new("--database"),
+        database.as_os_str(),
+        OsStr::new("--repository-id"),
+        OsStr::new(REPOSITORY_ID),
+    ]);
+    assert!(diagnostics.status.success());
+    assert!(diagnostics.stderr.is_empty());
+    let diagnostics =
+        String::from_utf8(diagnostics.stdout).expect("diagnostics report must be UTF-8");
+    assert_eq!(report_value(&diagnostics, "schema_version"), "3");
+    assert_eq!(
+        report_value(&diagnostics, "configuration_profile"),
+        "local"
+    );
+    assert_eq!(
+        report_value(&diagnostics, "configuration_digest_sha256").len(),
+        64
+    );
+    assert!(!diagnostics.contains(configuration.to_string_lossy().as_ref()));
+}
+
 fn assert_index_work_counts(
     report: &str,
     reused_rust: u64,
@@ -379,4 +460,104 @@ fn path_inspection_runs_the_concrete_adapter_and_never_claims_an_index() {
     let stderr = String::from_utf8(output.stderr).expect("diagnostic must be UTF-8");
     assert!(stderr.contains("repository path inspection failed"));
     assert!(!stderr.contains("repowitness-path-that-does-not-exist"));
+}
+
+#[test]
+fn native_graph_cli_reads_active_and_exact_immutable_contexts() {
+    let directory = TempDirectory::new();
+    let repository = fixture_repository(&directory);
+    fs::write(
+        repository.join("src/lib.rs"),
+        "pub struct Widget;\npub fn run() {}\npub fn invoke() { run(); }\n",
+    )
+    .expect("Rust graph fixture should be written");
+    let database = directory.database();
+    let indexed = index(&repository, &database, REPOSITORY_ID);
+    assert!(
+        indexed.status.success(),
+        "indexing failed: {}",
+        String::from_utf8_lossy(&indexed.stderr)
+    );
+
+    let status = graph_cli(&database, "status", &[]);
+    assert!(status.status.success());
+    assert!(status.stderr.is_empty());
+    let status: serde_json::Value =
+        serde_json::from_slice(&status.stdout).expect("status JSON output");
+    assert_eq!(status["schema_version"], serde_json::json!(1));
+    assert_eq!(status["availability"], serde_json::json!("complete"));
+    let workspace_view = status["context"]["workspace_view"]
+        .as_i64()
+        .expect("workspace view");
+    let graph_generation = status["context"]["graph_generation"]
+        .as_i64()
+        .expect("graph generation");
+
+    let search = graph_cli(
+        &database,
+        "search",
+        &[
+            ("--workspace-view", workspace_view.to_string()),
+            ("--graph-generation", graph_generation.to_string()),
+            ("--query", "invoke".to_owned()),
+            ("--max-results", "5".to_owned()),
+        ],
+    );
+    assert!(
+        search.status.success(),
+        "graph search failed: {}",
+        String::from_utf8_lossy(&search.stderr)
+    );
+    let search: serde_json::Value =
+        serde_json::from_slice(&search.stdout).expect("search JSON output");
+    assert_eq!(search["context"], status["context"]);
+    assert_eq!(search["matches_returned"], serde_json::json!(1));
+    let start = serde_json::json!({
+        "type": "definition",
+        "definition": search["definitions"][0],
+    });
+
+    let trace = graph_cli(
+        &database,
+        "trace",
+        &[
+            ("--workspace-view", workspace_view.to_string()),
+            ("--graph-generation", graph_generation.to_string()),
+            (
+                "--start-json",
+                serde_json::to_string(&start).expect("start JSON"),
+            ),
+            ("--direction", "outbound".to_owned()),
+            ("--edge-kind", "call".to_owned()),
+        ],
+    );
+    assert!(
+        trace.status.success(),
+        "graph trace failed: {}",
+        String::from_utf8_lossy(&trace.stderr)
+    );
+    let trace: serde_json::Value =
+        serde_json::from_slice(&trace.stdout).expect("trace JSON output");
+    assert_eq!(trace["schema_version"], serde_json::json!(1));
+    assert!(
+        trace["trace"]["edges"]
+            .as_array()
+            .is_some_and(|edges| !edges.is_empty()),
+        "outbound invoke trace should retain its call edge: {trace}"
+    );
+    let rendered = serde_json::to_string(&trace).expect("rendered output");
+    assert!(!rendered.contains(database.to_string_lossy().as_ref()));
+    assert!(!rendered.contains(repository.to_string_lossy().as_ref()));
+}
+
+fn graph_cli(database: &Path, operation: &str, options: &[(&str, String)]) -> Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_repowitness"));
+    command
+        .args(["graph", operation, "--repository-id", REPOSITORY_ID])
+        .arg("--database")
+        .arg(database);
+    for (option, value) in options {
+        command.arg(option).arg(value);
+    }
+    command.output().expect("graph CLI should start")
 }

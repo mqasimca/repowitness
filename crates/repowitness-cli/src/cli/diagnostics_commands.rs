@@ -3,6 +3,7 @@ fn run_diagnostics(
     stdout: &mut impl Write,
     stderr: &mut impl Write,
     reader: &impl RepositoryDiagnosticsReader,
+    configuration_loader: &impl ConfigurationLoader,
 ) -> u8 {
     let arguments: Vec<OsString> = args.take(MAX_DIAGNOSTICS_ARGUMENTS + 1).collect();
     if arguments.len() > MAX_DIAGNOSTICS_ARGUMENTS {
@@ -16,11 +17,26 @@ fn run_diagnostics(
     {
         return emit_output(stdout, DIAGNOSTICS_HELP);
     }
+    let (arguments, configuration_invocation) =
+        match extract_configuration_arguments(&arguments, &[]) {
+            Ok(parsed) => parsed,
+            Err(message) => return emit_error(stderr, EXIT_USAGE, message),
+        };
     let invocation = match parse_diagnostics_arguments(&arguments) {
         Ok(invocation) => invocation,
         Err(message) => return emit_error(stderr, EXIT_USAGE, message),
     };
-    match reader.diagnose(&invocation) {
+    let configuration = match configuration_loader.load(&configuration_invocation) {
+        Ok(configuration) => configuration,
+        Err(_) => {
+            return emit_error(
+                stderr,
+                EXIT_SOFTWARE,
+                "error: configuration resolution failed\n",
+            );
+        }
+    };
+    match reader.diagnose(&invocation, &configuration) {
         Ok(report) => emit_diagnostics_report(stdout, &report),
         Err(_) => emit_error(
             stderr,

@@ -12,26 +12,31 @@ use std::{
 
 use repowitness_application::{
     ImmutableRustSource, ImportMemoryRecordRequest, MemoryEvidenceOutcome, MemoryImportApproval,
-    RustArtifactIdentity, RustIndexLimits, RustSourceSnapshotIdentity, evaluate_memory_projection,
-    import_memory_record, prepare_rust_index,
+    PublishSourceSlotIndexError, PublishSourceSlotIndexRequest, RustArtifactIdentity,
+    RustIndexLimits, RustSourceSnapshotIdentity, SourceSlotFinalFence, evaluate_memory_projection,
+    hash_source_snapshot, import_memory_record, prepare_rust_index, publish_source_slot_index,
 };
 use repowitness_domain::{
-    AnalysisSchemaDigest, CanonicalMemoryDigest, ConfigurationDigest, GitStateDigest,
-    MemoryAuditActorId, MemoryCommitId, MemoryEvidence, MemoryObservationSource,
+    AnalysisSchemaDigest, CanonicalMemoryDigest, ConfigurationDigest, ConnectedWorkspaceId,
+    GitStateDigest, MemoryAuditActorId, MemoryCommitId, MemoryEvidence, MemoryObservationSource,
     MemoryPresentationDigest, MemoryProjectValidity, MemoryRecord, MemoryRecordedAtUnixMillis,
     MemoryRevalidationTarget, ProducerManifestDigest, RepositoryIdentityDigest, RepositoryPath,
-    RepositoryPathLimits, WorktreeStateDigest,
+    RepositoryPathLimits, SourceSlotId, SourceSnapshotDigest, WorktreeStateDigest,
 };
 use rusqlite::{Connection, TransactionBehavior, params};
 use sha2::{Digest, Sha256};
 
 use crate::{
-    BackupLimits, MemoryFormatControl, OwnedSqliteReader, ProjectionRebuildLimits, SearchLimits,
-    create_online_backup, parse_memory_record,
+    BackupLimits, GenerationRetentionPolicy, MAX_CONNECTED_WORKSPACE_SOURCE_SLOTS,
+    MemoryFormatControl, OwnedSqliteReader, ProjectionRebuildLimits, RetentionApplyRequest,
+    RetentionLimits, RetentionPins, RetentionPlanRequest, SearchLimits, create_online_backup,
+    parse_memory_record,
 };
 
 use super::{
-    GenerationCoverage, OwnedSqliteIndex, SqliteStoreError, WriterCommand, mutation_lease_path,
+    CompletedWorkspaceSource, GenerationCoverage, GenerationId, OwnedSqliteIndex, SourceSlotEpoch,
+    SqliteStoreError, WorkspaceSourceSlot, WorkspaceViewId, WorkspaceViewMember, WriterCommand,
+    mutation_lease_path, receive_mutation_reply,
 };
 use crate::sqlite::memory_projection::{
     MemoryProjectionLoadLimits, MemoryProjectionResultLimits, PreparedMemoryProjection,
@@ -109,7 +114,18 @@ fn memory_source() -> MemoryObservationSource {
 }
 
 include!("tests/memory_import.rs");
+include!("tests/mutation_outcome.rs");
 include!("tests/generation.rs");
 include!("tests/projection_publication.rs");
 include!("tests/projection.rs");
 include!("tests/recovery.rs");
+include!("tests/source_slot_epochs.rs");
+include!("tests/workspace.rs");
+include!("tests/workspace_adversarial.rs");
+include!("tests/workspace_publication.rs");
+include!("tests/retention.rs");
+include!("tests/retention_budget.rs");
+include!("tests/retention_recovery.rs");
+include!("tests/retention_views.rs");
+include!("tests/graph.rs");
+include!("tests/graph_adversarial.rs");

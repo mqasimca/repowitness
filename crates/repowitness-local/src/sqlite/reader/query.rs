@@ -124,7 +124,7 @@ fn active_generation_state(
     let persisted = transaction
         .query_row(
             "SELECT generation.generation_id, generation.snapshot_digest,
-                    workspace.source_epoch,
+                    generation.source_epoch,
                     snapshot.producer_manifest_digest,
                     generation.searched_count, generation.skipped_count,
                     generation.unresolved_count, generation.truncated_count
@@ -132,7 +132,6 @@ fn active_generation_state(
              JOIN index_generations AS generation
               ON generation.generation_id = workspace.active_generation_id
              AND generation.workspace_id = workspace.workspace_id
-             AND generation.source_epoch = workspace.source_epoch
              AND generation.lifecycle_state = 'active'
              JOIN source_snapshots AS snapshot
                ON snapshot.snapshot_digest = generation.snapshot_digest

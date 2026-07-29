@@ -5,11 +5,12 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use repowitness_analysis::RustSourceAnalysis;
+use repowitness_analysis::{RustGraphAnalysisError, RustGraphSiteAnalysis, RustSourceAnalysis};
 use repowitness_application::{
-    ImmutableRustSource, PreparedRustIndex, RustArtifactIdentity, RustIndexLimits,
+    ImmutableRustSource, PackageScope, PreparedRustIndex, RustArtifactIdentity, RustIndexLimits,
     RustIndexPreparationError, SourceArtifactIdentities, SourceLanguage,
-    hash_analysis_artifact_key, hash_source_content, prepare_source_index_with_reuse,
+    hash_analysis_artifact_key, hash_source_content, phase1_rust_graph_artifact_identity,
+    prepare_source_index_with_reuse,
 };
 use repowitness_domain::{
     AnalysisArtifactDigest, AnalysisArtifactKey, GitStateDigest, WorktreeStateDigest,
@@ -24,6 +25,17 @@ use crate::git_paths::{
 };
 use crate::source_state::{SourceStateError, capture_source_state_with_cancel};
 use crate::sqlite::SqliteStoreError;
+
+mod graph_preparation;
+pub(crate) use graph_preparation::PreparedLocalRustGraphArtifact;
+use graph_preparation::{
+    prepare_local_rust_graph_artifacts, requested_local_rust_graph_artifact_digests,
+};
+mod source_snapshot_fence;
+pub use source_snapshot_fence::LocalSourceSnapshotFenceError;
+pub(crate) use source_snapshot_fence::{
+    LocalSourceSnapshotFenceRequest, confirm_local_source_snapshot,
+};
 
 /// Default wall-clock deadline for complete local source index preparation.
 pub const DEFAULT_LOCAL_RUST_INDEX_DEADLINE: Duration = Duration::from_secs(30);
@@ -93,6 +105,7 @@ impl Default for LocalRustIndexLimits {
 /// A fully prepared local source index plus explicit discovery coverage.
 pub struct LocalRustIndexPreparation {
     prepared: PreparedRustIndex,
+    graph_artifacts: Box<[PreparedLocalRustGraphArtifact]>,
     git_state: GitStateDigest,
     worktree_state: WorktreeStateDigest,
     discovered_paths: u64,
@@ -101,6 +114,7 @@ pub struct LocalRustIndexPreparation {
     selected_typescript_files: u64,
     selected_tsx_files: u64,
     selected_python_files: u64,
+    skipped_policy_paths: u64,
     skipped_unsupported_paths: u64,
 }
 
@@ -115,6 +129,12 @@ impl LocalRustIndexPreparation {
     #[must_use]
     pub fn into_prepared(self) -> PreparedRustIndex {
         self.prepared
+    }
+
+    pub(crate) fn into_prepared_parts(
+        self,
+    ) -> (PreparedRustIndex, Box<[PreparedLocalRustGraphArtifact]>) {
+        (self.prepared, self.graph_artifacts)
     }
 
     /// Returns the stable concrete Git-state receipt captured around preparation.
@@ -165,6 +185,12 @@ impl LocalRustIndexPreparation {
         self.selected_python_files
     }
 
+    /// Returns supported-language paths excluded by resolved policy.
+    #[must_use]
+    pub const fn skipped_policy_paths(&self) -> u64 {
+        self.skipped_policy_paths
+    }
+
     /// Returns paths explicitly skipped by the supported-language adapters.
     #[must_use]
     pub const fn skipped_unsupported_paths(&self) -> u64 {
@@ -186,6 +212,7 @@ impl fmt::Debug for LocalRustIndexPreparation {
         formatter
             .debug_struct("LocalRustIndexPreparation")
             .field("prepared", &self.prepared)
+            .field("graph_artifact_count", &self.graph_artifacts.len())
             .field("git_state", &self.git_state)
             .field("worktree_state", &self.worktree_state)
             .field("discovered_paths", &self.discovered_paths)
@@ -194,6 +221,7 @@ impl fmt::Debug for LocalRustIndexPreparation {
             .field("selected_typescript_files", &self.selected_typescript_files)
             .field("selected_tsx_files", &self.selected_tsx_files)
             .field("selected_python_files", &self.selected_python_files)
+            .field("skipped_policy_paths", &self.skipped_policy_paths)
             .field("skipped_unsupported_paths", &self.skipped_unsupported_paths)
             .finish()
     }
@@ -249,11 +277,18 @@ pub enum LocalRustIndexError {
         /// Stable redacted preparation failure.
         source: RustIndexPreparationError,
     },
+    /// Pure raw Rust graph-site preparation failed without partial output.
+    GraphPreparation {
+        /// Stable redacted graph-analysis failure.
+        source: RustGraphAnalysisError,
+    },
     /// Persisted artifact inventory failed validation or bounded loading.
     ArtifactReuse {
         /// Stable SQLite boundary failure.
         source: SqliteStoreError,
     },
+    /// Package-scope filtering failed before source bytes were read.
+    PackageScope,
     /// The repository path set changed during preparation.
     StalePathSet,
     /// A selected source's exact bytes changed during preparation.
@@ -306,9 +341,13 @@ impl fmt::Display for LocalRustIndexError {
                 formatter.write_str("remaining source-read limits could not be represented")
             }
             Self::Preparation { .. } => formatter.write_str("source index preparation failed"),
+            Self::GraphPreparation { .. } => {
+                formatter.write_str("Rust graph-site preparation failed")
+            }
             Self::ArtifactReuse { .. } => {
                 formatter.write_str("reusable source artifact loading failed")
             }
+            Self::PackageScope => formatter.write_str("package-scope filtering failed"),
             Self::StalePathSet => {
                 formatter.write_str("repository path set changed during preparation")
             }
@@ -337,6 +376,7 @@ impl Error for LocalRustIndexError {
             Self::SourceRead { source, .. } => Some(source),
             Self::DerivedReadLimits { source } => Some(source),
             Self::Preparation { source } => Some(source),
+            Self::GraphPreparation { source } => Some(source),
             Self::ArtifactReuse { source } => Some(source),
             Self::RevalidationRead { source, .. } => Some(source),
             Self::DeadlineNotRepresentable
@@ -345,170 +385,148 @@ impl Error for LocalRustIndexError {
             | Self::ExcludedFileAlias
             | Self::SourceByteCountOverflowed
             | Self::SourceByteLimitExceeded { .. }
+            | Self::PackageScope
             | Self::StalePathSet
             | Self::StaleSourceContent { .. } => None,
         }
     }
 }
 
-/// Runs the Phase 0 local Rust discovery-to-facts vertical slice.
-pub fn prepare_local_rust_index(
-    requested_root: &Path,
-    identity: RustArtifactIdentity,
-    limits: LocalRustIndexLimits,
-    cancelled: &AtomicBool,
-) -> Result<LocalRustIndexPreparation, LocalRustIndexError> {
-    prepare_local_rust_index_with_hook(requested_root, identity, limits, cancelled, || {})
-}
-
-/// Runs the local mixed supported-language discovery-to-facts vertical slice.
-pub fn prepare_local_source_index(
-    requested_root: &Path,
-    identities: SourceArtifactIdentities,
-    limits: LocalRustIndexLimits,
-    cancelled: &AtomicBool,
-) -> Result<LocalRustIndexPreparation, LocalRustIndexError> {
-    prepare_local_source_index_with_exclusion_reuse_and_hook(
-        requested_root,
-        identities,
-        limits,
-        cancelled,
-        None,
-        |_, _, _| Ok(BTreeMap::new()),
-        || {},
-    )
-}
-
-pub(crate) fn prepare_local_source_index_excluding_identity_with_reuse(
-    requested_root: &Path,
-    identities: SourceArtifactIdentities,
-    limits: LocalRustIndexLimits,
-    cancelled: &AtomicBool,
-    excluded_identity: Option<&FileIdentity>,
-    load_reusable: impl FnMut(
-        SourceLanguage,
-        &[AnalysisArtifactDigest],
-        Instant,
-    ) -> Result<
-        BTreeMap<AnalysisArtifactDigest, RustSourceAnalysis>,
-        SqliteStoreError,
-    >,
-) -> Result<LocalRustIndexPreparation, LocalRustIndexError> {
-    prepare_local_source_index_with_exclusion_reuse_and_hook(
-        requested_root,
-        identities,
-        limits,
-        cancelled,
-        excluded_identity,
-        load_reusable,
-        || {},
-    )
-}
-
-fn prepare_local_rust_index_with_hook(
-    requested_root: &Path,
-    identity: RustArtifactIdentity,
-    limits: LocalRustIndexLimits,
-    cancelled: &AtomicBool,
-    before_revalidation: impl FnMut(),
-) -> Result<LocalRustIndexPreparation, LocalRustIndexError> {
-    prepare_local_rust_index_with_exclusion_and_hook(
-        requested_root,
-        identity,
-        limits,
-        cancelled,
-        None,
-        before_revalidation,
-    )
-}
-
-fn prepare_local_rust_index_with_exclusion_and_hook(
-    requested_root: &Path,
-    identity: RustArtifactIdentity,
-    limits: LocalRustIndexLimits,
-    cancelled: &AtomicBool,
-    excluded_identity: Option<&FileIdentity>,
-    before_revalidation: impl FnMut(),
-) -> Result<LocalRustIndexPreparation, LocalRustIndexError> {
-    prepare_local_rust_index_with_exclusion_reuse_and_hook(
-        requested_root,
-        identity,
-        limits,
-        cancelled,
-        excluded_identity,
-        |_, _| Ok(BTreeMap::new()),
-        before_revalidation,
-    )
-}
-
-fn prepare_local_rust_index_with_exclusion_reuse_and_hook(
-    requested_root: &Path,
-    identity: RustArtifactIdentity,
-    limits: LocalRustIndexLimits,
-    cancelled: &AtomicBool,
-    excluded_identity: Option<&FileIdentity>,
-    mut load_reusable: impl FnMut(
-        &[AnalysisArtifactDigest],
-        Instant,
-    ) -> Result<
-        BTreeMap<AnalysisArtifactDigest, RustSourceAnalysis>,
-        SqliteStoreError,
-    >,
-    before_revalidation: impl FnMut(),
-) -> Result<LocalRustIndexPreparation, LocalRustIndexError> {
-    prepare_local_index_with_exclusion_reuse_and_hook(
-        LocalPreparationContext {
-            requested_root,
-            identities: SourceArtifactIdentities::new(
-                identity, identity, identity, identity, identity,
-            ),
-            selection: SelectionPolicy::RustOnly,
-            limits,
-            cancelled,
-            excluded_identity,
-        },
-        |_, requested, deadline| load_reusable(requested, deadline),
-        before_revalidation,
-    )
-}
-
-fn prepare_local_source_index_with_exclusion_reuse_and_hook(
-    requested_root: &Path,
-    identities: SourceArtifactIdentities,
-    limits: LocalRustIndexLimits,
-    cancelled: &AtomicBool,
-    excluded_identity: Option<&FileIdentity>,
-    load_reusable: impl FnMut(
-        SourceLanguage,
-        &[AnalysisArtifactDigest],
-        Instant,
-    ) -> Result<
-        BTreeMap<AnalysisArtifactDigest, RustSourceAnalysis>,
-        SqliteStoreError,
-    >,
-    before_revalidation: impl FnMut(),
-) -> Result<LocalRustIndexPreparation, LocalRustIndexError> {
-    prepare_local_index_with_exclusion_reuse_and_hook(
-        LocalPreparationContext {
-            requested_root,
-            identities,
-            selection: SelectionPolicy::SupportedLanguages,
-            limits,
-            cancelled,
-            excluded_identity,
-        },
-        load_reusable,
-        before_revalidation,
-    )
-}
+include!("rust_index/preparation_entrypoints.rs");
 
 struct LocalPreparationContext<'a> {
     requested_root: &'a Path,
     identities: SourceArtifactIdentities,
+    graph_identity: RustArtifactIdentity,
     selection: SelectionPolicy,
+    package_scope: Option<&'a PackageScope>,
     limits: LocalRustIndexLimits,
     cancelled: &'a AtomicBool,
     excluded_identity: Option<&'a FileIdentity>,
+}
+
+fn map_graph_preparation_error(source: RustGraphAnalysisError) -> LocalRustIndexError {
+    match source {
+        RustGraphAnalysisError::Cancelled => LocalRustIndexError::Cancelled,
+        RustGraphAnalysisError::DeadlineExceeded => LocalRustIndexError::DeadlineExceeded,
+        source => LocalRustIndexError::GraphPreparation { source },
+    }
+}
+
+struct LocalArtifactPreparationContext<'a> {
+    sources: Vec<ImmutableRustSource>,
+    identities: SourceArtifactIdentities,
+    graph_identity: RustArtifactIdentity,
+    limits: LocalRustIndexLimits,
+    cancelled: &'a AtomicBool,
+    deadline: Instant,
+}
+
+struct PreparedLocalArtifacts {
+    source: PreparedRustIndex,
+    graph: Box<[PreparedLocalRustGraphArtifact]>,
+}
+
+struct LocalPreparationCompletion<'a> {
+    prepared: PreparedRustIndex,
+    graph_artifacts: Box<[PreparedLocalRustGraphArtifact]>,
+    git_state: GitStateDigest,
+    worktree_state: WorktreeStateDigest,
+    discovered: &'a ScopedRepositoryPaths,
+    counts: SelectedLanguageCounts,
+    skipped_policy_paths: u64,
+    skipped_unsupported_paths: u64,
+}
+
+fn prepare_selected_source_artifacts(
+    context: LocalArtifactPreparationContext<'_>,
+    load_reusable: &mut impl FnMut(
+        SourceLanguage,
+        &[AnalysisArtifactDigest],
+        Instant,
+    ) -> Result<
+        BTreeMap<AnalysisArtifactDigest, RustSourceAnalysis>,
+        SqliteStoreError,
+    >,
+    load_reusable_graph: &mut impl FnMut(
+        &[AnalysisArtifactDigest],
+        Instant,
+    ) -> Result<
+        BTreeMap<AnalysisArtifactDigest, RustGraphSiteAnalysis>,
+        SqliteStoreError,
+    >,
+) -> Result<PreparedLocalArtifacts, LocalRustIndexError> {
+    let requested_artifacts = requested_artifact_digests(
+        &context.sources,
+        context.identities,
+        context.cancelled,
+        context.deadline,
+    )?;
+    let reusable = load_reusable_artifacts(&requested_artifacts, context.deadline, load_reusable)?;
+    let requested_graph_artifacts = requested_local_rust_graph_artifact_digests(
+        &context.sources,
+        context.graph_identity,
+        context.cancelled,
+        context.deadline,
+    )
+    .map_err(map_graph_preparation_error)?;
+    let reusable_graph = load_reusable_graph(&requested_graph_artifacts, context.deadline)
+        .map_err(|source| LocalRustIndexError::ArtifactReuse { source })?;
+    let graph = prepare_local_rust_graph_artifacts(
+        &context.sources,
+        context.graph_identity,
+        &reusable_graph,
+        context.cancelled,
+        context.deadline,
+    )
+    .map_err(map_graph_preparation_error)?;
+    let source = prepare_source_index_with_reuse(
+        context.sources,
+        context.identities,
+        context.limits.preparation(),
+        &reusable,
+        context.cancelled,
+        context.deadline,
+    )
+    .map_err(|source| match source {
+        RustIndexPreparationError::Cancelled => LocalRustIndexError::Cancelled,
+        RustIndexPreparationError::DeadlineExceeded => LocalRustIndexError::DeadlineExceeded,
+        source => LocalRustIndexError::Preparation { source },
+    })?;
+    Ok(PreparedLocalArtifacts { source, graph })
+}
+
+fn complete_local_preparation(
+    completion: LocalPreparationCompletion<'_>,
+) -> Result<LocalRustIndexPreparation, LocalRustIndexError> {
+    let discovered_paths = completion.discovered.discovered_paths();
+    let skipped_policy_paths = completion
+        .skipped_policy_paths
+        .checked_add(completion.discovered.policy_omitted_paths())
+        .ok_or(LocalRustIndexError::SourceByteCountOverflowed)?;
+    let classified_paths = completion
+        .counts
+        .total()?
+        .checked_add(skipped_policy_paths)
+        .and_then(|count| count.checked_add(completion.skipped_unsupported_paths))
+        .ok_or(LocalRustIndexError::SourceByteCountOverflowed)?;
+    if classified_paths != discovered_paths {
+        return Err(LocalRustIndexError::SourceByteCountOverflowed);
+    }
+    Ok(LocalRustIndexPreparation {
+        prepared: completion.prepared,
+        graph_artifacts: completion.graph_artifacts,
+        git_state: completion.git_state,
+        worktree_state: completion.worktree_state,
+        discovered_paths,
+        selected_rust_files: completion.counts.rust,
+        selected_go_files: completion.counts.go,
+        selected_typescript_files: completion.counts.typescript,
+        selected_tsx_files: completion.counts.tsx,
+        selected_python_files: completion.counts.python,
+        skipped_policy_paths,
+        skipped_unsupported_paths: completion.skipped_unsupported_paths,
+    })
 }
 
 fn prepare_local_index_with_exclusion_reuse_and_hook(
@@ -521,12 +539,21 @@ fn prepare_local_index_with_exclusion_reuse_and_hook(
         BTreeMap<AnalysisArtifactDigest, RustSourceAnalysis>,
         SqliteStoreError,
     >,
+    mut load_reusable_graph: impl FnMut(
+        &[AnalysisArtifactDigest],
+        Instant,
+    ) -> Result<
+        BTreeMap<AnalysisArtifactDigest, RustGraphSiteAnalysis>,
+        SqliteStoreError,
+    >,
     mut before_revalidation: impl FnMut(),
 ) -> Result<LocalRustIndexPreparation, LocalRustIndexError> {
     let LocalPreparationContext {
         requested_root,
         identities,
+        graph_identity,
         selection,
+        package_scope,
         limits,
         cancelled,
         excluded_identity,
@@ -544,7 +571,12 @@ fn prepare_local_index_with_exclusion_reuse_and_hook(
     let source_state_before =
         capture_source_state_for_index(&worktree_root, limits.discovery(), cancelled, deadline)?;
 
-    let discovered = discover_paths(&worktree_root, limits.discovery(), cancelled, deadline)?;
+    let discovered = select_discovered_paths(
+        discover_paths(&worktree_root, limits.discovery(), cancelled, deadline)?,
+        package_scope,
+        cancelled,
+        deadline,
+    )?;
     check_control(cancelled, deadline)?;
     let root = ContainedSourceRoot::open(&worktree_root)
         .map_err(|source| LocalRustIndexError::RootOpen { source })?;
@@ -558,26 +590,24 @@ fn prepare_local_index_with_exclusion_reuse_and_hook(
     )?;
     let selected =
         read_selected_sources(&root, &discovered, selection, limits, cancelled, deadline)?;
-    let requested_artifacts =
-        requested_artifact_digests(&selected.sources, identities, cancelled, deadline)?;
-    let reusable = load_reusable_artifacts(&requested_artifacts, deadline, &mut load_reusable)?;
-    let prepared = prepare_source_index_with_reuse(
-        selected.sources,
-        identities,
-        limits.preparation(),
-        &reusable,
-        cancelled,
-        deadline,
-    )
-    .map_err(|source| match source {
-        RustIndexPreparationError::Cancelled => LocalRustIndexError::Cancelled,
-        RustIndexPreparationError::DeadlineExceeded => LocalRustIndexError::DeadlineExceeded,
-        source => LocalRustIndexError::Preparation { source },
-    })?;
+    let artifacts = prepare_selected_source_artifacts(
+        LocalArtifactPreparationContext {
+            sources: selected.sources,
+            identities,
+            graph_identity,
+            limits,
+            cancelled,
+            deadline,
+        },
+        &mut load_reusable,
+        &mut load_reusable_graph,
+    )?;
+    let prepared = artifacts.source;
     before_revalidation();
     revalidate_path_set(
         &worktree_root,
         &discovered,
+        package_scope,
         limits.discovery(),
         cancelled,
         deadline,
@@ -586,35 +616,22 @@ fn prepare_local_index_with_exclusion_reuse_and_hook(
     check_control(cancelled, deadline)?;
     let source_state_after =
         recapture_source_state_for_index(&worktree_root, limits.discovery(), cancelled, deadline)?;
-    if source_state_after != source_state_before {
-        return Err(LocalRustIndexError::SourceState {
-            source: SourceStateError::ConcurrentSourceChange,
-        });
-    }
-    let git_state = source_state_after.git_state();
-    let worktree_state = match selection {
-        SelectionPolicy::RustOnly => source_state_after.worktree_state(prepared.manifest_digest()),
-        SelectionPolicy::SupportedLanguages => {
-            source_state_after.source_worktree_state(prepared.manifest_digest())
-        }
-    };
+    let (git_state, worktree_state) = validated_final_source_identity(
+        &source_state_before,
+        &source_state_after,
+        selection,
+        prepared.manifest_digest(),
+    )?;
 
-    let discovered_paths = discovered.stats().path_count();
-    let selected_files = selected.counts.total()?;
-    let skipped_unsupported_paths = discovered_paths
-        .checked_sub(selected_files)
-        .ok_or(LocalRustIndexError::SourceByteCountOverflowed)?;
-    Ok(LocalRustIndexPreparation {
+    complete_local_preparation(LocalPreparationCompletion {
         prepared,
+        graph_artifacts: artifacts.graph,
         git_state,
         worktree_state,
-        discovered_paths,
-        selected_rust_files: selected.counts.rust,
-        selected_go_files: selected.counts.go,
-        selected_typescript_files: selected.counts.typescript,
-        selected_tsx_files: selected.counts.tsx,
-        selected_python_files: selected.counts.python,
-        skipped_unsupported_paths,
+        discovered: &discovered,
+        counts: selected.counts,
+        skipped_policy_paths: selected.skipped_policy_paths,
+        skipped_unsupported_paths: selected.skipped_unsupported_paths,
     })
 }
 

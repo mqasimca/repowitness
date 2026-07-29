@@ -4,13 +4,21 @@ use std::path::PathBuf;
 
 use super::*;
 
+mod bounded_file;
+mod configuration;
 mod context;
 mod core_index_search;
 mod diagnostics;
+mod doctor;
+mod gc;
+mod graph;
+mod identity;
 mod mcp;
 mod memory;
 mod memory_manage;
+mod runtime_configuration;
 mod symbol_inspect_io;
+mod watch;
 
 struct FakeInspector {
     outcome: FakeOutcome,
@@ -30,6 +38,7 @@ struct FakeIndexer {
     repository_root: RefCell<Option<PathBuf>>,
     database: RefCell<Option<PathBuf>>,
     repository_identity: RefCell<Option<OsString>>,
+    configuration: RefCell<Option<ResolvedConfiguration>>,
 }
 
 #[derive(Clone, Copy)]
@@ -45,6 +54,7 @@ struct FakeSearcher {
     repository_identity: RefCell<Option<OsString>>,
     query: RefCell<Option<OsString>>,
     max_results: Cell<Option<u16>>,
+    configuration: RefCell<Option<ResolvedConfiguration>>,
 }
 
 struct FakeSymbolGetter {
@@ -71,7 +81,11 @@ impl RepositoryMemory for FakeMemory {
         Err("must not be called".to_owned())
     }
 
-    fn recall(&self, _invocation: &MemoryRecallInvocation) -> Result<MemoryRecallOutput, String> {
+    fn recall(
+        &self,
+        _invocation: &MemoryRecallInvocation,
+        _configuration: &ResolvedConfiguration,
+    ) -> Result<MemoryRecallOutput, String> {
         Err("must not be called".to_owned())
     }
 }
@@ -113,6 +127,7 @@ impl FakeIndexer {
             repository_root: RefCell::new(None),
             database: RefCell::new(None),
             repository_identity: RefCell::new(None),
+            configuration: RefCell::new(None),
         }
     }
 
@@ -123,18 +138,24 @@ impl FakeIndexer {
             repository_root: RefCell::new(None),
             database: RefCell::new(None),
             repository_identity: RefCell::new(None),
+            configuration: RefCell::new(None),
         }
     }
 }
 
 impl RepositoryIndexer for FakeIndexer {
-    fn index(&self, invocation: &IndexInvocation) -> Result<CliIndexReport, String> {
+    fn index(
+        &self,
+        invocation: &IndexInvocation,
+        configuration: &ResolvedConfiguration,
+    ) -> Result<CliIndexReport, String> {
         self.calls.set(self.calls.get() + 1);
         self.repository_root
             .replace(Some(invocation.repository_root.clone()));
         self.database.replace(Some(invocation.database.clone()));
         self.repository_identity
             .replace(Some(invocation.repository_identity.clone()));
+        self.configuration.replace(Some(configuration.clone()));
         match self.outcome {
             FakeIndexOutcome::Success(report) => Ok(report),
             FakeIndexOutcome::Failure(error) => Err(error.to_owned()),
@@ -151,6 +172,7 @@ impl FakeSearcher {
             repository_identity: RefCell::new(None),
             query: RefCell::new(None),
             max_results: Cell::new(None),
+            configuration: RefCell::new(None),
         }
     }
 
@@ -162,18 +184,24 @@ impl FakeSearcher {
             repository_identity: RefCell::new(None),
             query: RefCell::new(None),
             max_results: Cell::new(None),
+            configuration: RefCell::new(None),
         }
     }
 }
 
 impl RepositorySearcher for FakeSearcher {
-    fn search(&self, invocation: &SearchInvocation) -> Result<CliSearchReport, String> {
+    fn search(
+        &self,
+        invocation: &SearchInvocation,
+        configuration: &ResolvedConfiguration,
+    ) -> Result<CliSearchReport, String> {
         self.calls.set(self.calls.get() + 1);
         self.database.replace(Some(invocation.database.clone()));
         self.repository_identity
             .replace(Some(invocation.repository_identity.clone()));
         self.query.replace(Some(invocation.query.clone()));
         self.max_results.set(Some(invocation.max_results));
+        self.configuration.replace(Some(configuration.clone()));
         self.outcome
             .borrow_mut()
             .take()
@@ -248,6 +276,7 @@ fn index_report() -> CliIndexReport {
         indexed_typescript_files: 1,
         indexed_tsx_files: 1,
         indexed_python_files: 1,
+        skipped_policy_paths: 0,
         skipped_unsupported_paths: 2,
         total_source_bytes: 101,
         total_facts: 7,
@@ -369,6 +398,7 @@ fn invoke_with_symbol_adapter(
         searcher,
         symbol_getter,
         &FakeMemory,
+        &LocalConfigurationLoader,
     );
     (
         code,

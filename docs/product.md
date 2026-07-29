@@ -1,7 +1,7 @@
 # Product
 
 - Status: Draft
-- Last reviewed: 2026-07-28
+- Last reviewed: 2026-07-29
 
 ## Definition
 
@@ -118,13 +118,17 @@ memory-management foundation are implemented:
 - owned SQLite connections, immutable generations, atomic activation,
   bounded/cancellable startup recovery, double-buffered FTS5, checkpoints, and
   validated online backup;
-- evidence-bearing literal `code_search` and exact digest-verified
-  `symbol_get` application use cases;
-- `index`, `search`, `symbol-get`, `memory-manage`, `memory-revalidate`,
+- evidence-bearing literal `code_search`, exact digest-verified `symbol_get`,
+  and immutable-view Rust graph status, exact-name search, site evidence,
+  architecture, trace, and conservative impact application use cases;
+- `index`, `search`, `symbol-get`, `graph`, `memory-manage`, `memory-revalidate`,
   `memory-recall`, `context-build`, `diagnostics`, `mcp-serve`, and
-  `inspect-paths` CLI commands, with five read-only
-  retrieval/context/diagnostic tools exposed by default over local stdio MCP
-  and an explicitly enabled, fixed-actor `memory_manage` mutation tool;
+  `inspect-paths` CLI commands, plus path-free `config explain` and read-only
+  `doctor`; explicit bounded user/workspace/repository configuration is
+  resolved once and enforced by indexing, retrieval, graph reads, context,
+  diagnostics, and MCP startup, with eleven read-only retrieval, graph,
+  context, and diagnostic tools exposed by default over local stdio MCP and an
+  explicitly enabled, fixed-actor `memory_manage` mutation tool;
 - the accepted bounded version-1 memory domain, hostile-YAML parser,
   canonicalizer, deterministic writer, and capability-contained exact-file
   worktree admission;
@@ -135,11 +139,13 @@ memory-management foundation are implemented:
 - contained canonical record create/update/tombstone writes, fixed
   high-confidence secret rejection, bounded observation-only reachable-Git
   history import, and explicit local approval;
-- an immutable SQLite baseline plus compatible version-2 migration containing
-  occurrence fingerprints, immutable current-memory projection, idempotent manual
-  correspondence review, precision-first Rust correspondence, Git-DAG/worktree validity,
-  conflicts, categorical staleness and review states, bounded current-memory
-  recall, and atomic projection activation;
+- an immutable SQLite baseline, compatible accepted version-2 migration, and
+  provisional version-3 connected-workspace migration containing occurrence
+  fingerprints, immutable current-memory projection, idempotent manual
+  correspondence review, precision-first Rust correspondence,
+  Git-DAG/worktree validity, conflicts, categorical staleness and review
+  states, bounded current-memory recall, atomic projection activation, bounded
+  source-slot membership, and immutable workspace-view publication;
 - deterministic reciprocal-rank context compilation from exact source and
   eligible current memory, conservative byte-budget admission, explicit
   omissions, transactionally pinned diagnostics, and source-only fallback;
@@ -153,11 +159,13 @@ memory-management foundation are implemented:
 
 The slice has been exercised on the pinned mini-redis product benchmark, this
 workspace, temporary adversarial and mixed-language repositories, and
-neighboring real repositories. The development benchmark passes every proposed
-numeric ceiling. One isolated public Codex before/after run also makes both
-correct decisions, uses current memory, ignores stale memory, and rates the MCP
-pack useful. These runs do not ratify the manifest or establish the real
-design-partner outcome required by the Phase 0 exit criteria.
+confidential external smoke inputs. The clean Ubuntu 24.04 benchmark passes
+every numeric ceiling and supplied the release-platform evidence used for
+maintainer ratification. One isolated public Codex before/after task also
+passes three paired runs: it makes both correct decisions, uses current
+memory, ignores stale memory, and rates every MCP pack useful. These runs do
+not establish the real design-partner outcome required by the Phase 0 exit
+criteria.
 
 TypeScript and TSX are distinct syntax-only dialects. The implemented profile
 does not evaluate TypeScript types, `tsconfig.json`, package/module resolution,
@@ -171,16 +179,15 @@ dispatch, or extract references and calls.
 
 ### Remaining product gates
 
-The local product loop is implemented, but the Phase 0 release gate is not yet
-ratified. Maintainers must accept, revise, or reject proposed ADR-0017 through
-ADR-0019 and ADR-0021; rerun the pinned benchmark from a clean exact
-RepoWitness revision; ratify or revise its retrieval/resource budgets; and
-record a real design-partner task whose engineering decision improves relative
-to the declared baselines. The rewritten-history, obsolete-snapshot,
-competing-review, split/merge, and publication-fault matrix passes in the
-development worktree. A stable public API also remains deferred. No public-beta
-or production-readiness claim follows from the implemented
-design-partner-alpha loop.
+The local product loop and clean release benchmark pass, the budgets are
+ratified, and ADR-0017, ADR-0019, and ADR-0023 are accepted. The remaining
+Phase 0 product gate is one real
+design-partner task whose engineering decision improves relative to the
+declared baselines. That result is required to decide proposed ADR-0018 and
+then ADR-0021. The rewritten-history, obsolete-snapshot, competing-review,
+split/merge, and publication-fault matrix passes. A stable public API also
+remains deferred. No public-beta or production-readiness claim follows from
+the implemented design-partner-alpha loop.
 
 ## Non-goals for the first public beta
 

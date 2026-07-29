@@ -9,8 +9,8 @@
 ## Context
 
 [ADR-0007](0007-git-memory-synchronization.md) makes reviewed files under
-`.code-memory/records/` the canonical shared-memory transport. Proposed
-[ADR-0017](0017-phase0-memory-journal.md) and
+`.code-memory/records/` the canonical shared-memory transport.
+[ADR-0017](0017-phase0-memory-journal.md) and proposed
 [ADR-0018](0018-phase0-memory-revalidation.md) implement strict record
 admission, an append-only SQLite journal, and precision-first revalidation. At
 proposal time, the production surface could not write, import, approve, or
@@ -23,9 +23,10 @@ also prevent stale overwrites, path escape, secret promotion, unbounded Git
 work, and model-initiated approval without an explicit local capability.
 
 The implementation described below now exists in the CLI, local adapter,
-SQLite schema version 8, and explicitly authorized local MCP adapter. This ADR
-remains proposed until maintainers review the contract and its release
-evidence.
+SQLite schema version 8, and explicitly authorized local MCP adapter. Its
+release matrix and clean benchmark prerequisite pass. This ADR remains
+proposed because it depends on ADR-0018, whose real design-partner
+prerequisite is not complete.
 
 ## Decision
 
@@ -239,11 +240,13 @@ canonical-file and SQLite publication stage, including transaction commit.
 
 ## Follow-up
 
-- Review and accept, revise, or reject this proposed decision without changing
-  the accepted baseline migration in place.
-- Ratify proposed ADR-0017 through ADR-0019 only after their complete Phase 0
-  validation matrices pass.
-- Rerun the pinned benchmark from a clean exact RepoWitness revision.
+- Completed 2026-07-29: accept ADR-0017 and ADR-0019 after their complete
+  Phase 0 validation matrices passed.
+- Completed 2026-07-29: rerun the pinned benchmark from a clean exact
+  RepoWitness revision on Ubuntu 24.04 and ratify its budgets.
+- Decide this proposal after the real design-partner comparison permits a
+  decision on ADR-0018. Do not change the accepted baseline migration in
+  place.
 - Add reviewed multi-parent merge and archival/export policy in a later
   decision.
 

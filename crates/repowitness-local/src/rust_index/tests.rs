@@ -511,3 +511,6 @@ fn rust_path_filter_is_case_sensitive_and_byte_based() {
     assert!(!is_rust_source_path(b"src/rs"));
     assert!(is_rust_source_path(b"non-utf8-\xFF.rs"));
 }
+
+include!("tests/configuration.rs");
+include!("tests/graph_preparation.rs");

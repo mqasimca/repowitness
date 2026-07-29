@@ -1,7 +1,8 @@
 # ADR-0023: Vendor a reviewed TypeScript grammar fix
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-07-28
+- Last reviewed: 2026-07-29
 - Owners: Project maintainers
 - Scope: TypeScript/TSX parser dependency, producer identity, and third-party provenance
 
@@ -175,12 +176,15 @@ consistency costs far beyond the narrow Phase 0 defect.
 
 ## Follow-up
 
+- Accepted 2026-07-29 after provenance, inventory, checksum, regeneration,
+  capability, parser-regression, language-matrix, dependency-policy, full CI,
+  and clean release-platform benchmark checks passed.
 - Track the upstream issue and replace the local patch only with a pinned
   release that passes the same regression and identity matrix.
 - Re-measure release binary size after the local parser is linked.
 
 ## Supersession
 
-If accepted, this supersedes only ADR-0016's crates.io dependency-selection
-and grammar-upgrade follow-up. ADR-0016's language scope, raw coverage,
-dialect identity, and generation contracts remain accepted.
+This decision supersedes only ADR-0016's crates.io dependency-selection and
+grammar-upgrade follow-up. ADR-0016's language scope, raw coverage, dialect
+identity, and generation contracts remain accepted.

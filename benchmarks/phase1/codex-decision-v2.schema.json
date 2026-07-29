@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RepoWitness Phase 1 Codex decision",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "decision",
+    "evidence_ids",
+    "source_grounded",
+    "current_memory_used",
+    "stale_memory_used",
+    "packet_usefulness",
+    "limitations"
+  ],
+  "properties": {
+    "decision": {
+      "type": "string",
+      "enum": [
+        "bug-present",
+        "bug-fixed",
+        "indeterminate"
+      ]
+    },
+    "evidence_ids": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256,
+        "pattern": "^(source|memory)/[A-Za-z0-9_.:-]+/[A-Za-z0-9_.:-]+$"
+      }
+    },
+    "source_grounded": {
+      "type": "boolean"
+    },
+    "current_memory_used": {
+      "type": "boolean"
+    },
+    "stale_memory_used": {
+      "type": "boolean"
+    },
+    "packet_usefulness": {
+      "type": "string",
+      "enum": [
+        "useful",
+        "partly-useful",
+        "not-useful"
+      ]
+    },
+    "limitations": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 512
+      }
+    }
+  }
+}

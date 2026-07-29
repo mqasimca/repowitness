@@ -70,7 +70,7 @@ fn map_reuse_error(source: SqliteStoreError) -> LocalRustIndexError {
 
 fn reject_excluded_file_aliases(
     root: &ContainedSourceRoot,
-    discovered: &DiscoveredRepositoryPaths,
+    discovered: &ScopedRepositoryPaths,
     excluded_identity: Option<&FileIdentity>,
     limits: LocalRustIndexLimits,
     cancelled: &AtomicBool,
@@ -142,15 +142,77 @@ fn recapture_source_state_for_index(
     )
 }
 
+fn validated_final_source_identity(
+    source_state_before: &crate::CapturedSourceState,
+    source_state_after: &crate::CapturedSourceState,
+    selection: SelectionPolicy,
+    manifest: repowitness_domain::SourceManifestDigest,
+) -> Result<(GitStateDigest, WorktreeStateDigest), LocalRustIndexError> {
+    if source_state_after != source_state_before {
+        return Err(LocalRustIndexError::SourceState {
+            source: SourceStateError::ConcurrentSourceChange,
+        });
+    }
+    let git_state = source_state_after.git_state();
+    let worktree_state = match selection {
+        SelectionPolicy::RustOnly => source_state_after.worktree_state(manifest),
+        SelectionPolicy::SupportedLanguages(_) => {
+            source_state_after.source_worktree_state(manifest)
+        }
+    };
+    Ok((git_state, worktree_state))
+}
+
+/// Compact allow-list for source languages selected by resolved policy.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct SourceLanguageSelection(u8);
+
+impl SourceLanguageSelection {
+    const RUST: u8 = 1;
+    const GO: u8 = 1 << 1;
+    const TYPESCRIPT: u8 = 1 << 2;
+    const TSX: u8 = 1 << 3;
+    const PYTHON: u8 = 1 << 4;
+
+    pub(crate) const fn all() -> Self {
+        Self(Self::RUST | Self::GO | Self::TYPESCRIPT | Self::TSX | Self::PYTHON)
+    }
+
+    pub(crate) fn from_allowed(languages: &BTreeSet<SourceLanguage>) -> Self {
+        languages
+            .iter()
+            .copied()
+            .fold(Self(0), |selection, language| {
+                Self(selection.0 | Self::bit(language))
+            })
+    }
+
+    const fn contains(self, language: SourceLanguage) -> bool {
+        self.0 & Self::bit(language) != 0
+    }
+
+    const fn bit(language: SourceLanguage) -> u8 {
+        match language {
+            SourceLanguage::Rust => Self::RUST,
+            SourceLanguage::Go => Self::GO,
+            SourceLanguage::TypeScript => Self::TYPESCRIPT,
+            SourceLanguage::Tsx => Self::TSX,
+            SourceLanguage::Python => Self::PYTHON,
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 enum SelectionPolicy {
     RustOnly,
-    SupportedLanguages,
+    SupportedLanguages(SourceLanguageSelection),
 }
 
 struct SelectedRustSources {
     sources: Vec<ImmutableRustSource>,
     counts: SelectedLanguageCounts,
+    skipped_policy_paths: u64,
+    skipped_unsupported_paths: u64,
 }
 
 #[derive(Default)]
@@ -178,13 +240,7 @@ impl SelectedLanguageCounts {
     }
 
     fn total(&self) -> Result<u64, LocalRustIndexError> {
-        [
-            self.rust,
-            self.go,
-            self.typescript,
-            self.tsx,
-            self.python,
-        ]
+        [self.rust, self.go, self.typescript, self.tsx, self.python]
             .into_iter()
             .try_fold(0_u64, |total, count| {
                 total
@@ -196,19 +252,27 @@ impl SelectedLanguageCounts {
 
 fn read_selected_sources(
     root: &ContainedSourceRoot,
-    discovered: &DiscoveredRepositoryPaths,
+    discovered: &ScopedRepositoryPaths,
     selection: SelectionPolicy,
     limits: LocalRustIndexLimits,
     cancelled: &AtomicBool,
     deadline: Instant,
 ) -> Result<SelectedRustSources, LocalRustIndexError> {
-    let selected_paths = discovered
-        .paths()
-        .iter()
-        .filter_map(|path| {
-            selected_language(path.as_bytes(), selection).map(|language| (path, language))
-        })
-        .collect::<Vec<_>>();
+    let mut selected_paths = Vec::new();
+    let mut skipped_policy_paths = 0_u64;
+    let mut skipped_unsupported_paths = 0_u64;
+    for path in discovered.paths() {
+        check_control(cancelled, deadline)?;
+        match source_language(path.as_bytes()) {
+            Some(language) if selection.allows(language) => {
+                selected_paths.push((path, language));
+            }
+            Some(_) if matches!(selection, SelectionPolicy::SupportedLanguages(_)) => {
+                increment_count(&mut skipped_policy_paths)?;
+            }
+            Some(_) | None => increment_count(&mut skipped_unsupported_paths)?,
+        }
+    }
     let count = u64::try_from(selected_paths.len())
         .map_err(|_| LocalRustIndexError::SourceByteCountOverflowed)?;
     if count > limits.preparation().max_files() {
@@ -233,13 +297,7 @@ fn read_selected_sources(
         check_control(cancelled, deadline)?;
         let ordinal = stable_ordinal(index)?;
         let read_limits = capped_source_read_limits(limits.source_read(), deadline)?;
-        let content = read_source(
-            &mut read_session,
-            path,
-            read_limits,
-            cancelled,
-            ordinal,
-        )?;
+        let content = read_source(&mut read_session, path, read_limits, cancelled, ordinal)?;
         total_source_bytes = total_source_bytes
             .checked_add(
                 u64::try_from(content.len())
@@ -258,7 +316,19 @@ fn read_selected_sources(
             language,
         ));
     }
-    Ok(SelectedRustSources { sources, counts })
+    Ok(SelectedRustSources {
+        sources,
+        counts,
+        skipped_policy_paths,
+        skipped_unsupported_paths,
+    })
+}
+
+fn increment_count(count: &mut u64) -> Result<(), LocalRustIndexError> {
+    *count = count
+        .checked_add(1)
+        .ok_or(LocalRustIndexError::SourceByteCountOverflowed)?;
+    Ok(())
 }
 
 fn read_source(
@@ -305,14 +375,74 @@ fn discover_paths(
     })
 }
 
+struct ScopedRepositoryPaths {
+    paths: Box<[repowitness_domain::RepositoryPath]>,
+    discovered_paths: u64,
+    policy_omitted_paths: u64,
+}
+
+impl ScopedRepositoryPaths {
+    fn paths(&self) -> &[repowitness_domain::RepositoryPath] {
+        &self.paths
+    }
+
+    const fn discovered_paths(&self) -> u64 {
+        self.discovered_paths
+    }
+
+    const fn policy_omitted_paths(&self) -> u64 {
+        self.policy_omitted_paths
+    }
+}
+
+fn select_discovered_paths(
+    discovered: DiscoveredRepositoryPaths,
+    package_scope: Option<&PackageScope>,
+    cancelled: &AtomicBool,
+    deadline: Instant,
+) -> Result<ScopedRepositoryPaths, LocalRustIndexError> {
+    let Some(package_scope) = package_scope else {
+        return Ok(ScopedRepositoryPaths {
+            discovered_paths: discovered.stats().path_count(),
+            paths: discovered.into_paths(),
+            policy_omitted_paths: 0,
+        });
+    };
+    let selected = crate::package_scope::filter_discovered_repository_paths(
+        discovered,
+        package_scope,
+        cancelled,
+        deadline,
+    )
+    .map_err(|source| match source {
+        crate::package_scope::PackageScopeFilterError::Cancelled => LocalRustIndexError::Cancelled,
+        crate::package_scope::PackageScopeFilterError::DeadlineExceeded => {
+            LocalRustIndexError::DeadlineExceeded
+        }
+        _ => LocalRustIndexError::PackageScope,
+    })?;
+    let stats = selected.stats();
+    Ok(ScopedRepositoryPaths {
+        paths: selected.into_paths(),
+        discovered_paths: stats.discovered_paths(),
+        policy_omitted_paths: stats.policy_omitted_paths(),
+    })
+}
+
 fn revalidate_path_set(
     worktree_root: &Path,
-    original: &DiscoveredRepositoryPaths,
+    original: &ScopedRepositoryPaths,
+    package_scope: Option<&PackageScope>,
     discovery_limits: GitPathDiscoveryLimits,
     cancelled: &AtomicBool,
     deadline: Instant,
 ) -> Result<(), LocalRustIndexError> {
-    let current = discover_paths(worktree_root, discovery_limits, cancelled, deadline)?;
+    let current = select_discovered_paths(
+        discover_paths(worktree_root, discovery_limits, cancelled, deadline)?,
+        package_scope,
+        cancelled,
+        deadline,
+    )?;
     if current.paths() != original.paths() {
         return Err(LocalRustIndexError::StalePathSet);
     }
@@ -426,22 +556,33 @@ fn is_python_source_path(path: &[u8]) -> bool {
     path.ends_with(b".py") || path.ends_with(b".pyi")
 }
 
+#[cfg(test)]
 fn selected_language(path: &[u8], selection: SelectionPolicy) -> Option<SourceLanguage> {
-    if is_rust_source_path(path) {
-        Some(SourceLanguage::Rust)
-    } else if matches!(selection, SelectionPolicy::SupportedLanguages) {
-        if is_go_source_path(path) {
-            Some(SourceLanguage::Go)
-        } else if is_typescript_source_path(path) {
-            Some(SourceLanguage::TypeScript)
-        } else if is_tsx_source_path(path) {
-            Some(SourceLanguage::Tsx)
-        } else if is_python_source_path(path) {
-            Some(SourceLanguage::Python)
-        } else {
-            None
-        }
+    source_language(path).filter(|&language| selection.allows(language))
+}
+
+fn source_language(path: &[u8]) -> Option<SourceLanguage> {
+    let language = if is_rust_source_path(path) {
+        SourceLanguage::Rust
+    } else if is_go_source_path(path) {
+        SourceLanguage::Go
+    } else if is_typescript_source_path(path) {
+        SourceLanguage::TypeScript
+    } else if is_tsx_source_path(path) {
+        SourceLanguage::Tsx
+    } else if is_python_source_path(path) {
+        SourceLanguage::Python
     } else {
-        None
+        return None;
+    };
+    Some(language)
+}
+
+impl SelectionPolicy {
+    const fn allows(self, language: SourceLanguage) -> bool {
+        match self {
+            SelectionPolicy::RustOnly => matches!(language, SourceLanguage::Rust),
+            SelectionPolicy::SupportedLanguages(languages) => languages.contains(language),
+        }
     }
 }

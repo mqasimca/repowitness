@@ -18,6 +18,19 @@ fn run_writer(state: &mut WriterState, receiver: Receiver<WriterCommand>) {
                 });
                 send_reply(reply, result);
             }
+            WriterCommand::EnsureWorkspace {
+                repository,
+                initial_source_epoch,
+                deadline,
+                reply,
+            } => {
+                let result = check_deadline(deadline).and_then(|()| {
+                    state
+                        .ensure_workspace(repository, initial_source_epoch)
+                        .map(|(_, source_epoch)| source_epoch)
+                });
+                send_reply(reply, result);
+            }
             WriterCommand::AdvanceEpoch {
                 repository,
                 expected,
@@ -41,6 +54,52 @@ fn run_writer(state: &mut WriterState, receiver: Receiver<WriterCommand>) {
                 } = *command;
                 let result = state.stage(
                     source_epoch,
+                    identity,
+                    &prepared,
+                    coverage,
+                    WriteControl {
+                        cancelled: &cancelled,
+                        deadline,
+                    },
+                );
+                send_reply(reply, result);
+            }
+            WriterCommand::StageGraph(command) => {
+                let StageGraphCommand {
+                    generation,
+                    prepared,
+                    cancelled,
+                    deadline,
+                    reply,
+                } = *command;
+                let result = state.stage_graph(
+                    generation,
+                    &prepared,
+                    WriteControl {
+                        cancelled: &cancelled,
+                        deadline,
+                    },
+                );
+                send_reply(reply, result);
+            }
+            WriterCommand::StageSourceSlot(command) => {
+                let StageSourceSlotCommand {
+                    connected_workspace,
+                    source_slot,
+                    reserved_epoch,
+                    identity,
+                    prepared,
+                    coverage,
+                    cancelled,
+                    deadline,
+                    reply,
+                } = *command;
+                let result = state.stage_source_slot(
+                    SourceSlotReservation::new(
+                        connected_workspace,
+                        source_slot,
+                        reserved_epoch,
+                    ),
                     identity,
                     &prepared,
                     coverage,
@@ -179,7 +238,7 @@ fn run_writer(state: &mut WriterState, receiver: Receiver<WriterCommand>) {
                 reply,
             } => {
                 let result = check_deadline(deadline)
-                    .and_then(|()| state.activate(generation, expected_source_epoch));
+                    .and_then(|()| state.activate(generation, expected_source_epoch, deadline));
                 send_reply(reply, result);
             }
             WriterCommand::ActiveGeneration {
@@ -189,6 +248,117 @@ fn run_writer(state: &mut WriterState, receiver: Receiver<WriterCommand>) {
             } => {
                 let result =
                     check_deadline(deadline).and_then(|()| state.active_generation(repository));
+                send_reply(reply, result);
+            }
+            WriterCommand::ConnectWorkspace(command) => {
+                let ConnectWorkspaceCommand {
+                    connected_workspace,
+                    source_slots,
+                    cancelled,
+                    deadline,
+                    reply,
+                } = *command;
+                let result = state.connect_workspace(
+                    connected_workspace,
+                    &source_slots,
+                    WriteControl {
+                        cancelled: &cancelled,
+                        deadline,
+                    },
+                );
+                send_reply(reply, result);
+            }
+            WriterCommand::SourceSlotState(command) => {
+                let SourceSlotStateCommand {
+                    connected_workspace,
+                    source_slot,
+                    cancelled,
+                    deadline,
+                    reply,
+                } = *command;
+                let result = state.source_slot_state(
+                    connected_workspace,
+                    source_slot,
+                    WriteControl {
+                        cancelled: &cancelled,
+                        deadline,
+                    },
+                );
+                send_reply(reply, result);
+            }
+            WriterCommand::ReserveSourceSlotEpoch(command) => {
+                let ReserveSourceSlotEpochCommand {
+                    connected_workspace,
+                    source_slot,
+                    expected,
+                    cancelled,
+                    deadline,
+                    reply,
+                } = *command;
+                let result = state.reserve_source_slot_epoch(
+                    connected_workspace,
+                    source_slot,
+                    expected,
+                    WriteControl {
+                        cancelled: &cancelled,
+                        deadline,
+                    },
+                );
+                send_reply(reply, result);
+            }
+            WriterCommand::CompleteSourceSlotEpoch(command) => {
+                let CompleteSourceSlotEpochCommand {
+                    connected_workspace,
+                    source_slot,
+                    source_epoch,
+                    generation,
+                    cancelled,
+                    deadline,
+                    reply,
+                } = *command;
+                let result = state.complete_source_slot_epoch(
+                    connected_workspace,
+                    source_slot,
+                    source_epoch,
+                    generation,
+                    WriteControl {
+                        cancelled: &cancelled,
+                        deadline,
+                    },
+                );
+                send_reply(reply, result);
+            }
+            WriterCommand::PublishWorkspaceView(command) => {
+                let PublishWorkspaceViewCommand {
+                    connected_workspace,
+                    members,
+                    cancelled,
+                    deadline,
+                    reply,
+                } = *command;
+                let result = state.publish_workspace_view(
+                    connected_workspace,
+                    &members,
+                    WriteControl {
+                        cancelled: &cancelled,
+                        deadline,
+                    },
+                );
+                send_reply(reply, result);
+            }
+            WriterCommand::ActiveWorkspaceView {
+                connected_workspace,
+                cancelled,
+                deadline,
+                reply,
+            } => {
+                let result = state.active_workspace_view(
+                    connected_workspace,
+                    WriteControl {
+                        cancelled: &cancelled,
+                        deadline,
+                    },
+                );
                 send_reply(reply, result);
             }
             WriterCommand::RebuildProjection(command) => {
@@ -204,6 +374,33 @@ fn run_writer(state: &mut WriterState, receiver: Receiver<WriterCommand>) {
                         cancelled: &cancelled,
                         deadline,
                     },
+                );
+                send_reply(reply, result);
+            }
+            WriterCommand::PlanRetention(command) => {
+                let PlanRetentionCommand {
+                    policy,
+                    cancelled,
+                    deadline,
+                    reply,
+                } = *command;
+                let result =
+                    state.plan_generation_retention(&policy, cancelled, deadline);
+                send_reply(reply, result);
+            }
+            WriterCommand::ApplyRetention(command) => {
+                let ApplyRetentionCommand {
+                    policy,
+                    expected_plan,
+                    cancelled,
+                    deadline,
+                    reply,
+                } = *command;
+                let result = state.apply_generation_retention(
+                    &policy,
+                    expected_plan,
+                    cancelled,
+                    deadline,
                 );
                 send_reply(reply, result);
             }
@@ -237,6 +434,39 @@ fn receive_reply<T>(
             mpsc::RecvTimeoutError::Timeout => SqliteStoreError::ReplyTimeout,
             mpsc::RecvTimeoutError::Disconnected => SqliteStoreError::WorkerUnavailable,
         })?
+}
+
+/// Bounded resolution for a command that may have crossed a durable commit point.
+///
+/// A command accepted by the owner queue can finish after the caller's ordinary
+/// deadline. Once that deadline passes, request cancellation where supported and
+/// allow one fixed grace interval for its receipt. A missing receipt is not a
+/// rollback or ordinary timeout: its durable outcome is unknown and must not be
+/// retried implicitly.
+fn receive_mutation_reply<T>(
+    receiver: &Receiver<Result<T, SqliteStoreError>>,
+    cancelled: Option<&AtomicBool>,
+    deadline: Instant,
+) -> Result<T, SqliteStoreError> {
+    const OUTCOME_RESOLUTION_GRACE: Duration = Duration::from_millis(250);
+
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if !remaining.is_zero() {
+        match receiver.recv_timeout(remaining) {
+            Ok(reply) => return reply,
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(SqliteStoreError::MutationOutcomeUnknown);
+            }
+        }
+    }
+
+    if let Some(cancelled) = cancelled {
+        cancelled.store(true, Ordering::Release);
+    }
+    receiver
+        .recv_timeout(OUTCOME_RESOLUTION_GRACE)
+        .map_err(|_| SqliteStoreError::MutationOutcomeUnknown)?
 }
 
 fn check_deadline(deadline: Instant) -> Result<(), SqliteStoreError> {

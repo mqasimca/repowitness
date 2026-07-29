@@ -11,27 +11,27 @@ Its textual-boundary follow-up is recorded in the
 Phase 0 source-state identity findings are recorded in the
 [source-identity research](../research/source-identity-2026-07-25.md).
 
-ADRs 0010 through 0013, 0015, 0016, 0020, 0022, and 0024 are implemented by the current
-indexing, generation-publication, and evidence-retrieval slice. ADR-0014 is
-accepted and its domain model, strict parser, canonicalizer, and deterministic
-writer are implemented. The worktree admission, trusted import, and
-append-only SQLite journal described by proposed ADR-0017 are also
-implemented. Proposed ADR-0018 and ADR-0019 now have implemented projection,
-Rust correspondence, memory revalidation/recall, bounded context compilation,
-and diagnostics paths. Proposed ADR-0021 has implemented canonical writes,
-observation-only Git-history import, separate local approval, correspondence
-review, CLI management, and opt-in MCP mutation. Its persistence tables are
-rooted in the immutable SQLite baseline accepted by ADR-0022 and upgraded
-through the compatible parser-diagnostic migration accepted by ADR-0024.
-Proposed
-ADR-0023 has an implemented checksum-pinned local TypeScript/TSX grammar fix
-with exact provenance and a clean regeneration-tool audit. All five review
-statuses remain proposed. Their applicable adversarial release matrices pass
-in development. The
+ADRs 0010 through 0017, ADR-0019, ADR-0020, and ADRs 0022 through 0024 are
+implemented by the current indexing, generation-publication,
+evidence-retrieval, memory-journal, context, and parser slice. ADR-0014's
+domain model, strict parser, canonicalizer, and deterministic writer are also
+implemented.
+
+Proposed ADR-0018 has implemented projection, Rust correspondence, memory
+revalidation, and recall paths. Proposed ADR-0021 has implemented canonical
+writes, observation-only Git-history import, separate local approval,
+correspondence review, CLI management, and opt-in MCP mutation. Their
+persistence tables are rooted in the immutable SQLite baseline accepted by
+ADR-0022 and upgraded through the compatible parser-diagnostic migration
+accepted by ADR-0024.
+
+The
 [Phase 0 ratification review](../research/phase0-ratification-review-2026-07-28.md)
-recommends accepting ADR-0017, ADR-0019, and ADR-0023, while keeping ADR-0018
-and ADR-0021 proposed until their explicit design-partner and clean-benchmark
-prerequisites pass. No status changed as part of that review.
+recommended accepting ADR-0017, ADR-0019, and ADR-0023. Maintainers adopted
+those recommendations after the clean release-platform benchmark passed and
+ratified its budgets. ADR-0018 remains proposed until the real design-partner
+comparison passes. ADR-0021 remains proposed because it depends on ADR-0018;
+its clean-benchmark prerequisite is complete.
 
 ## Index
 
@@ -53,14 +53,23 @@ prerequisites pass. No status changed as part of that review.
 | [0014](0014-phase0-engineering-memory-record.md) | Define a strict Phase 0 engineering-memory record | Accepted |
 | [0015](0015-phase0-go-and-rust-indexing.md) | Index Go and Rust in one Phase 0 generation | Accepted |
 | [0016](0016-phase0-typescript-and-tsx-indexing.md) | Add TypeScript and TSX to the Phase 0 generation | Accepted |
-| [0017](0017-phase0-memory-journal.md) | Persist an append-only Phase 0 memory journal in SQLite | Proposed |
+| [0017](0017-phase0-memory-journal.md) | Persist an append-only Phase 0 memory journal in SQLite | Accepted |
 | [0018](0018-phase0-memory-revalidation.md) | Revalidate Phase 0 Rust memory through precision-first correspondence | Proposed |
-| [0019](0019-phase0-context-compilation-and-diagnostics.md) | Compile bounded Phase 0 context from exact source and current memory | Proposed |
+| [0019](0019-phase0-context-compilation-and-diagnostics.md) | Compile bounded Phase 0 context from exact source and current memory | Accepted |
 | [0020](0020-phase0-python-indexing.md) | Add Python to the Phase 0 generation | Accepted |
 | [0021](0021-phase0-memory-management-and-review.md) | Complete Phase 0 memory management through explicit local trust | Proposed |
 | [0022](0022-squash-pre-release-sqlite-schema.md) | Squash the pre-release SQLite chain into one baseline | Accepted |
-| [0023](0023-vendor-typescript-grammar-fix.md) | Vendor a reviewed TypeScript grammar fix | Proposed |
+| [0023](0023-vendor-typescript-grammar-fix.md) | Vendor a reviewed TypeScript grammar fix | Accepted |
 | [0024](0024-persist-parser-diagnostics-migration.md) | Persist recognized parser diagnostics through migration 2 | Accepted |
+| [0025](0025-versioned-local-configuration-and-policy.md) | Resolve versioned local configuration with monotonic policy | Proposed |
+| [0026](0026-connected-workspace-source-slots-and-views.md) | Model connected workspaces through source slots and immutable views | Proposed |
+| [0027](0027-phase1-rust-syntax-graph.md) | Publish a bounded Rust syntax graph with explicit resolution coverage | Proposed |
+| [0028](0028-reconciliation-watching-and-source-epochs.md) | Reconcile watched source through complete state and durable epochs | Proposed |
+| [0029](0029-bounded-generation-retention-and-garbage-collection.md) | Collect unreachable generations through bounded mark-and-sweep | Proposed |
+| [0030](0030-bounded-incumbent-mcp-compatibility.md) | Offer bounded incumbent-compatible MCP aliases | Proposed |
+| [0031](0031-source-slot-selectors-and-package-scopes.md) | Resolve source-slot selectors in caller-provided worktrees | Proposed |
+| [0032](0032-explicit-connected-workspace-manifest.md) | Admit connected workspaces through an explicit manifest | Proposed |
+| [0033](0033-bounded-mutation-outcome-resolution.md) | Resolve mutation outcomes without denying committed work | Proposed |
 
 Use [0000-template.md](0000-template.md) for a new decision.
 

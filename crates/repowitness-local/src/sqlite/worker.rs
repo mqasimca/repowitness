@@ -12,17 +12,22 @@ use std::{
 };
 
 use repowitness_application::{
-    MemoryImportApproval, MemoryImportReceipt, PreparedRustIndex, RustIndexCoverage,
-    RustSourceSnapshotIdentity,
+    CompletedSourceSlotIndex, MemoryImportApproval, MemoryImportReceipt, PreparedRustIndex,
+    RustIndexCoverage, RustSourceSnapshotIdentity, SourceSlotEpoch,
 };
 use repowitness_domain::{
-    MemoryAuditActorId, MemoryObservationSource, MemoryPresentationDigest, MemoryRecord,
-    MemoryRecordedAtUnixMillis, RepositoryIdentityDigest, RustSymbolMemoryEvidence,
+    ConnectedWorkspaceId, MemoryAuditActorId, MemoryObservationSource, MemoryPresentationDigest,
+    MemoryRecord, MemoryRecordedAtUnixMillis, RepositoryIdentityDigest, RustSymbolMemoryEvidence,
+    SourceSlotId,
 };
 
 use super::{
-    CheckpointOutcome, GenerationCoverage, GenerationId, ProjectionRebuildLimits,
-    ProjectionRebuildOutcome, SqliteStoreError, canonical_database_path, database_file_identity,
+    CheckpointOutcome, GenerationCoverage, GenerationId, GenerationRetentionPolicy,
+    PinnedWorkspaceView, PreparedRustGraphGeneration, ProjectionRebuildLimits,
+    ProjectionRebuildOutcome, RetentionApplyOutcome, RetentionApplyRequest, RetentionPlan,
+    RetentionPlanDigest, RetentionPlanRequest, SourceSlotState, SqliteStoreError,
+    WorkspaceSourceSlot, WorkspaceViewId, WorkspaceViewMember, canonical_database_path,
+    database_file_identity,
     memory_projection::{
         LoadedMemoryJournal, LoadedRustCandidateSet, MemoryProjectionLoadLimits,
         MemoryProjectionPublication, MemoryProjectionSource, PreparedMemoryProjection,
@@ -32,7 +37,7 @@ use super::{
         PreparedMemoryCorrespondenceReview,
     },
     open_index_writer_with_identity_until,
-    writer::{PreparedMemoryImport, WriteControl, WriterState},
+    writer::{PreparedMemoryImport, SourceSlotReservation, WriteControl, WriterState},
 };
 use crate::{
     contained_source::FileIdentity,
@@ -56,11 +61,22 @@ impl SqliteMutationLease {
         database_path: &Path,
         deadline: Instant,
     ) -> Result<Self, SqliteStoreError> {
+        Self::acquire_with_cancel(database_path, None, deadline)
+    }
+
+    pub(crate) fn acquire_with_cancel(
+        database_path: &Path,
+        cancelled: Option<&AtomicBool>,
+        deadline: Instant,
+    ) -> Result<Self, SqliteStoreError> {
+        if cancelled.is_some_and(|cancelled| cancelled.load(Ordering::Acquire)) {
+            return Err(SqliteStoreError::Cancelled);
+        }
         if Instant::now() >= deadline {
             return Err(SqliteStoreError::DeadlineExceeded);
         }
         let database_path = canonical_database_path(database_path)?;
-        let file = acquire_mutation_lease(&database_path, deadline)?;
+        let file = acquire_mutation_lease(&database_path, cancelled, deadline)?;
         Ok(Self {
             database_path,
             _file: file,
@@ -75,6 +91,12 @@ enum WriterCommand {
         deadline: Instant,
         reply: Reply<()>,
     },
+    EnsureWorkspace {
+        repository: RepositoryIdentityDigest,
+        initial_source_epoch: u64,
+        deadline: Instant,
+        reply: Reply<SourceSlotEpoch>,
+    },
     AdvanceEpoch {
         repository: RepositoryIdentityDigest,
         expected: u64,
@@ -83,6 +105,8 @@ enum WriterCommand {
         reply: Reply<()>,
     },
     Stage(Box<StageCommand>),
+    StageSourceSlot(Box<StageSourceSlotCommand>),
+    StageGraph(Box<StageGraphCommand>),
     ImportMemory(Box<MemoryImportCommand>),
     AppendMemoryCorrespondenceReview(Box<AppendMemoryCorrespondenceReviewCommand>),
     LoadMemorySource {
@@ -106,7 +130,20 @@ enum WriterCommand {
         deadline: Instant,
         reply: Reply<Option<GenerationId>>,
     },
+    ConnectWorkspace(Box<ConnectWorkspaceCommand>),
+    SourceSlotState(Box<SourceSlotStateCommand>),
+    ReserveSourceSlotEpoch(Box<ReserveSourceSlotEpochCommand>),
+    CompleteSourceSlotEpoch(Box<CompleteSourceSlotEpochCommand>),
+    PublishWorkspaceView(Box<PublishWorkspaceViewCommand>),
+    ActiveWorkspaceView {
+        connected_workspace: ConnectedWorkspaceId,
+        cancelled: Arc<AtomicBool>,
+        deadline: Instant,
+        reply: Reply<Option<PinnedWorkspaceView>>,
+    },
     RebuildProjection(Box<RebuildProjectionCommand>),
+    PlanRetention(Box<PlanRetentionCommand>),
+    ApplyRetention(Box<ApplyRetentionCommand>),
     Checkpoint {
         deadline: Instant,
         reply: Reply<CheckpointOutcome>,
@@ -124,6 +161,26 @@ struct StageCommand {
     cancelled: Arc<AtomicBool>,
     deadline: Instant,
     reply: Reply<GenerationId>,
+}
+
+struct StageSourceSlotCommand {
+    connected_workspace: ConnectedWorkspaceId,
+    source_slot: SourceSlotId,
+    reserved_epoch: SourceSlotEpoch,
+    identity: RustSourceSnapshotIdentity,
+    prepared: PreparedRustIndex,
+    coverage: RustIndexCoverage,
+    cancelled: Arc<AtomicBool>,
+    deadline: Instant,
+    reply: Reply<GenerationId>,
+}
+
+struct StageGraphCommand {
+    generation: GenerationId,
+    prepared: PreparedRustGraphGeneration,
+    cancelled: Arc<AtomicBool>,
+    deadline: Instant,
+    reply: Reply<()>,
 }
 
 struct MemoryImportCommand {
@@ -180,6 +237,49 @@ struct RebuildProjectionCommand {
     reply: Reply<ProjectionRebuildOutcome>,
 }
 
+struct ConnectWorkspaceCommand {
+    connected_workspace: ConnectedWorkspaceId,
+    source_slots: Box<[WorkspaceSourceSlot]>,
+    cancelled: Arc<AtomicBool>,
+    deadline: Instant,
+    reply: Reply<()>,
+}
+
+struct SourceSlotStateCommand {
+    connected_workspace: ConnectedWorkspaceId,
+    source_slot: SourceSlotId,
+    cancelled: Arc<AtomicBool>,
+    deadline: Instant,
+    reply: Reply<SourceSlotState>,
+}
+
+struct ReserveSourceSlotEpochCommand {
+    connected_workspace: ConnectedWorkspaceId,
+    source_slot: SourceSlotId,
+    expected: SourceSlotEpoch,
+    cancelled: Arc<AtomicBool>,
+    deadline: Instant,
+    reply: Reply<SourceSlotEpoch>,
+}
+
+struct CompleteSourceSlotEpochCommand {
+    connected_workspace: ConnectedWorkspaceId,
+    source_slot: SourceSlotId,
+    source_epoch: SourceSlotEpoch,
+    generation: GenerationId,
+    cancelled: Arc<AtomicBool>,
+    deadline: Instant,
+    reply: Reply<()>,
+}
+
+struct PublishWorkspaceViewCommand {
+    connected_workspace: ConnectedWorkspaceId,
+    members: Box<[WorkspaceViewMember]>,
+    cancelled: Arc<AtomicBool>,
+    deadline: Instant,
+    reply: Reply<WorkspaceViewId>,
+}
+
 /// Startup facts from deterministic recovery on the owned writer thread.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct IndexStoreStartup {
@@ -198,6 +298,7 @@ impl IndexStoreStartup {
 pub struct OwnedSqliteIndex {
     commands: SyncSender<WriterCommand>,
     worker: Option<JoinHandle<()>>,
+    opened_database_identity: Option<FileIdentity>,
 }
 
 impl OwnedSqliteIndex {
@@ -229,6 +330,7 @@ impl OwnedSqliteIndex {
             return Err(SqliteStoreError::DeadlineExceeded);
         }
         let database_path = mutation_lease.database_path.clone();
+        let startup_cancelled = Arc::clone(&cancelled);
         let (commands, receiver) = mpsc::sync_channel(1);
         let (startup_sender, startup_receiver) = mpsc::sync_channel(1);
         let worker = thread::Builder::new()
@@ -237,7 +339,7 @@ impl OwnedSqliteIndex {
                 // The owner thread retains the lease even if its client is
                 // dropped while a queued command is still completing.
                 let _mutation_lease = mutation_lease;
-                let startup = if cancelled.load(Ordering::Acquire) {
+                let startup = if startup_cancelled.load(Ordering::Acquire) {
                     Err(SqliteStoreError::Cancelled)
                 } else if Instant::now() >= deadline {
                     Err(SqliteStoreError::DeadlineExceeded)
@@ -246,24 +348,28 @@ impl OwnedSqliteIndex {
                         &database_path,
                         database_identity,
                         applied_at_unix_ms,
-                        Arc::clone(&cancelled),
+                        Arc::clone(&startup_cancelled),
                         deadline,
                     )
-                    .and_then(|connection| {
+                    .and_then(|(connection, opened_database_identity)| {
                         let mut state = WriterState::new(connection);
-                        let recovered_generations = state.recover(cancelled, deadline)?;
-                        Ok((state, recovered_generations))
+                        let recovered_generations = state.recover(startup_cancelled, deadline)?;
+                        Ok((state, recovered_generations, opened_database_identity))
                     })
                 };
-                let Ok((mut state, recovered_generations)) = startup else {
+                let Ok((mut state, recovered_generations, opened_database_identity)) = startup
+                else {
                     let error = startup.err().unwrap_or(SqliteStoreError::WorkerUnavailable);
                     let _ = startup_sender.send(Err(error));
                     return;
                 };
                 if startup_sender
-                    .send(Ok(IndexStoreStartup {
-                        recovered_generations,
-                    }))
+                    .send(Ok((
+                        IndexStoreStartup {
+                            recovered_generations,
+                        },
+                        opened_database_identity,
+                    )))
                     .is_err()
                 {
                     return;
@@ -271,14 +377,23 @@ impl OwnedSqliteIndex {
                 run_writer(&mut state, receiver);
             })
             .map_err(|_| SqliteStoreError::WorkerUnavailable)?;
-        let startup = receive_reply(&startup_receiver, deadline)?;
+        let (startup, opened_database_identity) =
+            receive_mutation_reply(&startup_receiver, Some(cancelled.as_ref()), deadline)?;
         Ok((
             Self {
                 commands,
                 worker: Some(worker),
+                opened_database_identity: Some(opened_database_identity),
             },
             startup,
         ))
+    }
+
+    /// Returns the exact database identity retained from the guarded writer open.
+    pub(crate) fn opened_database_identity(&self) -> &FileIdentity {
+        self.opened_database_identity
+            .as_ref()
+            .expect("a successfully started writer retains its opened database identity")
     }
 
     /// Registers a repository workspace at one explicit initial source epoch.
@@ -298,7 +413,26 @@ impl OwnedSqliteIndex {
             },
             deadline,
         )?;
-        receive_reply(&receiver, deadline)
+        receive_mutation_reply(&receiver, None, deadline)
+    }
+
+    pub(crate) fn ensure_workspace(
+        &self,
+        repository: RepositoryIdentityDigest,
+        initial_source_epoch: u64,
+        deadline: Instant,
+    ) -> Result<SourceSlotEpoch, SqliteStoreError> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.send(
+            WriterCommand::EnsureWorkspace {
+                repository,
+                initial_source_epoch,
+                deadline,
+                reply,
+            },
+            deadline,
+        )?;
+        receive_mutation_reply(&receiver, None, deadline)
     }
 
     /// Advances the monotonic source epoch with compare-and-set semantics.
@@ -320,7 +454,7 @@ impl OwnedSqliteIndex {
             },
             deadline,
         )?;
-        receive_reply(&receiver, deadline)
+        receive_mutation_reply(&receiver, None, deadline)
     }
 
     /// Materializes one complete prepared index and leaves it ready to activate.
@@ -346,10 +480,50 @@ impl OwnedSqliteIndex {
             })),
             deadline,
         )?;
-        match receive_reply(&receiver, deadline) {
+        match receive_mutation_reply(&receiver, Some(cancelled.as_ref()), deadline) {
             Ok(generation) => Ok(generation),
             Err(error) => {
                 cancelled.store(true, std::sync::atomic::Ordering::Release);
+                Err(error)
+            }
+        }
+    }
+
+    /// Stages one complete candidate while a source-slot reservation is current.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "slot identity, source identity, coverage, and control remain explicit"
+    )]
+    pub fn stage_source_slot(
+        &self,
+        connected_workspace: ConnectedWorkspaceId,
+        source_slot: SourceSlotId,
+        reserved_epoch: SourceSlotEpoch,
+        identity: RustSourceSnapshotIdentity,
+        prepared: PreparedRustIndex,
+        coverage: GenerationCoverage,
+        cancelled: Arc<AtomicBool>,
+        deadline: Instant,
+    ) -> Result<GenerationId, SqliteStoreError> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.send(
+            WriterCommand::StageSourceSlot(Box::new(StageSourceSlotCommand {
+                connected_workspace,
+                source_slot,
+                reserved_epoch,
+                identity,
+                prepared,
+                coverage,
+                cancelled: Arc::clone(&cancelled),
+                deadline,
+                reply,
+            })),
+            deadline,
+        )?;
+        match receive_mutation_reply(&receiver, Some(cancelled.as_ref()), deadline) {
+            Ok(generation) => Ok(generation),
+            Err(error) => {
+                cancelled.store(true, Ordering::Release);
                 Err(error)
             }
         }
@@ -372,7 +546,7 @@ impl OwnedSqliteIndex {
             },
             deadline,
         )?;
-        receive_reply(&receiver, deadline)
+        receive_mutation_reply(&receiver, None, deadline)
     }
 
     /// Returns the active generation for one repository without exposing rows.
@@ -410,7 +584,7 @@ impl OwnedSqliteIndex {
             })),
             deadline,
         )?;
-        match receive_reply(&receiver, deadline) {
+        match receive_mutation_reply(&receiver, Some(cancelled.as_ref()), deadline) {
             Ok(outcome) => Ok(outcome),
             Err(error) => {
                 cancelled.store(true, std::sync::atomic::Ordering::Release);
@@ -423,7 +597,7 @@ impl OwnedSqliteIndex {
     pub fn checkpoint(&self, deadline: Instant) -> Result<CheckpointOutcome, SqliteStoreError> {
         let (reply, receiver) = mpsc::sync_channel(1);
         self.send(WriterCommand::Checkpoint { deadline, reply }, deadline)?;
-        receive_reply(&receiver, deadline)
+        receive_mutation_reply(&receiver, None, deadline)
     }
 
     /// Stops and joins the owned writer thread.
@@ -456,6 +630,7 @@ impl OwnedSqliteIndex {
 
 fn acquire_mutation_lease(
     database_path: &Path,
+    cancelled: Option<&AtomicBool>,
     deadline: Instant,
 ) -> Result<File, SqliteStoreError> {
     let lease_path = mutation_lease_path(database_path);
@@ -468,6 +643,9 @@ fn acquire_mutation_lease(
         .map_err(|_| SqliteStoreError::MutationLeaseUnavailable)?;
 
     loop {
+        if cancelled.is_some_and(|cancelled| cancelled.load(Ordering::Acquire)) {
+            return Err(SqliteStoreError::Cancelled);
+        }
         match lease.try_lock() {
             Ok(()) => return Ok(lease),
             Err(TryLockError::WouldBlock) => {}
@@ -509,7 +687,11 @@ impl Drop for OwnedSqliteIndex {
     }
 }
 
+include!("worker/graph_commands.rs");
+
 include!("worker/ports.rs");
+include!("worker/workspace_commands.rs");
+include!("worker/retention_commands.rs");
 include!("worker/memory_commands.rs");
 include!("worker/run_loop.rs");
 

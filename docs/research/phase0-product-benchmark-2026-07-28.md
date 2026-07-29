@@ -80,10 +80,9 @@ mixed-generation reads, or false automatic relinks.
 
 ## Interpretation
 
-This development run passes every numerical ceiling currently proposed by the
-manifest and demonstrates the complete source-change-to-stale-context loop.
-It does not ratify those budgets: the manifest and its budget block remain
-`proposed`, and ADR-0017 through ADR-0019 and ADR-0021 remain proposed.
+This development run passed every numerical ceiling that was proposed at the
+time and demonstrates the complete source-change-to-stale-context loop. It did
+not itself ratify those budgets because its RepoWitness worktree was dirty.
 
 It also does not satisfy the separate design-partner outcome gate. The
 disposable edit is a deterministic correctness scenario, not evidence that
@@ -112,5 +111,7 @@ the resolved values, and enforces them, including the manifest-pinned ten warm
 queries, database size, and post-completion WAL size. It removes its disposable
 worktree and database on exit.
 
-For a release attestation, rerun from an exact clean RepoWitness revision after
-maintainer review, then explicitly ratify or revise the manifest and budgets.
+The required release-platform rerun is now complete. See the
+[clean Ubuntu 24.04 attestation](phase0-clean-benchmark-attestation-2026-07-29.md),
+which records the exact clean revision, checksummed artifact, passing results,
+and subsequent manifest and budget ratification.

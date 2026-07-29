@@ -380,9 +380,16 @@ fn emit_memory_manage_report(
             revision,
             created,
             canonical_bytes,
+            publication,
         } => writeln!(
             writer,
-            "{{\"schema_version\":1,\"operation\":\"write\",\"revision_sha256\":\"{revision}\",\"created\":{created},\"canonical_bytes\":{canonical_bytes}}}"
+            "{{\"schema_version\":1,\"operation\":\"write\",\"revision_sha256\":\"{revision}\",\"created\":{created},\"canonical_bytes\":{canonical_bytes},\"publication\":{{\"complete\":{},\"warning_count\":{},\"temporary_cleanup\":\"{}\",\"target_identity\":\"{}\",\"records_directory_identity\":\"{}\",\"directory_sync\":\"{}\"}}}}",
+            publication.complete,
+            publication.warning_count,
+            publication.temporary_cleanup,
+            publication.target_identity,
+            publication.records_directory_identity,
+            publication.directory_sync,
         ),
         CliMemoryManageReport::Approve {
             revision,
@@ -419,13 +426,33 @@ fn emit_memory_manage_report(
 
 fn memory_manage_report_is_valid(report: &CliMemoryManageReport) -> bool {
     match report {
-        CliMemoryManageReport::Write { revision, .. }
-        | CliMemoryManageReport::Approve { revision, .. } => {
-            revision.len() == 64
-                && revision
-                    .bytes()
-                    .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
-        }
+        CliMemoryManageReport::Write {
+            revision,
+            publication,
+            ..
+        } => valid_memory_manage_revision(revision) && publication_is_valid(publication),
+        CliMemoryManageReport::Approve { revision, .. } => valid_memory_manage_revision(revision),
         CliMemoryManageReport::Review { .. } | CliMemoryManageReport::ImportHistory { .. } => true,
     }
+}
+
+fn valid_memory_manage_revision(revision: &str) -> bool {
+    revision.len() == 64
+        && revision
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+}
+
+fn publication_is_valid(publication: &CliMemoryPublicationStatus) -> bool {
+    publication.warning_count <= 4
+        && matches!(publication.temporary_cleanup, "not_required" | "complete" | "deferred")
+        && matches!(
+            publication.target_identity,
+            "confirmed_at_final_fence" | "changed_after_commit"
+        )
+        && matches!(
+            publication.records_directory_identity,
+            "confirmed_at_final_fence" | "changed_after_commit"
+        )
+        && matches!(publication.directory_sync, "not_required" | "complete" | "deferred")
 }

@@ -13,10 +13,19 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "=0.4.13"
 repowitness-local = { path = "../crates/repowitness-local" }
+repowitness-mcp = { path = "../crates/repowitness-mcp" }
+serde_json = { version = "=1.0.151", default-features = false, features = ["std"] }
 
 [[bin]]
 name = "memory_record"
 path = "fuzz_targets/memory_record.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "phase1_inputs"
+path = "fuzz_targets/phase1_inputs.rs"
 test = false
 doc = false
 bench = false

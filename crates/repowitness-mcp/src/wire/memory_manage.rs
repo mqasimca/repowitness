@@ -269,6 +269,8 @@ pub enum MemoryManageReceipt {
         created: bool,
         /// Exact canonical YAML byte count.
         canonical_bytes: u64,
+        /// Categorical post-publication facts observed after the atomic write.
+        publication: MemoryManagePublicationStatus,
     },
     /// Local approval and observation receipt.
     Approve {
@@ -305,16 +307,89 @@ pub enum MemoryManageReceipt {
     },
 }
 
+/// Identity confirmation observed at one memory-file final fence.
+#[derive(Clone, Copy, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryManageFileIdentityStatus {
+    /// The path named the authorized target at the final fence.
+    ConfirmedAtFinalFence,
+    /// Publication committed but the path no longer had confirmed identity.
+    ChangedAfterCommit,
+}
+
+/// Categorical state of one post-publication maintenance step.
+#[derive(Clone, Copy, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryManagePublicationStepStatus {
+    /// The step did not apply to this publication mode.
+    NotRequired,
+    /// The step completed at its final fence.
+    Complete,
+    /// Publication committed but the step was not confirmed.
+    Deferred,
+}
+
+/// Path-free post-publication facts for one canonical memory write.
+#[derive(Clone, Copy, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MemoryManagePublicationStatus {
+    /// Whether every applicable post-publication step was confirmed.
+    pub complete: bool,
+    /// Number of categorical warnings observed after publication.
+    pub warning_count: u8,
+    /// Private temporary-file cleanup state.
+    pub temporary_cleanup: MemoryManagePublicationStepStatus,
+    /// Canonical target identity at its final fence.
+    pub target_identity: MemoryManageFileIdentityStatus,
+    /// Records-directory identity at its final fence.
+    pub records_directory_identity: MemoryManageFileIdentityStatus,
+    /// Records-directory synchronization state.
+    pub directory_sync: MemoryManagePublicationStepStatus,
+}
+
+impl MemoryManagePublicationStatus {
+    /// Returns the complete, warning-free state used by legacy constructors.
+    #[must_use]
+    pub const fn complete() -> Self {
+        Self {
+            complete: true,
+            warning_count: 0,
+            temporary_cleanup: MemoryManagePublicationStepStatus::Complete,
+            target_identity: MemoryManageFileIdentityStatus::ConfirmedAtFinalFence,
+            records_directory_identity: MemoryManageFileIdentityStatus::ConfirmedAtFinalFence,
+            directory_sync: MemoryManagePublicationStepStatus::Complete,
+        }
+    }
+}
+
 impl MemoryManageOutput {
     /// Constructs a version-1 canonical record-publication receipt.
     #[must_use]
     pub fn write(revision_sha256: String, created: bool, canonical_bytes: u64) -> Self {
+        Self::write_with_publication(
+            revision_sha256,
+            created,
+            canonical_bytes,
+            MemoryManagePublicationStatus::complete(),
+        )
+    }
+
+    /// Constructs a version-1 canonical record-publication receipt with its
+    /// exact post-commit status.
+    #[must_use]
+    pub fn write_with_publication(
+        revision_sha256: String,
+        created: bool,
+        canonical_bytes: u64,
+        publication: MemoryManagePublicationStatus,
+    ) -> Self {
         Self {
             schema_version: 1,
             receipt: MemoryManageReceipt::Write {
                 revision_sha256,
                 created,
                 canonical_bytes,
+                publication,
             },
         }
     }
@@ -598,5 +673,28 @@ mod tests {
         }))
         .expect("wire shape");
         assert!(oversized.validate().is_err());
+    }
+
+    #[test]
+    fn write_receipt_preserves_post_commit_warnings_without_paths() {
+        let output = MemoryManageOutput::write_with_publication(
+            "11".repeat(32),
+            true,
+            12,
+            MemoryManagePublicationStatus {
+                complete: false,
+                warning_count: 2,
+                temporary_cleanup: MemoryManagePublicationStepStatus::Deferred,
+                target_identity: MemoryManageFileIdentityStatus::ChangedAfterCommit,
+                records_directory_identity: MemoryManageFileIdentityStatus::ConfirmedAtFinalFence,
+                directory_sync: MemoryManagePublicationStepStatus::Complete,
+            },
+        );
+        let value = serde_json::to_value(output).expect("output serializes");
+        let publication = &value["receipt"]["publication"];
+        assert_eq!(publication["complete"], false);
+        assert_eq!(publication["warning_count"], 2);
+        assert_eq!(publication["target_identity"], "changed_after_commit");
+        assert!(!value.to_string().contains('/'));
     }
 }

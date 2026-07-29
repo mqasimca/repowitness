@@ -207,7 +207,7 @@ fn read_bounded(mut reader: impl Read, limit: u64) -> Result<Vec<u8>, BoundedRea
 }
 
 #[cfg(test)]
-fn parse_git_paths(
+pub(crate) fn parse_git_paths(
     output: Vec<u8>,
     limits: GitPathDiscoveryLimits,
 ) -> Result<DiscoveredRepositoryPaths, GitPathDiscoveryError> {

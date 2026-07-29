@@ -13,6 +13,7 @@ use std::{
 
 use repowitness_application::{
     MemoryImportReceipt, MemoryRecordIdTextError, RepositoryIdentityTextError,
+    ResolvedConfiguration,
 };
 use repowitness_domain::{CanonicalMemoryDigest, MemoryAuditActorId, MemoryRecordId};
 
@@ -34,7 +35,10 @@ pub use history::{
     LocalMemoryHistoryImportRequest, import_local_memory_history,
 };
 pub use review::LocalMemoryCorrespondenceReviewReceipt;
-pub use write::LocalMemoryWriteReceipt;
+pub use write::{
+    LocalMemoryFilePublicationStatus, LocalMemoryWriteReceipt, MemoryFileIdentityStatus,
+    MemoryFilePublicationStepStatus,
+};
 
 /// Default deadline for one local memory-management operation.
 pub const DEFAULT_LOCAL_MEMORY_MANAGE_DEADLINE: Duration = Duration::from_secs(60);
@@ -49,6 +53,7 @@ pub struct LocalMemoryApprovalRequest<'a> {
     actor: &'a str,
     migration_applied_at_unix_ms: u64,
     recorded_at_unix_ms: u64,
+    configuration: Option<&'a ResolvedConfiguration>,
     deadline: Duration,
 }
 
@@ -72,8 +77,16 @@ impl<'a> LocalMemoryApprovalRequest<'a> {
             actor,
             migration_applied_at_unix_ms,
             recorded_at_unix_ms,
+            configuration: None,
             deadline: DEFAULT_LOCAL_MEMORY_MANAGE_DEADLINE,
         }
+    }
+
+    /// Applies resolved memory-mutation policy to this request.
+    #[must_use]
+    pub const fn with_configuration(mut self, configuration: &'a ResolvedConfiguration) -> Self {
+        self.configuration = Some(configuration);
+        self
     }
 
     /// Replaces the end-to-end operation deadline.
@@ -88,6 +101,10 @@ impl fmt::Debug for LocalMemoryApprovalRequest<'_> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("LocalMemoryApprovalRequest")
+            .field(
+                "configuration_digest",
+                &self.configuration.map(ResolvedConfiguration::digest),
+            )
             .field("deadline", &self.deadline)
             .finish_non_exhaustive()
     }
@@ -99,6 +116,7 @@ pub struct LocalMemoryWriteRequest<'a> {
     repository_root: &'a Path,
     input: LocalMemoryWriteInput<'a>,
     repository_identity: &'a str,
+    configuration: Option<&'a ResolvedConfiguration>,
     deadline: Duration,
 }
 
@@ -124,6 +142,7 @@ pub struct LocalMemoryCorrespondenceReviewRequest<'a> {
     actor: &'a str,
     migration_applied_at_unix_ms: u64,
     recorded_at_unix_ms: u64,
+    configuration: Option<&'a ResolvedConfiguration>,
     deadline: Duration,
 }
 
@@ -163,8 +182,16 @@ impl<'a> LocalMemoryCorrespondenceReviewRequest<'a> {
             actor,
             migration_applied_at_unix_ms,
             recorded_at_unix_ms,
+            configuration: None,
             deadline: DEFAULT_LOCAL_MEMORY_MANAGE_DEADLINE,
         }
+    }
+
+    /// Applies resolved memory-mutation policy to this request.
+    #[must_use]
+    pub const fn with_configuration(mut self, configuration: &'a ResolvedConfiguration) -> Self {
+        self.configuration = Some(configuration);
+        self
     }
 
     /// Replaces the end-to-end operation deadline.
@@ -182,6 +209,10 @@ impl fmt::Debug for LocalMemoryCorrespondenceReviewRequest<'_> {
             .field("evidence_ordinal", &self.evidence_ordinal)
             .field("operation", &self.operation)
             .field("target_fact_ordinal", &self.target_fact_ordinal)
+            .field(
+                "configuration_digest",
+                &self.configuration.map(ResolvedConfiguration::digest),
+            )
             .field("deadline", &self.deadline)
             .finish_non_exhaustive()
     }
@@ -199,6 +230,7 @@ impl<'a> LocalMemoryWriteRequest<'a> {
             repository_root,
             input: LocalMemoryWriteInput::File(input),
             repository_identity,
+            configuration: None,
             deadline: DEFAULT_LOCAL_MEMORY_MANAGE_DEADLINE,
         }
     }
@@ -214,8 +246,16 @@ impl<'a> LocalMemoryWriteRequest<'a> {
             repository_root,
             input: LocalMemoryWriteInput::Bytes(input),
             repository_identity,
+            configuration: None,
             deadline: DEFAULT_LOCAL_MEMORY_MANAGE_DEADLINE,
         }
+    }
+
+    /// Applies resolved memory-mutation policy to this request.
+    #[must_use]
+    pub const fn with_configuration(mut self, configuration: &'a ResolvedConfiguration) -> Self {
+        self.configuration = Some(configuration);
+        self
     }
 
     /// Replaces the end-to-end operation deadline.
@@ -231,6 +271,10 @@ impl fmt::Debug for LocalMemoryWriteRequest<'_> {
         formatter
             .debug_struct("LocalMemoryWriteRequest")
             .field("input", &"<redacted-input>")
+            .field(
+                "configuration_digest",
+                &self.configuration.map(ResolvedConfiguration::digest),
+            )
             .field("deadline", &self.deadline)
             .finish_non_exhaustive()
     }
@@ -287,6 +331,8 @@ impl From<MemoryImportReceipt> for LocalMemoryApprovalReceipt {
 pub enum LocalMemoryManageError {
     /// One configured resource limit was invalid.
     InvalidLimits,
+    /// Resolved policy denies all memory mutation capabilities.
+    PolicyDenied,
     /// The absolute operation deadline could not be represented.
     DeadlineNotRepresentable,
     /// Cancellation was observed.
@@ -339,6 +385,7 @@ impl fmt::Display for LocalMemoryManageError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
             Self::InvalidLimits => "memory management limits are invalid",
+            Self::PolicyDenied => "memory mutation is denied by policy",
             Self::DeadlineNotRepresentable => "memory management deadline cannot be represented",
             Self::Cancelled => "memory management was cancelled",
             Self::DeadlineExceeded => "memory management deadline elapsed",
@@ -373,6 +420,7 @@ pub fn approve_local_memory(
     request: LocalMemoryApprovalRequest<'_>,
     cancelled: Arc<AtomicBool>,
 ) -> Result<LocalMemoryApprovalReceipt, LocalMemoryManageError> {
+    check_memory_write_policy(request.configuration)?;
     approval::approve(request, cancelled)
 }
 
@@ -381,6 +429,7 @@ pub fn write_local_memory(
     request: LocalMemoryWriteRequest<'_>,
     cancelled: Arc<AtomicBool>,
 ) -> Result<LocalMemoryWriteReceipt, LocalMemoryManageError> {
+    check_memory_write_policy(request.configuration)?;
     write::write(request, cancelled)
 }
 
@@ -389,6 +438,7 @@ pub fn review_local_memory_correspondence(
     request: LocalMemoryCorrespondenceReviewRequest<'_>,
     cancelled: Arc<AtomicBool>,
 ) -> Result<LocalMemoryCorrespondenceReviewReceipt, LocalMemoryManageError> {
+    check_memory_write_policy(request.configuration)?;
     review::review(request, cancelled)
 }
 
@@ -406,6 +456,18 @@ fn checked_deadline(duration: Duration) -> Result<Instant, LocalMemoryManageErro
     Instant::now()
         .checked_add(duration)
         .ok_or(LocalMemoryManageError::DeadlineNotRepresentable)
+}
+
+fn check_memory_write_policy(
+    configuration: Option<&ResolvedConfiguration>,
+) -> Result<(), LocalMemoryManageError> {
+    if configuration
+        .is_some_and(|configuration| *configuration.policy().deny_memory_writes().effective())
+    {
+        Err(LocalMemoryManageError::PolicyDenied)
+    } else {
+        Ok(())
+    }
 }
 
 fn check_control(cancelled: &AtomicBool, deadline: Instant) -> Result<(), LocalMemoryManageError> {

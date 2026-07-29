@@ -4,13 +4,21 @@ struct DiagnosticsInvocation {
 }
 
 trait RepositoryDiagnosticsReader {
-    fn diagnose(&self, invocation: &DiagnosticsInvocation) -> Result<DiagnosticsOutput, String>;
+    fn diagnose(
+        &self,
+        invocation: &DiagnosticsInvocation,
+        configuration: &ResolvedConfiguration,
+    ) -> Result<DiagnosticsOutput, String>;
 }
 
 struct LocalRepositoryDiagnosticsReader;
 
 impl RepositoryDiagnosticsReader for LocalRepositoryDiagnosticsReader {
-    fn diagnose(&self, invocation: &DiagnosticsInvocation) -> Result<DiagnosticsOutput, String> {
+    fn diagnose(
+        &self,
+        invocation: &DiagnosticsInvocation,
+        configuration: &ResolvedConfiguration,
+    ) -> Result<DiagnosticsOutput, String> {
         let repository_identity = invocation
             .repository_identity
             .to_str()
@@ -19,11 +27,14 @@ impl RepositoryDiagnosticsReader for LocalRepositoryDiagnosticsReader {
             LocalRepositoryDiagnosticsRequest::new(&invocation.database, repository_identity);
         diagnose_local_repository(request, Arc::new(AtomicBool::new(false)))
             .map_err(|error| error.to_string())
-            .map(mcp_diagnostics_output)
+            .map(|result| mcp_diagnostics_output(result, configuration))
     }
 }
 
-fn mcp_diagnostics_output(result: LocalRepositoryDiagnosticsResult) -> DiagnosticsOutput {
+fn mcp_diagnostics_output(
+    result: LocalRepositoryDiagnosticsResult,
+    configuration: &ResolvedConfiguration,
+) -> DiagnosticsOutput {
     let memory_projection =
         result
             .memory_projection()
@@ -34,8 +45,9 @@ fn mcp_diagnostics_output(result: LocalRepositoryDiagnosticsResult) -> Diagnosti
                 coverage: mcp_memory_coverage(memory.coverage()),
             });
     DiagnosticsOutput {
-        schema_version: 2,
+        schema_version: 3,
         diagnostics_profile: result.profile_version(),
+        configuration: mcp_configuration_identity(configuration),
         snapshot_sha256: hex(result.snapshot().as_bytes()),
         generation: result.generation().get(),
         source_epoch: result.source_epoch(),
@@ -64,5 +76,16 @@ fn mcp_diagnostics_output(result: LocalRepositoryDiagnosticsResult) -> Diagnosti
             .iter()
             .map(|limitation| limitation.as_str().to_owned())
             .collect(),
+    }
+}
+
+fn mcp_configuration_identity(
+    configuration: &ResolvedConfiguration,
+) -> McpConfigurationIdentity {
+    McpConfigurationIdentity {
+        digest_sha256: hex(configuration.digest().as_bytes()),
+        schema_version: configuration.schema_version(),
+        resolver_version: configuration.resolver_version(),
+        profile: configuration.profile().as_str().to_owned(),
     }
 }

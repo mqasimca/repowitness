@@ -1,0 +1,231 @@
+{
+  "schema_version": 2,
+  "benchmark_id": "phase1-trustworthy-local-core-v1",
+  "status": "proposed",
+  "reviewed_on": "2026-07-29",
+  "source_policy": {
+    "mode": "external-reference-only",
+    "vendored_content": false
+  },
+  "corpora": [
+    {
+      "id": "mini-redis",
+      "repository": "https://github.com/tokio-rs/mini-redis.git",
+      "revision": "3d93b42bc363220f85af4fc9e1bebd35b588a4a3",
+      "verified_ref": "refs/heads/master",
+      "revision_verified_on": "2026-07-23",
+      "license": "MIT",
+      "language": "rust",
+      "observed_rust_files": 28,
+      "observed_rust_lines": 4354,
+      "include_paths": [
+        "src/**/*.rs",
+        "tests/**/*.rs",
+        "examples/**/*.rs"
+      ],
+      "exclude_paths": [
+        "target/**"
+      ]
+    }
+  ],
+  "tasks": [
+    {
+      "id": "negative-bulk-graph-evidence",
+      "kind": "graph-evidence-retrieval",
+      "corpus": "mini-redis",
+      "revision": "3d93b42bc363220f85af4fc9e1bebd35b588a4a3",
+      "intent": "Determine how invalid negative RESP bulk lengths are handled and identify the regression evidence using generation-pinned graph and source evidence.",
+      "required_evidence": [
+        "src/frame.rs::Frame::check",
+        "tests/frame_validation.rs::check_rejects_invalid_negative_bulk_length"
+      ],
+      "expected_resolution": "confirmed",
+      "max_result_items": 20,
+      "max_output_bytes": 32768
+    },
+    {
+      "id": "graceful-shutdown-graph-trace",
+      "kind": "graph-trace",
+      "corpus": "mini-redis",
+      "revision": "3d93b42bc363220f85af4fc9e1bebd35b588a4a3",
+      "intent": "Trace the directly supported Rust syntax relationships from server shutdown entry points while reporting every unresolved dynamic edge.",
+      "required_evidence": [
+        "src/server.rs::run",
+        "src/server.rs::Listener",
+        "src/server.rs::Handler",
+        "src/shutdown.rs::Shutdown",
+        "src/db.rs::Db::shutdown_purge_task"
+      ],
+      "expected_resolution": "inferred",
+      "max_result_items": 64,
+      "max_output_bytes": 65536
+    }
+  ],
+  "change_scenarios": [
+    {
+      "id": "negative-bulk-validation-fix",
+      "corpus": "mini-redis",
+      "base_revision": "7295d727b82a0ef534b836b00807c15ef6c7f191",
+      "changed_revision": "3d93b42bc363220f85af4fc9e1bebd35b588a4a3",
+      "changed_paths": [
+        "src/frame.rs",
+        "tests/frame_validation.rs"
+      ],
+      "memory_claim": "Only -1 is a valid RESP null bulk length; other negative lengths must be rejected.",
+      "expected_before_resolution": "indeterminate",
+      "expected_before_evidence_relation": "contradicts",
+      "expected_after_resolution": "confirmed",
+      "expected_after_evidence_relation": "supports",
+      "expected_memory_transition": "revalidated",
+      "required_changed_evidence": [
+        "src/frame.rs::Frame::check",
+        "tests/frame_validation.rs::check_rejects_invalid_negative_bulk_length"
+      ]
+    }
+  ],
+  "baselines": [
+    {
+      "id": "bounded-lexical-source-only",
+      "description": "Use bounded literal search over the pinned source without graph relationships, immutable workspace views, or revalidated memory."
+    },
+    {
+      "id": "syntax-graph-without-memory",
+      "description": "Use the same bounded native syntax graph and source evidence without current or historical engineering memory."
+    }
+  ],
+  "comparative_evaluations": [
+    {
+      "id": "negative-bulk-temporal-graph-decision",
+      "task": "negative-bulk-graph-evidence",
+      "change_scenario": "negative-bulk-validation-fix",
+      "memory_claim": "Frame::check accepts negative bulk lengths other than -1.",
+      "base_claim_relation": "supports",
+      "changed_claim_relation": "contradicts",
+      "expected_memory_transition": "stale",
+      "lexical_signals": {
+        "base_support": "skip(src, 4)",
+        "changed_contradiction": "check_rejects_invalid_negative_bulk_length"
+      },
+      "lexical_limits": {
+        "max_paths": 4096,
+        "max_file_bytes": 1048576,
+        "max_total_source_bytes": 16777216,
+        "deadline_ms": 10000
+      },
+      "baseline_ids": [
+        "bounded-lexical-source-only",
+        "syntax-graph-without-memory"
+      ],
+      "required_observations": [
+        "source_evidence_relation",
+        "memory_effective_state",
+        "memory_context_inclusion",
+        "stale_claims_exposed"
+      ],
+      "expected_decision_change": true
+    }
+  ],
+  "agent_evaluations": [
+    {
+      "id": "codex-negative-bulk-temporal-graph-decision",
+      "comparison": "negative-bulk-temporal-graph-decision",
+      "consumer": "codex",
+      "execution": "opt-in",
+      "question": "At the current source snapshot, does Frame::check accept RESP bulk lengths below -1?",
+      "response_contract": "codex-decision-v2",
+      "minimum_complete_runs": 3,
+      "base_expected_decision": "bug-present",
+      "changed_expected_decision": "bug-fixed",
+      "require_source_grounding": true,
+      "require_current_memory_use_at_base": true,
+      "max_stale_memory_uses": 0,
+      "required_usefulness": "useful"
+    }
+  ],
+  "phase1_workloads": [
+    {
+      "id": "atomic-two-source-publication",
+      "iterations": 10
+    },
+    {
+      "id": "same-repository-two-worktrees",
+      "iterations": 10
+    },
+    {
+      "id": "quiet-polling-no-publication",
+      "iterations": 100
+    },
+    {
+      "id": "moving-selector-final-fence",
+      "iterations": 10
+    },
+    {
+      "id": "package-scope-clean-incremental-equivalence",
+      "iterations": 10
+    },
+    {
+      "id": "native-graph-read-suite",
+      "iterations": 50
+    },
+    {
+      "id": "compatibility-schema-suite",
+      "iterations": 50
+    },
+    {
+      "id": "retention-plan-apply-restart",
+      "iterations": 10
+    }
+  ],
+  "budgets": {
+    "status": "proposed",
+    "correctness": {
+      "max_false_confirmed_claims": 0,
+      "max_silent_truncations": 0,
+      "max_mixed_generation_reads": 0,
+      "max_false_automatic_relinks": 0,
+      "max_partial_workspace_views": 0,
+      "max_selector_retargets": 0,
+      "max_unreported_scope_omissions": 0,
+      "max_quiet_poll_publications": 0,
+      "max_retention_root_deletions": 0,
+      "max_compatibility_overclaims": 0
+    },
+    "resources": {
+      "max_full_index_wall_ms": 10000,
+      "max_peak_rss_mib": 384,
+      "max_warm_query_p95_ms": 250,
+      "max_material_result_bytes": 65536,
+      "max_database_bytes": 16777216,
+      "max_wal_bytes_after_completion": 0
+    },
+    "phase1_resources": {
+      "max_two_source_publication_wall_ms": 20000,
+      "max_quiet_poll_p95_ms": 500,
+      "max_native_graph_read_p95_ms": 250,
+      "max_retention_plan_wall_ms": 1000,
+      "max_retention_apply_wall_ms": 2000,
+      "max_unchanged_generation_delta": 0,
+      "max_retained_generations_per_source_slot_after_collection": 2
+    }
+  },
+  "run_environment": {
+    "warm_query_runs": 50,
+    "cold_and_warm_runs_required": true,
+    "capture": [
+      "repowitness_revision",
+      "corpus_revision",
+      "rust_toolchain",
+      "operating_system",
+      "cpu_model",
+      "logical_cpu_count",
+      "memory_mib",
+      "filesystem_type",
+      "resolved_configuration_digest",
+      "sqlite_version",
+      "git_version",
+      "selector_profile",
+      "package_scope_digest",
+      "compatibility_profile"
+    ]
+  }
+}

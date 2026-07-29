@@ -10,20 +10,98 @@ use std::{
     time::{Duration, Instant},
 };
 
+use repowitness_application::resolve_configuration;
+use repowitness_domain::MemoryCorrespondenceReviewOperation;
 use rusqlite::Connection;
 
 use super::{
-    LocalMemoryApprovalRequest, LocalMemoryHistoryImportLimits, LocalMemoryHistoryImportRequest,
-    LocalMemoryManageError, LocalMemoryWriteRequest, approve_local_memory,
-    import_local_memory_history, validate_local_memory_actor, write_local_memory,
+    LocalMemoryApprovalRequest, LocalMemoryCorrespondenceReviewRequest,
+    LocalMemoryHistoryImportLimits, LocalMemoryHistoryImportRequest, LocalMemoryManageError,
+    LocalMemoryWriteRequest, approve_local_memory, import_local_memory_history,
+    review_local_memory_correspondence, validate_local_memory_actor, write_local_memory,
 };
-use crate::{LocalIndexRequest, MemoryFormatControl, index_local_repository, parse_memory_record};
+use crate::{
+    ConfigurationFileLayer, LocalIndexRequest, MemoryFormatControl, index_local_repository,
+    parse_configuration_file, parse_memory_record,
+};
 
 const REPOSITORY_ID: &str =
     "rwi1:h:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 const RECORD_ID: &str = "mem_00000000000000000000000000";
 const MEMORY_YAML: &[u8] = include_bytes!("../../tests/fixtures/memory-v1/commit.yaml");
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
+
+#[test]
+fn denied_memory_policy_stops_every_mutation_before_io() {
+    let layer = parse_configuration_file(
+        b"schema_version = 1\n[policy]\ndeny_memory_writes = true\n",
+        ConfigurationFileLayer::User,
+    )
+    .expect("configuration should parse");
+    let configuration = resolve_configuration(&[layer]).expect("configuration should resolve");
+    let ordinal = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
+    let missing = std::env::temp_dir().join(format!(
+        "repowitness-policy-denied-must-not-be-opened-{}-{ordinal}",
+        std::process::id()
+    ));
+    assert!(!missing.exists());
+    let digest = "00".repeat(32);
+    let cancelled = Arc::new(AtomicBool::new(false));
+
+    let write = write_local_memory(
+        LocalMemoryWriteRequest::from_bytes(&missing, MEMORY_YAML, REPOSITORY_ID)
+            .with_configuration(&configuration),
+        Arc::clone(&cancelled),
+    );
+    assert!(matches!(write, Err(LocalMemoryManageError::PolicyDenied)));
+
+    let approval = approve_local_memory(
+        LocalMemoryApprovalRequest::new(
+            &missing,
+            &missing,
+            REPOSITORY_ID,
+            RECORD_ID,
+            "actor",
+            1,
+            1,
+        )
+        .with_configuration(&configuration),
+        Arc::clone(&cancelled),
+    );
+    assert!(matches!(
+        approval,
+        Err(LocalMemoryManageError::PolicyDenied)
+    ));
+
+    let review = review_local_memory_correspondence(
+        LocalMemoryCorrespondenceReviewRequest::new(
+            &missing,
+            &missing,
+            REPOSITORY_ID,
+            RECORD_ID,
+            &digest,
+            0,
+            MemoryCorrespondenceReviewOperation::Approved,
+            "src/lib.rs",
+            &digest,
+            0,
+            "actor",
+            1,
+            1,
+        )
+        .with_configuration(&configuration),
+        Arc::clone(&cancelled),
+    );
+    assert!(matches!(review, Err(LocalMemoryManageError::PolicyDenied)));
+
+    let history = import_local_memory_history(
+        LocalMemoryHistoryImportRequest::new(&missing, &missing, REPOSITORY_ID, "actor", 1, 1)
+            .with_configuration(&configuration),
+        cancelled,
+    );
+    assert!(matches!(history, Err(LocalMemoryManageError::PolicyDenied)));
+    assert!(!missing.exists());
+}
 
 struct TempDirectory(PathBuf);
 

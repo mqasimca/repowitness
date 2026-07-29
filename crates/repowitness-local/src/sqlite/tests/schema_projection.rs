@@ -17,10 +17,19 @@ fn migration_checksums_are_stable_golden_vectors() {
         ]
     );
     assert_eq!(
+        migration_checksum(MIGRATION_3),
+        [
+            0xb2, 0xcc, 0x73, 0x3c, 0xe8, 0xeb, 0xd2, 0xd2, 0x3e, 0x33, 0x12, 0x62, 0x57, 0xec,
+            0x40, 0x92, 0xb7, 0xad, 0xf4, 0xdc, 0xdd, 0xb8, 0x64, 0xd9, 0x20, 0x12, 0x51, 0xaa,
+            0x27, 0x17, 0xfc, 0xd8,
+        ]
+    );
+    assert_eq!(
         migrations(),
         [
             (1, MIGRATION_1_NAME, MIGRATION_1),
             (2, MIGRATION_2_NAME, MIGRATION_2),
+            (3, MIGRATION_3_NAME, MIGRATION_3),
         ]
     );
     for transitional_statement in ["CREATE TEMP", "ALTER TABLE", "DROP TABLE"] {
@@ -29,7 +38,7 @@ fn migration_checksums_are_stable_golden_vectors() {
 }
 
 #[test]
-fn baseline_catalog_matches_the_retired_final_schema_golden() {
+fn current_catalog_matches_the_provisional_version_three_golden() {
     let directory = TempDirectory::new();
     let connection =
         open_index_writer(&directory.database(), 123).expect("baseline should succeed");
@@ -62,9 +71,9 @@ fn baseline_catalog_matches_the_retired_final_schema_golden() {
     assert_eq!(
         migration_checksum(&canonical_catalog),
         [
-            0xac, 0xb9, 0x87, 0x98, 0xd9, 0x26, 0x62, 0xff, 0xd7, 0x8a, 0x4c, 0xe2, 0xd1, 0xff,
-            0x05, 0xe0, 0x50, 0x2c, 0x2b, 0x4c, 0x9c, 0xca, 0x32, 0x6a, 0x59, 0x22, 0x68, 0x68,
-            0xa6, 0xfc, 0x90, 0x17,
+            0xbf, 0x14, 0xa1, 0xc7, 0x1f, 0xba, 0x3c, 0xf4, 0xab, 0x34, 0x22, 0xc3, 0xbc, 0x20,
+            0x2f, 0x45, 0x8e, 0x80, 0xf6, 0xcd, 0xd9, 0xc2, 0x38, 0x63, 0xa5, 0x3e, 0x3a, 0x16,
+            0x7c, 0x24, 0x0b, 0x15,
         ]
     );
 }
@@ -122,7 +131,26 @@ fn fresh_database_has_exact_identity_ledger_and_required_schema() {
                     'memory_projection_records',
                     'memory_projection_evidence',
                     'memory_projection_candidates',
-                    'active_memory_projections'
+                    'active_memory_projections',
+                    'connected_workspaces', 'workspace_source_slots',
+                    'source_slot_generation_receipts',
+                    'workspace_views', 'workspace_view_members',
+                    'active_workspace_views',
+                    'rust_graph_artifacts', 'rust_graph_sites',
+                    'generation_graph_requirements',
+                    'generation_graph_publications',
+                    'generation_graph_sources',
+                    'generation_graph_artifacts',
+                    'generation_graph_definitions',
+                    'generation_graph_resolutions',
+                    'generation_graph_candidates',
+                    'generation_graph_edges',
+                    'retention_generation_garbage',
+                    'retention_snapshot_garbage',
+                    'retention_artifact_garbage',
+                    'retention_workspace_view_garbage',
+                    'retention_source_slot_receipt_garbage',
+                    'retention_collection_audit'
                  )",
             [],
             |row| row.get(0),
@@ -145,6 +173,41 @@ fn fresh_database_has_exact_identity_ledger_and_required_schema() {
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .expect("memory indexes and triggers should be introspectable");
+    let graph_schema_objects: (i64, i64) = connection
+        .query_row(
+            "SELECT
+                (SELECT count(*) FROM sqlite_schema
+                 WHERE type = 'index'
+                   AND name IN (
+                     'generation_graph_edges_by_kind',
+                     'generation_graph_candidates_by_target'
+                   )),
+                (SELECT count(*) FROM sqlite_schema
+                 WHERE type = 'trigger'
+                   AND (
+                     name GLOB 'rust_graph_*'
+                     OR name GLOB 'generation_graph_*'
+                     OR name = 'generation_activation_requires_graph_when_required'
+                   ))",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("graph indexes and triggers should be introspectable");
+    let retention_schema_objects: (i64, i64) = connection
+        .query_row(
+            "SELECT
+                (SELECT count(*) FROM sqlite_schema
+                 WHERE type = 'table' AND name GLOB 'retention_*'),
+                (SELECT count(*) FROM sqlite_schema
+                 WHERE type = 'trigger'
+                   AND (
+                     name GLOB 'retention_*'
+                     OR name = 'retained_generation_delete_requires_garbage'
+                   ))",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("retention tables and triggers should be introspectable");
 
     assert_eq!(application_id, APPLICATION_ID);
     assert_eq!(user_version, SCHEMA_VERSION);
@@ -163,10 +226,18 @@ fn fresh_database_has_exact_identity_ledger_and_required_schema() {
                 migration_checksum(MIGRATION_2).to_vec(),
                 123
             ),
+            (
+                3,
+                MIGRATION_3_NAME.to_owned(),
+                migration_checksum(MIGRATION_3).to_vec(),
+                123
+            ),
         ]
     );
-    assert_eq!(tables, 24);
+    assert_eq!(tables, 46);
     assert_eq!(memory_schema_objects, (4, 30));
+    assert_eq!(graph_schema_objects, (2, 26));
+    assert_eq!(retention_schema_objects, (6, 13));
     let payload_column: (String, i64) = connection
         .query_row(
             "SELECT type, [notnull] FROM pragma_table_info('analysis_artifacts')

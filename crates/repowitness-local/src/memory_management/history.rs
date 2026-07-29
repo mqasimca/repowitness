@@ -5,7 +5,7 @@ use std::{
 };
 
 use repowitness_application::{
-    MemoryImportApproval, MemoryRecordIdTextV1, RepositoryIdentityTextV1,
+    MemoryImportApproval, MemoryRecordIdTextV1, RepositoryIdentityTextV1, ResolvedConfiguration,
 };
 use repowitness_domain::{
     MemoryAuditActorId, MemoryCommitId, MemoryObjectFormat, MemoryObservationSource,
@@ -14,16 +14,19 @@ use repowitness_domain::{
 use sha2::{Digest, Sha256};
 
 use super::{
-    LocalMemoryManageError, check_control, checked_deadline, map_repository_identity_error,
-    map_store_error, open_store, open_worktree, secret,
+    LocalMemoryManageError, check_control, check_memory_write_policy, checked_deadline,
+    map_repository_identity_error, map_store_error, open_store, open_worktree, secret,
 };
 use crate::{
-    GitPathDiscoveryError, GitPathDiscoveryLimits, MAX_MEMORY_YAML_BYTES, MemoryFormatControl,
+    GitPathDiscoveryLimits, MAX_MEMORY_YAML_BYTES, MemoryFormatControl,
     git_paths::{capture_git_output_from_command, sanitized_git_base_command},
     parse_memory_record,
 };
 
+mod error_mapping;
 mod git;
+
+use error_mapping::{map_git_error, map_memory_query_error};
 
 const MEMORY_PATH_PREFIX: &[u8] = b".code-memory/records/";
 const YAML_SUFFIX: &[u8] = b".yaml";
@@ -109,6 +112,7 @@ pub struct LocalMemoryHistoryImportRequest<'a> {
     migration_applied_at_unix_ms: u64,
     recorded_at_unix_ms: u64,
     limits: LocalMemoryHistoryImportLimits,
+    configuration: Option<&'a ResolvedConfiguration>,
 }
 
 impl<'a> LocalMemoryHistoryImportRequest<'a> {
@@ -137,6 +141,7 @@ impl<'a> LocalMemoryHistoryImportRequest<'a> {
                 max_total_bytes: DEFAULT_HISTORY_BYTES,
                 max_git_output_bytes: DEFAULT_GIT_OUTPUT_BYTES,
             },
+            configuration: None,
         }
     }
 
@@ -144,6 +149,13 @@ impl<'a> LocalMemoryHistoryImportRequest<'a> {
     #[must_use]
     pub const fn with_limits(mut self, limits: LocalMemoryHistoryImportLimits) -> Self {
         self.limits = limits;
+        self
+    }
+
+    /// Applies resolved memory-mutation policy to this request.
+    #[must_use]
+    pub const fn with_configuration(mut self, configuration: &'a ResolvedConfiguration) -> Self {
+        self.configuration = Some(configuration);
         self
     }
 
@@ -160,6 +172,10 @@ impl std::fmt::Debug for LocalMemoryHistoryImportRequest<'_> {
         formatter
             .debug_struct("LocalMemoryHistoryImportRequest")
             .field("limits", &self.limits)
+            .field(
+                "configuration_digest",
+                &self.configuration.map(ResolvedConfiguration::digest),
+            )
             .finish_non_exhaustive()
     }
 }
@@ -239,6 +255,7 @@ pub fn import_local_memory_history(
     request: LocalMemoryHistoryImportRequest<'_>,
     cancelled: Arc<AtomicBool>,
 ) -> Result<LocalMemoryHistoryImportReport, LocalMemoryManageError> {
+    check_memory_write_policy(request.configuration)?;
     validate_limits(request.limits)?;
     let deadline = checked_deadline(request.limits.deadline)?;
     check_control(cancelled.as_ref(), deadline)?;
@@ -658,31 +675,5 @@ fn finish_history(
         (Err(error), _) => Err(error),
         (Ok(_), Err(error)) => Err(error),
         (Ok(report), Ok(())) => Ok(report),
-    }
-}
-
-fn map_git_error(error: GitPathDiscoveryError) -> LocalMemoryManageError {
-    match error {
-        GitPathDiscoveryError::Cancelled => LocalMemoryManageError::Cancelled,
-        GitPathDiscoveryError::DeadlineExceeded { .. }
-        | GitPathDiscoveryError::DeadlineNotRepresentable => {
-            LocalMemoryManageError::DeadlineExceeded
-        }
-        GitPathDiscoveryError::OutputByteLimitExceeded { .. }
-        | GitPathDiscoveryError::PathLimitExceeded { .. } => {
-            LocalMemoryManageError::HistoryLimitExceeded
-        }
-        _ => LocalMemoryManageError::HistoryUnavailable,
-    }
-}
-
-fn map_memory_query_error(error: crate::GitMemoryQueryError) -> LocalMemoryManageError {
-    match error {
-        crate::GitMemoryQueryError::Cancelled => LocalMemoryManageError::Cancelled,
-        crate::GitMemoryQueryError::DeadlineExceeded
-        | crate::GitMemoryQueryError::DeadlineNotRepresentable => {
-            LocalMemoryManageError::DeadlineExceeded
-        }
-        crate::GitMemoryQueryError::InvalidLimits => LocalMemoryManageError::InvalidLimits,
     }
 }

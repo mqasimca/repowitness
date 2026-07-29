@@ -22,6 +22,7 @@ fn publish_memory_projection_inner(
     if current != prepared.source {
         return Err(SqliteStoreError::StaleSourceEpoch);
     }
+    require_current_write_source(&transaction, current, control)?;
     let target = projection_target(prepared.target);
     let profile = phase0_rust_correspondence_profile_digest();
     let record_count = u32::try_from(prepared.records.len())

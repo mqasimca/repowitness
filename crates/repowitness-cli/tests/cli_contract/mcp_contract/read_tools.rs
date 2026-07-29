@@ -19,6 +19,12 @@ fn assert_mcp_tools(input: &mut ChildStdin, output: &mut BufReader<ChildStdout>)
             "code_search",
             "context_build",
             "diagnostics",
+            "graph_architecture",
+            "graph_evidence",
+            "graph_search",
+            "graph_status",
+            "graph_trace",
+            "impact_analyze",
             "memory_recall",
             "symbol_get"
         ]
@@ -250,6 +256,210 @@ fn mcp_call_symbol(
     )
 }
 
+fn assert_mcp_native_graph(input: &mut ChildStdin, output: &mut BufReader<ChildStdout>) {
+    let (context, start) = assert_mcp_graph_status_and_search(input, output);
+    let edge = assert_mcp_graph_trace(input, output, &context, start);
+    assert_mcp_graph_evidence(input, output, &context, &edge);
+    assert_mcp_graph_architecture(input, output, &context);
+    assert_mcp_graph_impact(input, output, &context, &edge);
+}
+
+fn assert_mcp_graph_status_and_search(
+    input: &mut ChildStdin,
+    output: &mut BufReader<ChildStdout>,
+) -> (serde_json::Value, serde_json::Value) {
+    let status = mcp_call_graph(input, output, 50, "graph_status", serde_json::json!({}));
+    let status = &status["result"]["structuredContent"];
+    assert_eq!(status["schema_version"], serde_json::json!(1));
+    assert_eq!(status["availability"], serde_json::json!("complete"));
+    let context = status["context"].clone();
+    assert!(context["workspace_view"].as_i64().is_some_and(|view| view > 0));
+    assert!(
+        context["graph_generation"]
+            .as_i64()
+            .is_some_and(|generation| generation > 0)
+    );
+    assert!(
+        context["publication"]["definition_count"]
+            .as_u64()
+            .is_some_and(|count| count >= 3)
+    );
+
+    let search = mcp_call_graph(
+        input,
+        output,
+        51,
+        "graph_search",
+        serde_json::json!({
+            "workspace_view": context["workspace_view"],
+            "graph_generation": context["graph_generation"],
+            "query": "invoke",
+            "max_results": 5,
+        }),
+    );
+    let search = &search["result"]["structuredContent"];
+    assert_eq!(search["schema_version"], serde_json::json!(1));
+    assert_eq!(search["context"], context);
+    assert_eq!(search["matches_returned"], serde_json::json!(1));
+    let start = search["definitions"][0].clone();
+    (context, start)
+}
+
+fn assert_mcp_graph_trace(
+    input: &mut ChildStdin,
+    output: &mut BufReader<ChildStdout>,
+    context: &serde_json::Value,
+    start: serde_json::Value,
+) -> serde_json::Value {
+    let trace = mcp_call_graph(
+        input,
+        output,
+        52,
+        "graph_trace",
+        serde_json::json!({
+            "workspace_view": context["workspace_view"],
+            "graph_generation": context["graph_generation"],
+            "start": {"type": "definition", "definition": start},
+            "direction": "outbound",
+            "edge_kinds": ["call"],
+            "max_results": 5,
+        }),
+    );
+    let trace = &trace["result"]["structuredContent"];
+    assert_eq!(trace["schema_version"], serde_json::json!(1));
+    let edge = trace["trace"]["edges"]
+        .as_array()
+        .and_then(|edges| edges.first())
+        .expect("invoke must have one retained call edge");
+    assert_eq!(edge["edge_kind"], serde_json::json!("call"));
+    assert!(edge["extraction_evidence"].as_str().is_some());
+    assert!(edge["resolution_evidence"].as_str().is_some());
+    edge.clone()
+}
+
+fn assert_mcp_graph_evidence(
+    input: &mut ChildStdin,
+    output: &mut BufReader<ChildStdout>,
+    context: &serde_json::Value,
+    edge: &serde_json::Value,
+) {
+    let evidence = mcp_call_graph(
+        input,
+        output,
+        53,
+        "graph_evidence",
+        serde_json::json!({
+            "workspace_view": context["workspace_view"],
+            "graph_generation": context["graph_generation"],
+            "site": edge["site"],
+        }),
+    );
+    let evidence = &evidence["result"]["structuredContent"];
+    assert_eq!(evidence["found"], serde_json::json!(true));
+    assert_eq!(evidence["evidence"]["site"], edge["site"]);
+    assert!(evidence["evidence"]["candidate_count"]
+        .as_u64()
+        .is_some_and(|count| count >= 1));
+
+    let mut absent_site = edge["site"].clone();
+    absent_site["ordinal"] = serde_json::json!(4_000_000_000_u32);
+    let absent = mcp_call_graph(
+        input,
+        output,
+        56,
+        "graph_evidence",
+        serde_json::json!({
+            "workspace_view": context["workspace_view"],
+            "graph_generation": context["graph_generation"],
+            "site": absent_site,
+        }),
+    );
+    let absent = &absent["result"]["structuredContent"];
+    assert_eq!(absent["found"], serde_json::json!(false));
+    assert_eq!(absent["evidence"], serde_json::Value::Null);
+    assert_eq!(absent["context"]["publication"], context["publication"]);
+}
+
+fn assert_mcp_graph_architecture(
+    input: &mut ChildStdin,
+    output: &mut BufReader<ChildStdout>,
+    context: &serde_json::Value,
+) {
+    let architecture = mcp_call_graph(
+        input,
+        output,
+        54,
+        "graph_architecture",
+        serde_json::json!({
+            "workspace_view": context["workspace_view"],
+            "graph_generation": context["graph_generation"],
+        }),
+    );
+    let architecture = &architecture["result"]["structuredContent"];
+    assert_eq!(architecture["schema_version"], serde_json::json!(1));
+    assert!(!architecture["definitions_by_kind"]
+        .as_array()
+        .expect("definition counts")
+        .is_empty());
+    assert!(!architecture["edges_by_kind"]
+        .as_array()
+        .expect("edge counts")
+        .is_empty());
+}
+
+fn assert_mcp_graph_impact(
+    input: &mut ChildStdin,
+    output: &mut BufReader<ChildStdout>,
+    context: &serde_json::Value,
+    edge: &serde_json::Value,
+) {
+    let impact = mcp_call_graph(
+        input,
+        output,
+        55,
+        "impact_analyze",
+        serde_json::json!({
+            "workspace_view": context["workspace_view"],
+            "graph_generation": context["graph_generation"],
+            "start": edge["target"],
+            "edge_kinds": ["call"],
+            "max_results": 5,
+        }),
+    );
+    let impact = &impact["result"]["structuredContent"];
+    assert_eq!(impact["schema_version"], serde_json::json!(1));
+    assert!(impact["impacts"]
+        .as_array()
+        .is_some_and(|impacts| !impacts.is_empty()));
+    assert!(impact["unknown_coverage"].as_bool().is_some());
+}
+
+fn mcp_call_graph(
+    input: &mut ChildStdin,
+    output: &mut BufReader<ChildStdout>,
+    request_id: usize,
+    tool: &str,
+    arguments: serde_json::Value,
+) -> serde_json::Value {
+    let response = mcp_request(
+        input,
+        output,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": "tools/call",
+            "params": {"name": tool, "arguments": arguments}
+        }),
+    );
+    assert_eq!(response["id"], serde_json::json!(request_id));
+    assert_eq!(
+        response["result"]["isError"],
+        serde_json::json!(false),
+        "{tool} returned an error: {response}"
+    );
+    response
+}
+
 fn assert_mcp_diagnostics_and_absent_memory(
     input: &mut ChildStdin,
     output: &mut BufReader<ChildStdout>,
@@ -269,8 +479,9 @@ fn assert_mcp_diagnostics_and_absent_memory(
     assert_eq!(response["id"], serde_json::json!(diagnostics_request_id));
     assert_eq!(response["result"]["isError"], serde_json::json!(false));
     let diagnostics = &response["result"]["structuredContent"];
-    assert_eq!(diagnostics["schema_version"], serde_json::json!(2));
-    assert_eq!(diagnostics["diagnostics_profile"], serde_json::json!(2));
+    assert_eq!(diagnostics["schema_version"], serde_json::json!(3));
+    assert_eq!(diagnostics["diagnostics_profile"], serde_json::json!(3));
+    assert_mcp_configuration_identity(&diagnostics["configuration"]);
     assert_sha256(&diagnostics["snapshot_sha256"], "source snapshot");
     assert_sha256(
         &diagnostics["producer_manifest_sha256"],
@@ -312,6 +523,7 @@ fn assert_mcp_diagnostics_and_absent_memory(
         serde_json::json!([
             "lexical_source_search",
             "exact_symbol_source",
+            "bounded_rust_syntax_graph",
             "current_memory_recall",
             "bounded_context_build"
         ])
@@ -319,8 +531,8 @@ fn assert_mcp_diagnostics_and_absent_memory(
     assert_eq!(
         diagnostics["limitations"],
         serde_json::json!([
-            "no_reference_index",
-            "no_structural_graph",
+            "rust_graph_syntax_derived_only",
+            "no_package_macro_scip_dynamic_or_cross_language_graph",
             "no_history_search",
             "no_vector_retrieval",
             "no_model_tokenizer",
@@ -351,6 +563,16 @@ fn assert_mcp_diagnostics_and_absent_memory(
         recall["result"]["structuredContent"],
         serde_json::Value::Null
     );
+}
+
+fn assert_mcp_configuration_identity(configuration: &serde_json::Value) {
+    assert_sha256(
+        &configuration["digest_sha256"],
+        "resolved configuration",
+    );
+    assert_eq!(configuration["schema_version"], serde_json::json!(1));
+    assert_eq!(configuration["resolver_version"], serde_json::json!(1));
+    assert_eq!(configuration["profile"], serde_json::json!("local"));
 }
 
 fn assert_sha256(value: &serde_json::Value, label: &str) {

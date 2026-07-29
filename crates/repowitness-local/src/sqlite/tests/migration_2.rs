@@ -4,14 +4,8 @@ fn version_one_database_upgrades_without_losing_immutable_artifacts() {
     let database = directory.database();
     let mut connection =
         Connection::open(&database).expect("version-one fixture database should open");
-    apply_migration(
-        &mut connection,
-        1,
-        MIGRATION_1_NAME,
-        MIGRATION_1,
-        111,
-    )
-    .expect("accepted version-one baseline should apply");
+    apply_migration(&mut connection, 1, MIGRATION_1_NAME, MIGRATION_1, 111)
+        .expect("accepted version-one baseline should apply");
     connection
         .execute(
             "INSERT INTO analysis_artifacts(
@@ -67,7 +61,7 @@ fn version_one_database_upgrades_without_losing_immutable_artifacts() {
         )
         .expect("upgraded artifact should remain readable");
 
-    assert_eq!(user_version, 2);
+    assert_eq!(user_version, 3);
     assert_eq!(
         ledger,
         vec![
@@ -81,6 +75,12 @@ fn version_one_database_upgrades_without_losing_immutable_artifacts() {
                 2,
                 MIGRATION_2_NAME.to_owned(),
                 migration_checksum(MIGRATION_2).to_vec(),
+                222,
+            ),
+            (
+                3,
+                MIGRATION_3_NAME.to_owned(),
+                migration_checksum(MIGRATION_3).to_vec(),
                 222,
             ),
         ]
@@ -101,11 +101,11 @@ fn version_one_database_upgrades_without_losing_immutable_artifacts() {
 }
 
 #[test]
-fn reopening_version_two_is_idempotent() {
+fn reopening_current_version_is_idempotent() {
     let directory = TempDirectory::new();
     let database = directory.database();
     drop(open_index_writer(&database, 111).expect("fresh database should migrate"));
-    drop(open_index_writer(&database, 222).expect("version two should reopen"));
+    drop(open_index_writer(&database, 222).expect("version three should reopen"));
 
     let connection = raw_connection(&database);
     let ledger_rows: i64 = connection
@@ -115,12 +115,12 @@ fn reopening_version_two_is_idempotent() {
         .expect("migration ledger count should be readable");
     let latest_timestamp: i64 = connection
         .query_row(
-            "SELECT applied_at_unix_ms FROM schema_migrations WHERE version = 2",
+            "SELECT applied_at_unix_ms FROM schema_migrations WHERE version = 3",
             [],
             |row| row.get(0),
         )
-        .expect("migration-two timestamp should be readable");
+        .expect("migration-three timestamp should be readable");
 
-    assert_eq!(ledger_rows, 2);
+    assert_eq!(ledger_rows, 3);
     assert_eq!(latest_timestamp, 111);
 }

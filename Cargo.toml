@@ -20,6 +20,7 @@ publish = false
 [workspace.dependencies]
 cap-fs-ext = { version = "=4.0.2", default-features = false, features = ["std"] }
 cap-std = { version = "=4.0.2", default-features = false }
+getrandom = { version = "=0.3.4", default-features = false }
 gix = { version = "=0.86.0", default-features = false, features = ["index", "sha1", "sha256"] }
 granit-parser = { version = "=0.0.7", default-features = false }
 repowitness-analysis = { path = "crates/repowitness-analysis" }
@@ -37,7 +38,8 @@ serde-saphyr = { version = "=0.0.29", default-features = false, features = ["des
 serde_json = { version = "=1.0.151", default-features = false, features = ["std"] }
 serde_json_canonicalizer = { version = "=0.3.2" }
 sha2 = { version = "=0.11.0", default-features = false }
-tokio = { version = "=1.53.1", default-features = false, features = ["io-std", "io-util", "rt-multi-thread", "sync", "time"] }
+toml = { version = "=1.1.4", default-features = false, features = ["parse", "serde", "std"] }
+tokio = { version = "=1.53.1", default-features = false, features = ["io-std", "io-util", "rt-multi-thread", "signal", "sync", "time"] }
 tree-sitter = { version = "=0.26.11", default-features = false, features = ["std"] }
 tree-sitter-go = { version = "=0.25.0" }
 tree-sitter-python = { version = "=0.25.0" }

@@ -11,7 +11,7 @@ use super::{
     memory_projection::{
         MANUAL_REVIEW_METHOD_ID, MANUAL_REVIEW_METHOD_VERSION, MemoryProjectionSource,
         ProjectionOccurrence, check_control, control_database_error, load_active_source,
-        with_progress_handler,
+        require_current_write_source, with_progress_handler,
     },
     writer::WriteControl,
 };
@@ -152,6 +152,7 @@ fn append_review_inner(
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|_| control_database_error(control))?;
     let source = load_active_source(&transaction, prepared.repository)?;
+    require_current_write_source(&transaction, source, control)?;
     let source_occurrence = load_source_occurrence(&transaction, source, prepared, control)?;
     validate_target_occurrence(&transaction, source, prepared, control)?;
     if review_exists(&transaction, source, prepared, &source_occurrence, control)? {

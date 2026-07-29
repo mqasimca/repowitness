@@ -16,10 +16,12 @@ use rusqlite::Connection;
 
 use crate::{OwnedSqliteReader, SearchLimits};
 
+use super::polling_runner::reconcile_local_repository;
 use super::{
-    LocalIndexError, LocalIndexRequest, index_local_rust_repository,
-    index_local_rust_repository_with_hook, local_producer_implementation_fingerprint_inputs,
-    phase0_local_rust_artifact_identity, phase0_local_source_artifact_identities,
+    LocalIndexError, LocalIndexRequest, LocalReconciliationOutcome, index_local_rust_repository,
+    index_local_rust_repository_with_hook, index_local_rust_repository_with_hooks,
+    local_producer_implementation_fingerprint_inputs, phase0_local_rust_artifact_identity,
+    phase0_local_source_artifact_identities,
 };
 
 const REPOSITORY_ID: &str = concat!(
@@ -122,7 +124,7 @@ fn facade_activates_searchable_production_generations_and_reindexes() {
     let first = index_local_rust_repository(request, Arc::new(AtomicBool::new(false)))
         .expect("first generation should activate");
     assert_eq!(first.generation().get(), 1);
-    assert_eq!(first.source_epoch(), 0);
+    assert_eq!(first.source_epoch(), 1);
     assert_eq!(first.recovered_generations(), 0);
     assert_eq!(first.discovered_paths(), 2);
     assert_eq!(first.indexed_rust_files(), 1);
@@ -151,8 +153,9 @@ fn facade_activates_searchable_production_generations_and_reindexes() {
         .expect("reader should shut down");
 
     let second = index_local_rust_repository(request, Arc::new(AtomicBool::new(false)))
-        .expect("equivalent second generation should activate");
+        .expect("equivalent second reconciliation should publish a fresh generation");
     assert_eq!(second.generation().get(), 2);
+    assert_eq!(second.source_epoch(), 2);
     assert_eq!(second.total_facts(), first.total_facts());
     assert_eq!(second.total_source_bytes(), first.total_source_bytes());
     assert_eq!(second.reused_rust_files(), 1);
@@ -166,6 +169,7 @@ fn facade_activates_searchable_production_generations_and_reindexes() {
     let third = index_local_rust_repository(request, Arc::new(AtomicBool::new(false)))
         .expect("changed third generation should activate");
     assert_eq!(third.generation().get(), 3);
+    assert_eq!(third.source_epoch(), 3);
     assert_eq!(third.reused_rust_files(), 0);
     assert_eq!(third.analyzed_rust_files(), 1);
 }
@@ -361,6 +365,16 @@ fn missing_payload_is_reanalyzed_repaired_and_then_reused() {
         .expect("incomplete artifact identity should be analyzed and repaired");
     assert_eq!(backfilled.reused_rust_files(), 0);
     assert_eq!(backfilled.analyzed_rust_files(), 1);
+    let connection = Connection::open(&database).expect("fixture database should reopen");
+    let incomplete_artifacts: i64 = connection
+        .query_row(
+            "SELECT count(*) FROM analysis_artifacts WHERE payload_digest IS NULL",
+            [],
+            |row| row.get(0),
+        )
+        .expect("every source and graph artifact identity should be repaired");
+    assert_eq!(incomplete_artifacts, 0);
+    drop(connection);
 
     let reused = index_local_rust_repository(request, Arc::new(AtomicBool::new(false)))
         .expect("backfilled artifact should become reusable");
@@ -633,3 +647,8 @@ fn dangling_database_symlink_cannot_bypass_worktree_isolation() {
 
 include!("tests/python.rs");
 include!("tests/parser_diagnostics.rs");
+include!("tests/configuration.rs");
+include!("tests/final_fence.rs");
+include!("tests/graph_artifact_reuse.rs");
+include!("tests/post_commit_semantics.rs");
+include!("tests/watched_reconciliation.rs");
