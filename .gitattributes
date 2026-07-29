@@ -1,0 +1,2 @@
+# The strict engineering-memory fixtures intentionally use LF-only YAML.
+crates/repowitness-local/tests/fixtures/memory-v1/*.yaml text eol=lf
