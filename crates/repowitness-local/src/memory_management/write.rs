@@ -41,7 +41,7 @@ static NEXT_TEMPORARY: AtomicU64 = AtomicU64::new(0);
 #[cfg(unix)]
 type DirectorySyncHandle = std::os::fd::OwnedFd;
 #[cfg(not(unix))]
-type DirectorySyncHandle = ();
+struct DirectorySyncHandle;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PublicationStage {
@@ -623,7 +623,7 @@ fn open_directory_sync_handle(
 fn open_directory_sync_handle(
     _directory: &Dir,
 ) -> Result<DirectorySyncHandle, LocalMemoryManageError> {
-    Ok(())
+    Ok(DirectorySyncHandle)
 }
 
 #[cfg(unix)]
