@@ -242,7 +242,7 @@ mod tests {
     #[test]
     fn valid_database_is_checked_without_mutating_it_or_creating_sidecars() {
         let directory = TempDirectory::new();
-        let database = directory.path().join("index ?#%.sqlite3");
+        let database = directory.path().join("index #%.sqlite3");
         drop(
             super::super::open_index_writer(&database, 123)
                 .expect("test database should be initialized"),
