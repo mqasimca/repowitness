@@ -131,7 +131,7 @@ context, but it is not a real design-partner outcome.
 Use a clean external checkout at the manifest revision:
 
 ```text
-./scripts/run-phase0-benchmark /path/to/mini-redis 5
+./scripts/run-phase0-benchmark /path/to/mini-redis
 ```
 
 The runner validates the supplied revision and worktree, creates disposable

@@ -163,11 +163,15 @@ Run the external Phase 0 product-loop benchmark against a clean pinned
 mini-redis checkout with:
 
 ```text
-./scripts/run-phase0-benchmark /path/to/mini-redis 10
+./scripts/run-phase0-benchmark /path/to/mini-redis
 ```
 
 The runner creates separate disposable product and comparison worktrees before
-creating memory or changing source. See the
+creating memory or changing source. The manifest pins ten repeated warm
+queries. Maintainers can run the same gate on Ubuntu 24.04 through the manual
+`Phase 0 benchmark` GitHub Actions workflow. The workflow accepts only `main`,
+uses the exact dispatched revision, and retains its public result as a
+checksummed artifact. See the
 [provisional product benchmark](docs/research/phase0-product-benchmark-2026-07-28.md)
 and
 [controlled comparative evaluation](docs/research/phase0-comparative-evaluation-2026-07-28.md)

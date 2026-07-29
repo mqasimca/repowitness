@@ -192,6 +192,7 @@
     }
   },
   "run_environment": {
+    "warm_query_runs": 10,
     "cold_and_warm_runs_required": true,
     "capture": [
       "repowitness_revision",

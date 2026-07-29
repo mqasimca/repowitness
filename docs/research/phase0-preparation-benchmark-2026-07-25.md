@@ -77,7 +77,7 @@ retrieval, and MCP, so it cannot by itself pass the full-index gate.
 Use a clean external checkout at the pinned revision:
 
 ```text
-./scripts/run-phase0-benchmark /path/to/mini-redis 10
+./scripts/run-phase0-benchmark /path/to/mini-redis
 ```
 
 The runner rejects the wrong corpus revision or a dirty corpus. It records the
