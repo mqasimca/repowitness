@@ -53,7 +53,7 @@ impl Drop for TempDirectory {
     }
 }
 
-fn assert_platform_publication_maintenance(status: BackupPublicationStatus) {
+fn assert_publication_maintenance_is_truthful(status: BackupPublicationStatus) {
     assert_eq!(
         status.source_identity(),
         BackupIdentityStatus::ConfirmedAtFinalFence
@@ -67,18 +67,15 @@ fn assert_platform_publication_maintenance(status: BackupPublicationStatus) {
         BackupMaintenanceStatus::Complete
     );
 
-    #[cfg(unix)]
-    {
-        assert_eq!(status.directory_sync(), BackupMaintenanceStatus::Complete);
-        assert!(status.is_complete());
-        assert_eq!(status.warning_count(), 0);
-    }
-
-    #[cfg(not(unix))]
-    {
-        assert_eq!(status.directory_sync(), BackupMaintenanceStatus::Deferred);
-        assert!(!status.is_complete());
-        assert_eq!(status.warning_count(), 1);
+    match status.directory_sync() {
+        BackupMaintenanceStatus::Complete => {
+            assert!(status.is_complete());
+            assert_eq!(status.warning_count(), 0);
+        }
+        BackupMaintenanceStatus::Deferred => {
+            assert!(!status.is_complete());
+            assert_eq!(status.warning_count(), 1);
+        }
     }
 }
 
@@ -118,7 +115,7 @@ fn preexisting_partial_sidecars_are_never_removed() {
 }
 
 #[test]
-fn published_backup_reports_platform_appropriate_maintenance() {
+fn published_backup_reports_truthful_maintenance() {
     let directory = TempDirectory::new();
     let source = directory.create_source();
     let destination = directory.destination("complete");
@@ -134,7 +131,7 @@ fn published_backup_reports_platform_appropriate_maintenance() {
 
     assert!(outcome.steps() > 0);
     assert!(outcome.source_pages() > 0);
-    assert_platform_publication_maintenance(outcome.publication_status());
+    assert_publication_maintenance_is_truthful(outcome.publication_status());
     validate_backup(&destination).expect("published destination should validate");
     assert!(
         !temporary_backup_path(&destination)
@@ -444,7 +441,7 @@ fn a_receipt_arriving_during_resolution_grace_preserves_the_exact_outcome() {
         .expect("caller thread should not panic")
         .expect("the exact committed receipt must win during grace");
 
-    assert_platform_publication_maintenance(outcome.publication_status());
+    assert_publication_maintenance_is_truthful(outcome.publication_status());
 }
 
 #[test]

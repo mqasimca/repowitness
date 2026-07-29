@@ -19,6 +19,9 @@ const MEMORY_YAML: &str = include_str!(
     "../../../repowitness-local/tests/fixtures/memory-v1/commit.yaml"
 );
 
+#[cfg(windows)]
+use repowitness_local::{LocalMemoryWriteRequest, write_local_memory};
+
 fn memory_write_state(repository: &Path) -> (bool, bool, bool, bool, bool) {
     let memory = repository.join(".code-memory");
     let records = memory.join("records");
@@ -39,6 +42,27 @@ fn memory_write_state(repository: &Path) -> (bool, bool, bool, bool, bool) {
         target.is_file(),
         temporary_exists,
     )
+}
+
+#[cfg(windows)]
+#[test]
+fn local_memory_write_is_available_before_the_mcp_contract() {
+    let directory = TempDirectory::new();
+    let repository = fixture_repository(&directory);
+    let yaml = MEMORY_YAML.replace(
+        "rwi1:h:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        REPOSITORY_ID,
+    );
+    let result = write_local_memory(
+        LocalMemoryWriteRequest::from_bytes(&repository, yaml.as_bytes(), REPOSITORY_ID),
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    );
+
+    assert!(
+        result.is_ok(),
+        "direct local memory write failed with a safe category: {:?}",
+        result.err()
+    );
 }
 
 #[test]
