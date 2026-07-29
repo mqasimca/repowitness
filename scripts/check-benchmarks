@@ -650,6 +650,13 @@ for my $path (@manifests) {
     report($path, 'run_environment must be an object')
       if !is_object($environment);
     if (is_object($environment)) {
+        report(
+            $path,
+            'run_environment.warm_query_runs must be an integer from 2 through 100'
+          )
+          if !is_positive_integer($environment->{warm_query_runs})
+          || $environment->{warm_query_runs} < 2
+          || $environment->{warm_query_runs} > 100;
         report($path, 'cold_and_warm_runs_required must be true')
           if !JSON::PP::is_bool($environment->{cold_and_warm_runs_required})
           || !$environment->{cold_and_warm_runs_required};

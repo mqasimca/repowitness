@@ -337,7 +337,7 @@ The complete pinned Phase 0 product-loop benchmark uses a clean external
 mini-redis checkout and a disposable clone:
 
 ```text
-./scripts/run-phase0-benchmark /path/to/mini-redis 5
+./scripts/run-phase0-benchmark /path/to/mini-redis
 ```
 
 It covers release SQLite publication, exact unchanged and one-file
@@ -346,7 +346,10 @@ canonical memory write and local approval, current/stale revalidation and
 context eligibility, default-read-only stdio MCP, database/WAL size, result
 size, and peak RSS. A dirty development run is provisional evidence; release
 attestation requires an exact clean RepoWitness revision and explicit
-ratification of the manifest budgets.
+ratification of the manifest budgets. The manifest pins ten warm-query
+samples. The manual `Phase 0 benchmark` GitHub Actions workflow runs this gate
+only from `main` on Ubuntu 24.04 with read-only repository permission and
+retains the public checksummed output for review.
 
 The opt-in downstream-agent evaluation obtains the actual structured
 `context_build` result through stdio MCP and supplies it to an ephemeral

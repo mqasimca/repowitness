@@ -16,7 +16,7 @@ Run the local product-loop and resource probe against a clean external
 checkout:
 
 ```text
-./scripts/run-phase0-benchmark /path/to/mini-redis 5
+./scripts/run-phase0-benchmark /path/to/mini-redis
 ```
 
 The runner verifies the exact manifest revision before making a disposable
@@ -26,9 +26,18 @@ those clones, measures cold and unchanged indexing plus repeated warm queries,
 changes one attached declaration, and runs the manifest's historical
 before/after comparison. It validates and passes the manifest's bounded
 resource profile explicitly into the probe, which reports the resolved values.
+The manifest fixes the warm-query sample count at ten; callers cannot
+substitute an unrecorded count.
 It removes all disposable state on exit. The supplied corpus checkout remains
 read-only. On supported systems, `/usr/bin/time` also records peak resident
-memory. The repeated-query sample count is bounded from 2 through 100.
+memory.
+
+Maintainers can run the `Phase 0 benchmark` workflow manually on `main`. It
+checks out the exact dispatched revision on Ubuntu 24.04, obtains only the
+manifest-pinned public corpus, verifies both clean worktrees, executes this
+runner, checks the required attestation fields, and retains the public output
+and SHA-256 checksums as a workflow artifact for 90 days. It has read-only
+repository permission and does not reference repository secrets.
 
 Run the separate opt-in Codex utility evaluation with:
 

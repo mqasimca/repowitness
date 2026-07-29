@@ -101,15 +101,16 @@ claim to be a real design-partner outcome.
 Use a clean external checkout at the pinned revision:
 
 ```text
-./scripts/run-phase0-benchmark /path/to/mini-redis 5
+./scripts/run-phase0-benchmark /path/to/mini-redis
 ```
 
 The runner rejects a wrong revision or dirty source checkout, clones with
 `--no-local`, builds release binaries with the locked dependency graph,
 captures environment and peak RSS, reads the bounded resource ceilings from
 the checked manifest, passes them explicitly into the product probe, reports
-the resolved values, and enforces them, including database and post-completion
-WAL size. It removes its disposable worktree and database on exit.
+the resolved values, and enforces them, including the manifest-pinned ten warm
+queries, database size, and post-completion WAL size. It removes its disposable
+worktree and database on exit.
 
 For a release attestation, rerun from an exact clean RepoWitness revision after
 maintainer review, then explicitly ratify or revise the manifest and budgets.

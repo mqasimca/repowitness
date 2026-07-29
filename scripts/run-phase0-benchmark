@@ -32,27 +32,16 @@ benchmark_git() (
         "$@"
 )
 
-if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
-    echo "usage: ./scripts/run-phase0-benchmark <mini-redis-repository> [runs]" >&2
+if [ "$#" -ne 1 ]; then
+    echo "usage: ./scripts/run-phase0-benchmark <mini-redis-repository>" >&2
     exit 64
 fi
 
 CORPUS_ROOT=$1
-RUNS=${2:-5}
-case "$RUNS" in
-    ''|*[!0-9]*)
-        echo "error: runs must be an integer from 2 through $MAX_RUNS" >&2
-        exit 64
-        ;;
-esac
-if [ "${#RUNS}" -gt 3 ] || [ "$RUNS" -lt 2 ] || [ "$RUNS" -gt "$MAX_RUNS" ]; then
-    echo "error: runs must be an integer from 2 through $MAX_RUNS" >&2
-    exit 64
-fi
 
 ./scripts/check-benchmarks >/dev/null
-BUDGET_VALUES=$(perl -MJSON::PP -e '
-    my $path = shift @ARGV;
+EXECUTION_VALUES=$(perl -MJSON::PP -e '
+    my ($path, $max_runs) = @ARGV;
     open my $handle, "<:raw", $path or die "cannot read benchmark manifest: $!\n";
     local $/;
     my $manifest = decode_json(<$handle>);
@@ -65,6 +54,10 @@ BUDGET_VALUES=$(perl -MJSON::PP -e '
       if !defined($corpus->{revision}) || $corpus->{revision} !~ /\A[0-9a-f]{40}\z/
       || !defined($scenario) || !defined($scenario->{base_revision})
       || $scenario->{base_revision} !~ /\A[0-9a-f]{40}\z/;
+    my $runs = $manifest->{run_environment}->{warm_query_runs};
+    die "benchmark warm-query run count is missing or invalid\n"
+      if !defined($runs) || ref($runs) || $runs !~ /\A[0-9]+\z/
+      || $runs < 2 || $runs > $max_runs;
     my $resources = $manifest->{budgets}->{resources};
     my @values = @{$resources}{
         qw(
@@ -85,23 +78,24 @@ BUDGET_VALUES=$(perl -MJSON::PP -e '
           if !defined($value) || ref($value) || $value !~ /\A[0-9]+\z/
           || $value < $minimums[$index] || $value > $maximums[$index];
     }
-    print join " ", $corpus->{revision}, $scenario->{base_revision}, @values;
-' "$MANIFEST")
+    print join " ", $corpus->{revision}, $scenario->{base_revision}, $runs, @values;
+' "$MANIFEST" "$MAX_RUNS")
 set -f
-set -- $BUDGET_VALUES
+set -- $EXECUTION_VALUES
 set +f
-if [ "$#" -ne 8 ]; then
+if [ "$#" -ne 9 ]; then
     echo "error: benchmark manifest execution profile was incomplete" >&2
     exit 65
 fi
 EXPECTED_REVISION=$1
 COMPARISON_BASE_REVISION=$2
-MAX_FULL_INDEX_WALL_MS=$3
-MAX_PEAK_RSS_MIB=$4
-MAX_WARM_QUERY_P95_MS=$5
-MAX_MATERIAL_RESULT_BYTES=$6
-MAX_DATABASE_BYTES=$7
-MAX_WAL_BYTES_AFTER_COMPLETION=$8
+RUNS=$3
+MAX_FULL_INDEX_WALL_MS=$4
+MAX_PEAK_RSS_MIB=$5
+MAX_WARM_QUERY_P95_MS=$6
+MAX_MATERIAL_RESULT_BYTES=$7
+MAX_DATABASE_BYTES=$8
+MAX_WAL_BYTES_AFTER_COMPLETION=$9
 MAX_PEAK_RSS_KIB=$((MAX_PEAK_RSS_MIB * 1024))
 
 ACTUAL_REVISION=$(benchmark_git -C "$CORPUS_ROOT" rev-parse --verify HEAD)
