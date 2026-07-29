@@ -11,8 +11,9 @@ use std::{
 };
 
 use super::{
-    BackupIdentityStatus, BackupLimits, BackupMaintenanceStatus, BackupStage, create_online_backup,
-    create_online_backup_with_faults, path_with_suffix, temporary_backup_path, validate_backup,
+    BackupIdentityStatus, BackupLimits, BackupMaintenanceStatus, BackupPublicationStatus,
+    BackupStage, create_online_backup, create_online_backup_with_faults, path_with_suffix,
+    temporary_backup_path, validate_backup,
 };
 use crate::sqlite::{SqliteStoreError, open_index_writer};
 
@@ -52,6 +53,35 @@ impl Drop for TempDirectory {
     }
 }
 
+fn assert_platform_publication_maintenance(status: BackupPublicationStatus) {
+    assert_eq!(
+        status.source_identity(),
+        BackupIdentityStatus::ConfirmedAtFinalFence
+    );
+    assert_eq!(
+        status.destination_identity(),
+        BackupIdentityStatus::ConfirmedAtFinalFence
+    );
+    assert_eq!(
+        status.temporary_cleanup(),
+        BackupMaintenanceStatus::Complete
+    );
+
+    #[cfg(unix)]
+    {
+        assert_eq!(status.directory_sync(), BackupMaintenanceStatus::Complete);
+        assert!(status.is_complete());
+        assert_eq!(status.warning_count(), 0);
+    }
+
+    #[cfg(not(unix))]
+    {
+        assert_eq!(status.directory_sync(), BackupMaintenanceStatus::Deferred);
+        assert!(!status.is_complete());
+        assert_eq!(status.warning_count(), 1);
+    }
+}
+
 #[test]
 fn preexisting_partial_sidecars_are_never_removed() {
     let directory = TempDirectory::new();
@@ -88,7 +118,7 @@ fn preexisting_partial_sidecars_are_never_removed() {
 }
 
 #[test]
-fn completed_backup_reports_confirmed_identity_and_maintenance() {
+fn published_backup_reports_platform_appropriate_maintenance() {
     let directory = TempDirectory::new();
     let source = directory.create_source();
     let destination = directory.destination("complete");
@@ -104,8 +134,7 @@ fn completed_backup_reports_confirmed_identity_and_maintenance() {
 
     assert!(outcome.steps() > 0);
     assert!(outcome.source_pages() > 0);
-    assert!(outcome.publication_status().is_complete());
-    assert_eq!(outcome.publication_status().warning_count(), 0);
+    assert_platform_publication_maintenance(outcome.publication_status());
     validate_backup(&destination).expect("published destination should validate");
     assert!(
         !temporary_backup_path(&destination)
@@ -374,15 +403,16 @@ fn a_receipt_arriving_during_resolution_grace_preserves_the_exact_outcome() {
     let directory = TempDirectory::new();
     let source = directory.create_source();
     let destination = directory.destination("within-grace");
-    let deadline = deadline_after(Duration::from_millis(200));
-    let grace = Duration::from_millis(100);
+    let destination_for_worker = destination.clone();
+    let deadline = deadline_after(Duration::from_secs(2));
+    let grace = Duration::from_millis(250);
     let (published, published_receiver) = mpsc::sync_channel(1);
     let (release, release_receiver) = mpsc::sync_channel(1);
     let faults = move |stage| {
         if stage == BackupStage::DeliverReceipt {
             let _ = published.try_send(());
             release_receiver
-                .recv_timeout(Duration::from_secs(1))
+                .recv_timeout(Duration::from_secs(3))
                 .map_err(|_| SqliteStoreError::BackupFailed)?;
         }
         Ok(())
@@ -390,7 +420,7 @@ fn a_receipt_arriving_during_resolution_grace_preserves_the_exact_outcome() {
     let worker = thread::spawn(move || {
         create_online_backup_with_faults(
             &source,
-            &destination,
+            &destination_for_worker,
             BackupLimits::default(),
             Arc::new(AtomicBool::new(false)),
             deadline,
@@ -402,6 +432,7 @@ fn a_receipt_arriving_during_resolution_grace_preserves_the_exact_outcome() {
     published_receiver
         .recv_timeout(Duration::from_secs(1))
         .expect("backup must reach its committed reply");
+    validate_backup(&destination).expect("delivery gate must follow a committed valid backup");
     thread::sleep(
         deadline
             .saturating_duration_since(Instant::now())
@@ -413,7 +444,7 @@ fn a_receipt_arriving_during_resolution_grace_preserves_the_exact_outcome() {
         .expect("caller thread should not panic")
         .expect("the exact committed receipt must win during grace");
 
-    assert!(outcome.publication_status().is_complete());
+    assert_platform_publication_maintenance(outcome.publication_status());
 }
 
 #[test]
