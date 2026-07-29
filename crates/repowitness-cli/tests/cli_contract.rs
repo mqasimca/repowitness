@@ -281,5 +281,6 @@ include!("cli_contract/cli_behavior.rs");
 include!("cli_contract/doctor_contract.rs");
 include!("cli_contract/gc_contract.rs");
 include!("cli_contract/mcp_contract.rs");
+#[cfg(unix)]
 include!("cli_contract/watch_contract.rs");
 include!("cli_contract/workspace_contract.rs");
