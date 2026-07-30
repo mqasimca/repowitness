@@ -301,13 +301,15 @@ require_file_text(
     'scripts/phase1-benchmark-suites',
     'run_operation_probe_contract_suite',
     'run_trustworthiness_suite',
+    'report_operation_probe_failure',
+    'operation probe category=%s',
     'verify_final_git_state',
 );
 require_file_text(
     'scripts/phase1-benchmark-suites',
     '--example phase1_operation_probe',
     'missing_git_object_history_is_indeterminate_and_never_auto_links',
-    'truncation_is_reported_even_when_other_work_is_partial',
+    'coverage::tests::truncation_is_reported_even_when_other_work_is_partial',
     'cross_generation_graph_source_is_hashed_bounded_excluded_and_apply_safe',
     'dependent_delete_failure_rolls_back_rows_marks_audit_and_plan_state',
 );
@@ -342,6 +344,8 @@ require_file_text(
     'cold_and_warm_runs_required',
     'quiet_poll_session_ms',
     'budget_max_warm_query_p95_ms',
+    'RetentionSourceMutation',
+    'retention benchmark source cleanup failed',
 );
 require_file_text(
     'crates/repowitness-local/examples/phase1_operation_probe/graph.rs',

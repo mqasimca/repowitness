@@ -13,7 +13,7 @@ use repowitness_local::{
     RustGraphTraceStartSelector, read_local_rust_graph,
 };
 
-use super::metrics;
+use super::{metrics, redact_stage_failure};
 
 type GraphResult<T> = Result<T, Box<dyn Error>>;
 
@@ -78,7 +78,10 @@ pub(super) fn measure(
         samples.push(elapsed);
     }
 
-    let p95 = metrics::nearest_rank_p95(&mut samples)?;
+    let p95 = redact_stage_failure(
+        metrics::nearest_rank_p95(&mut samples),
+        "native graph percentile measurement failed",
+    )?;
     if p95 > Duration::from_millis(max_wall_ms) {
         return Err("native graph read suite p95 exceeded the resource budget".into());
     }
@@ -96,9 +99,15 @@ fn prepare_inputs(
     configuration: &ResolvedConfiguration,
     max_result_bytes: u64,
 ) -> GraphResult<GraphInputs> {
-    let query = RustGraphSymbolQuery::try_new(SEARCH_QUERY)?;
+    let query = redact_stage_failure(
+        RustGraphSymbolQuery::try_new(SEARCH_QUERY),
+        "native graph query setup failed",
+    )?;
     let limits = bounded_limits(max_result_bytes)?;
-    let edge_kinds = RustGraphEdgeKinds::try_new(true, true, true)?;
+    let edge_kinds = redact_stage_failure(
+        RustGraphEdgeKinds::try_new(true, true, true),
+        "native graph edge-kind setup failed",
+    )?;
     let searched = read(
         database,
         repository_identity,
@@ -143,16 +152,19 @@ fn prepare_inputs(
 
 fn bounded_limits(max_result_bytes: u64) -> GraphResult<RustGraphTraceLimits> {
     let defaults = RustGraphTraceLimits::default();
-    Ok(RustGraphTraceLimits::try_new(
-        defaults.max_input_edges(),
-        defaults.max_input_bytes(),
-        defaults.max_depth(),
-        defaults.max_results(),
-        defaults.max_visited_nodes(),
-        defaults.max_visited_edges(),
-        defaults.max_frontier(),
-        max_result_bytes,
-    )?)
+    redact_stage_failure(
+        RustGraphTraceLimits::try_new(
+            defaults.max_input_edges(),
+            defaults.max_input_bytes(),
+            defaults.max_depth(),
+            defaults.max_results(),
+            defaults.max_visited_nodes(),
+            defaults.max_visited_edges(),
+            defaults.max_frontier(),
+            max_result_bytes,
+        ),
+        "native graph limit setup failed",
+    )
 }
 
 fn run_suite(
@@ -234,11 +246,14 @@ fn read(
     configuration: &ResolvedConfiguration,
     operation: RustGraphReadOperation,
 ) -> GraphResult<LocalRustGraphReadResult> {
-    Ok(read_local_rust_graph(
-        LocalRustGraphReadRequest::new(database, repository_identity, operation)
-            .with_configuration(configuration),
-        Arc::new(AtomicBool::new(false)),
-    )?)
+    redact_stage_failure(
+        read_local_rust_graph(
+            LocalRustGraphReadRequest::new(database, repository_identity, operation)
+                .with_configuration(configuration),
+            Arc::new(AtomicBool::new(false)),
+        ),
+        "native graph read operation failed",
+    )
 }
 
 fn pin(result: &LocalRustGraphReadResult) -> GraphPin {
@@ -251,31 +266,37 @@ fn pin(result: &LocalRustGraphReadResult) -> GraphPin {
 fn definition_selector(
     record: &RustGraphDefinitionRecord,
 ) -> GraphResult<RustGraphDefinitionSelector> {
-    Ok(RustGraphDefinitionSelector::try_new(
-        record.source_slot(),
-        record.source_generation().get(),
-        record.path().clone(),
-        record.content_digest(),
-        record.artifact(),
-        record.fact_ordinal(),
-        record.kind(),
-        record.name().to_owned(),
-        record.qualified_name().to_owned(),
-        record.name_span(),
-        record.declaration_span(),
-    )?)
+    redact_stage_failure(
+        RustGraphDefinitionSelector::try_new(
+            record.source_slot(),
+            record.source_generation().get(),
+            record.path().clone(),
+            record.content_digest(),
+            record.artifact(),
+            record.fact_ordinal(),
+            record.kind(),
+            record.name().to_owned(),
+            record.qualified_name().to_owned(),
+            record.name_span(),
+            record.declaration_span(),
+        ),
+        "native graph definition selector setup failed",
+    )
 }
 
 fn site_selector(site: &RustGraphSiteSelector) -> GraphResult<ApplicationRustGraphSiteSelector> {
-    Ok(ApplicationRustGraphSiteSelector::try_new(
-        site.source_slot(),
-        site.path().clone(),
-        site.artifact(),
-        site.ordinal(),
-        site.kind(),
-        site.occurrence_span(),
-        site.target_span(),
-    )?)
+    redact_stage_failure(
+        ApplicationRustGraphSiteSelector::try_new(
+            site.source_slot(),
+            site.path().clone(),
+            site.artifact(),
+            site.ordinal(),
+            site.kind(),
+            site.occurrence_span(),
+            site.target_span(),
+        ),
+        "native graph site selector setup failed",
+    )
 }
 
 #[cfg(test)]

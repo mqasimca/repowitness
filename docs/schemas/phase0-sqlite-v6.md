@@ -182,6 +182,6 @@ historical table or row is rewritten.
 The implementation fixes a stable migration name/checksum and tests fresh
 creation, upgrades from versions 1 through 5, exact schema introspection,
 idempotent reopen, immutable companion rows, bounded atomic projection
-publication, stale-source rejection, recovery, and online backup. The remaining
-Phase 0 acceptance work is the complete ADR-0018 adversarial correspondence and
-design-partner evaluation matrix.
+publication, stale-source rejection, recovery, and online backup. The complete
+ADR-0018 adversarial correspondence and design-partner evaluation matrix now
+supports the accepted Phase 0 decision.

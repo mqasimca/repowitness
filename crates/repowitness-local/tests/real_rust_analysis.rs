@@ -7,14 +7,19 @@ use std::{
     io,
     path::{Path, PathBuf},
     sync::atomic::AtomicBool,
+    time::Duration,
 };
 
 use repowitness_analysis::RustSymbolKind;
 use repowitness_application::RustArtifactIdentity;
 use repowitness_domain::{AnalysisSchemaDigest, ConfigurationDigest, ProducerManifestDigest};
-use repowitness_local::{LocalRustIndexLimits, prepare_local_rust_index};
+use repowitness_local::{
+    DEFAULT_LOCAL_RUST_INDEX_DEADLINE, LocalRustIndexLimits, prepare_local_rust_index,
+};
 
 type TestResult<T = ()> = Result<T, Box<dyn Error>>;
+
+const SELF_INDEX_TEST_DEADLINE: Duration = Duration::from_secs(120);
 
 fn workspace_root() -> TestResult<PathBuf> {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -33,16 +38,31 @@ fn artifact_identity() -> RustArtifactIdentity {
     )
 }
 
+fn self_index_limits() -> LocalRustIndexLimits {
+    let defaults = LocalRustIndexLimits::default();
+    LocalRustIndexLimits::new(
+        SELF_INDEX_TEST_DEADLINE,
+        defaults.discovery(),
+        defaults.source_read(),
+        defaults.preparation(),
+    )
+}
+
+#[test]
+fn production_index_deadline_remains_fixed_and_explicit() {
+    assert_eq!(DEFAULT_LOCAL_RUST_INDEX_DEADLINE, Duration::from_secs(30));
+    assert_eq!(
+        LocalRustIndexLimits::default().deadline(),
+        DEFAULT_LOCAL_RUST_INDEX_DEADLINE
+    );
+}
+
 #[test]
 fn workspace_vertical_slice_prepares_and_revalidates_every_rust_source() -> TestResult {
     let root = workspace_root()?;
     let cancelled = AtomicBool::new(false);
-    let local = prepare_local_rust_index(
-        &root,
-        artifact_identity(),
-        LocalRustIndexLimits::default(),
-        &cancelled,
-    )?;
+    let local =
+        prepare_local_rust_index(&root, artifact_identity(), self_index_limits(), &cancelled)?;
     let prepared = local.prepared();
     let mut saw_analyzer = false;
     let mut saw_git_discovery = false;

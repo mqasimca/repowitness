@@ -502,14 +502,170 @@ run_two_worktree_workspace() {
     remove_fresh_workload_database "$database"
 }
 
+report_operation_probe_failure() {
+    errors=$1
+    category=unclassified
+    if grep -Fq \
+        'cold full-index wall time exceeded the resource budget' "$errors"
+    then
+        category=index_budget
+    elif grep -Fq \
+        'quiet reconciliation changed or lost the active generation' "$errors"
+    then
+        category=quiet_correctness
+    elif grep -Fq 'quiet reconciliation returned an unexpected exit' "$errors"; then
+        category=quiet_exit
+    elif grep -Fq \
+        'quiet reconciliation did not complete an unchanged pass' "$errors"
+    then
+        category=quiet_incomplete
+    elif grep -Fq \
+        'quiet reconciliation omitted its last index receipt' "$errors"
+    then
+        category=quiet_missing_receipt
+    elif grep -Fq \
+        'quiet reconciliation changed the active generation' "$errors"
+    then
+        category=quiet_generation
+    elif grep -Fq \
+        'quiet reconciliation p95 exceeded the resource budget' "$errors"
+    then
+        category=quiet_budget
+    elif grep -Fq 'quiet request construction failed' "$errors"; then
+        category=quiet_request
+    elif grep -Fq 'quiet watch operation failed' "$errors"; then
+        category=quiet_watch
+    elif grep -Fq 'quiet percentile measurement failed' "$errors"; then
+        category=quiet_percentile
+    elif grep -Fq \
+        'retention planning violated the exact bounded workload' "$errors"
+    then
+        category=retention_plan
+    elif grep -Fq 'retention planning exceeded the resource budget' "$errors"; then
+        category=retention_plan_budget
+    elif grep -Fq \
+        'retention planning returned an unexpected candidate count' "$errors"
+    then
+        category=retention_candidate_count
+    elif grep -Fq 'retention planning returned no candidate' "$errors"; then
+        category=retention_no_candidate
+    elif grep -Fq 'retention planning returned multiple candidates' "$errors"; then
+        category=retention_multiple_candidates
+    elif grep -Fq \
+        'retention planning unexpectedly reported more work' "$errors"
+    then
+        category=retention_more_work
+    elif grep -Fq \
+        'retention policy exceeded the retained-generation budget' "$errors"
+    then
+        category=retention_policy
+    elif grep -Fq \
+        'retention apply violated the exact bounded workload' "$errors"
+    then
+        category=retention_apply
+    elif grep -Fq 'retention apply exceeded the resource budget' "$errors"; then
+        category=retention_apply_budget
+    elif grep -Fq \
+        'retention apply returned an unexpected generation count' "$errors"
+    then
+        category=retention_apply_count
+    elif grep -Fq 'retention apply did not confirm database identity' "$errors"; then
+        category=retention_identity
+    elif grep -Fq 'retention apply did not complete shutdown' "$errors"; then
+        category=retention_shutdown
+    elif grep -Fq \
+        'retention did not converge to an exact no-op plan' "$errors"
+    then
+        category=retention_convergence
+    elif grep -Fq \
+        'retained generations exceeded the resource budget' "$errors"
+    then
+        category=retention_budget
+    elif grep -Fq 'first retention seed indexing failed' "$errors"; then
+        category=retention_seed_one
+    elif grep -Fq 'second retention seed indexing failed' "$errors"; then
+        category=retention_seed_two
+    elif grep -Fq 'retention iteration indexing failed' "$errors"; then
+        category=retention_index
+    elif grep -Fq 'retention plan request setup failed' "$errors"; then
+        category=retention_plan_request
+    elif grep -Fq 'retention planning operation failed' "$errors"; then
+        category=retention_plan_operation
+    elif grep -Fq 'retention apply request setup failed' "$errors"; then
+        category=retention_apply_request
+    elif grep -Fq 'retention apply operation failed' "$errors"; then
+        category=retention_apply_operation
+    elif grep -Fq 'retention final planning operation failed' "$errors"; then
+        category=retention_final_plan
+    elif grep -Eq 'retention (plan|apply) percentile measurement failed' "$errors"
+    then
+        category=retention_percentile
+    elif grep -Fq \
+        'warm-query and native-graph benchmark contracts must match' "$errors"
+    then
+        category=graph_contract
+    elif grep -Fq \
+        'public benchmark graph had no traceable search result' "$errors"
+    then
+        category=graph_no_traceable_result
+    elif grep -Fq \
+        'native graph suite mixed immutable generations' "$errors"
+    then
+        category=graph_mixed_generation
+    elif grep -Fq \
+        'native graph read suite p95 exceeded the resource budget' "$errors"
+    then
+        category=graph_budget
+    elif grep -Fq 'native graph read operation failed' "$errors"; then
+        category=graph_read
+    elif grep -Eq \
+        'native graph (search|evidence|architecture|trace) ' "$errors"
+    then
+        category=graph_output
+    elif grep -Eiq 'argument|input validation|repository input|identity input' "$errors"
+    then
+        category=input
+    elif grep -Eiq 'configuration|policy' "$errors"; then
+        category=configuration
+    elif grep -Fq 'SQLite database size exceeded the resource budget' "$errors" \
+        || grep -Fq \
+            'SQLite WAL exceeded the post-completion resource budget' "$errors"
+    then
+        category=storage_budget
+    elif grep -Eiq 'graph|workspace view|mixed generation' "$errors"; then
+        category=graph
+    elif grep -Eiq 'retention|garbage|collection' "$errors"; then
+        category=retention
+    elif grep -Eiq 'watch|reconcil|source epoch' "$errors"; then
+        category=reconciliation
+    elif grep -Eiq 'sqlite|database|wal' "$errors"; then
+        category=storage
+    elif grep -Eiq 'index|repository|source' "$errors"; then
+        category=indexing
+    elif grep -Eiq 'deadline|timeout|cancel' "$errors"; then
+        category=operation_limit
+    elif grep -Fq 'phase1 operation probe failed:' "$errors"; then
+        category=probe
+    elif [ -s "$errors" ]; then
+        category=execution
+    else
+        category=empty
+    fi
+    printf 'error: Phase 1 operation probe category=%s\n' "$category" >&2
+}
+
 run_operation_probe() {
     output=$BENCHMARK_TEMP/operation-probe.output
     errors=$BENCHMARK_TEMP/operation-probe.errors
     time_output=$BENCHMARK_TEMP/operation-probe.time
     case "$(uname -s)" in
         Linux)
-            if [ ! -x /usr/bin/time ] \
-                || ! run_bounded_capture "$output" "$errors" \
+            if [ ! -x /usr/bin/time ]; then
+                echo "error: Phase 1 operation probe category=rss_tool" >&2
+                echo "error: Phase 1 operation probe failed" >&2
+                return 1
+            fi
+            if ! run_bounded_capture "$output" "$errors" \
                     /usr/bin/time -f 'peak_rss_kib=%M' -o "$time_output" \
                     "$OPERATION_PROBE" \
                     "$WORKTREE_ONE" "$OPERATION_DATABASE" "$OPERATION_REPOSITORY" \
@@ -523,14 +679,19 @@ run_operation_probe() {
                     "$MAX_RETAINED_GENERATIONS" "$MAX_MATERIAL_RESULT_BYTES" \
                     "$MAX_DATABASE_BYTES" "$MAX_WAL_BYTES_AFTER_COMPLETION"
             then
+                report_operation_probe_failure "$errors"
                 echo "error: Phase 1 operation probe failed" >&2
                 return 1
             fi
             peak_rss_kib=$(sed -n 's/^peak_rss_kib=//p' "$time_output")
             ;;
         Darwin)
-            if [ ! -x /usr/bin/time ] \
-                || ! run_bounded_capture "$output" "$errors" \
+            if [ ! -x /usr/bin/time ]; then
+                echo "error: Phase 1 operation probe category=rss_tool" >&2
+                echo "error: Phase 1 operation probe failed" >&2
+                return 1
+            fi
+            if ! run_bounded_capture "$output" "$errors" \
                     /usr/bin/time -l "$OPERATION_PROBE" \
                     "$WORKTREE_ONE" "$OPERATION_DATABASE" "$OPERATION_REPOSITORY" \
                     "$QUIET_RUNS" "$GRAPH_RUNS" "$RETENTION_RUNS" \
@@ -543,6 +704,7 @@ run_operation_probe() {
                     "$MAX_RETAINED_GENERATIONS" "$MAX_MATERIAL_RESULT_BYTES" \
                     "$MAX_DATABASE_BYTES" "$MAX_WAL_BYTES_AFTER_COMPLETION"
             then
+                report_operation_probe_failure "$errors"
                 echo "error: Phase 1 operation probe failed" >&2
                 return 1
             fi

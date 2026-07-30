@@ -27,8 +27,10 @@ smaller documents. These documents can change with the implementation.
 | [Phase 0 clean benchmark attestation (2026-07-29)](research/phase0-clean-benchmark-attestation-2026-07-29.md) | Checksummed clean Ubuntu 24.04 benchmark evidence and budget ratification | Completed |
 | [Phase 0 comparative evaluation (2026-07-28)](research/phase0-comparative-evaluation-2026-07-28.md) | Controlled before/after lexical, naive-memory, and evidence-backed memory comparison | Provisional measurement |
 | [Phase 0 Codex utility evaluation (2026-07-28)](research/phase0-codex-utility-evaluation-2026-07-28.md) | Isolated before/after Codex decision, source grounding, memory use, stale-memory avoidance, and packet presentation | Provisional measurement |
+| [Phase 0 design-partner evaluation outcome, task-01 (2026-07-30)](research/phase0-design-partner-evaluation-2026-07-30.md) | Privacy-reviewed categorical real-task outcome; correct and useful but no material decision change | Completed, non-passing outcome |
+| [Phase 0 design-partner evaluation outcome, task-02 (2026-07-30)](research/phase0-design-partner-evaluation-2026-07-30-task-02.md) | Privacy-reviewed categorical real-task outcome; correct, useful, and materially decision-changing | Completed, passing outcome |
 | [Phase 0 ratification review (2026-07-28)](research/phase0-ratification-review-2026-07-28.md) | Evidence-based ADR and benchmark-budget readiness recommendations | Recommendation |
-| [Phase 0 design-partner evaluation protocol](research/phase0-design-partner-evaluation-protocol.md) | Privacy-preserving method and pass criteria for the remaining real-task gate | Active |
+| [Phase 0 design-partner evaluation protocol](research/phase0-design-partner-evaluation-protocol.md) | Privacy-preserving method and pass criteria used for the Phase 0 real-task gate | Completed |
 | [Strict memory YAML spike (2026-07-25)](research/strict-memory-yaml-spike-2026-07-25.md) | Bounded hostile-YAML admission, canonical JSON, semantic hashing, and candidate dependency findings | Recommendation |
 | [Benchmark manifests](../benchmarks/README.md) | Pinned corpora, tasks, change scenarios, baselines, environments, and budgets | Ratified |
 | [Research plan](../plan.md) | Full research, alternatives, sources, and detailed backlog | Reference |
@@ -45,12 +47,14 @@ stdio MCP tools. MCP is read-only by default. An operator can authorize memory
 writes explicitly.
 
 The [product](product.md), [architecture](architecture.md), and
-[roadmap](roadmap.md) identify the implemented design-partner alpha and the
-remaining ADR and design-partner gate. The adversarial release matrix passes.
-The benchmark manifest and budgets have a checksummed clean Ubuntu 24.04
-attestation. The controlled public baseline comparison and isolated Codex
-utility evaluation are reproducible. See the [repository README](../README.md)
-for all commands and local Codex setup steps.
+[roadmap](roadmap.md) identify the completed design-partner alpha and the
+remaining Phase 1 work. The adversarial release matrix passes. The benchmark
+manifest and budgets have a checksummed clean Ubuntu 24.04 attestation. The
+controlled public baseline comparison and isolated Codex utility evaluation are
+reproducible. The first privacy-reviewed real-task outcome was correct and
+useful but non-passing; the second passed the material-decision-change gate.
+See the [repository README](../README.md) for all commands and local Codex setup
+steps.
 
 ## Authority and precedence
 

@@ -178,9 +178,9 @@ shutdown ownership without creating an independent security boundary.
   backup fixtures.
 - Implemented 2026-07-27: precision-first correspondence, Git-DAG validity,
   conflict states, projection coverage, atomic projection activation, and
-  current-memory retrieval under proposed ADR-0018.
+  current-memory retrieval under ADR-0018.
 - Implemented 2026-07-28: bounded Git-tree history import observes exact
-  record blobs without self-approval under proposed ADR-0021.
+  record blobs without self-approval under ADR-0021.
 - Completed 2026-07-28: rewritten and pruned history retain prior observations
   without creating approval, while missing-object validity stays
   indeterminate.

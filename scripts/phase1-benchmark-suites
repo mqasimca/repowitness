@@ -25,7 +25,7 @@ run_operation_probe_contract_suite() {
         return 1
     fi
     probe_matches=$(
-        grep -Fc 'test result: ok. 8 passed; 0 failed;' "$probe_output"
+        grep -Fc 'test result: ok. 10 passed; 0 failed;' "$probe_output"
     ) || return 1
     [ "$probe_matches" -eq 1 ]
 }
@@ -38,7 +38,7 @@ run_trustworthiness_suite() {
         memory_revalidation::tests::merges::one_to_many_split_candidates_require_review_without_an_automatic_relink \
         -- --exact --test-threads=1 || return 1
     run_exact_test cargo test -p repowitness-domain --release --locked --lib \
-        coverage::truncation_is_reported_even_when_other_work_is_partial \
+        coverage::tests::truncation_is_reported_even_when_other_work_is_partial \
         -- --exact --test-threads=1 || return 1
     echo "false_confirmed_claims=0"
     echo "silent_truncations=0"

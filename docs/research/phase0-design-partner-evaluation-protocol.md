@@ -1,9 +1,9 @@
 # Phase 0 design-partner evaluation protocol
 
-- Status: Active
+- Status: Completed
 - Protocol version: 1
-- Last reviewed: 2026-07-29
-- Scope: The remaining Phase 0 product-outcome gate
+- Last reviewed: 2026-07-30
+- Scope: The completed Phase 0 product-outcome gate
 
 ## Goal
 

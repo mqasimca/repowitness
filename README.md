@@ -144,13 +144,17 @@ inputs. This document does not record their IDs, paths, revisions, symbols,
 contents, or individual measurements. Public test evidence uses temporary
 mixed-language fixtures and public pinned benchmark corpora.
 
-One Phase 0 gate remains. The local product loop, pinned correctness scenario,
+Phase 0 is complete. The local product loop, pinned correctness scenario,
 rewritten-history, review, split/merge, canonical-file and SQLite
 publication-fault tests, and controlled public baseline comparison pass. A clean
 Ubuntu 24.04 run at the exact revision also passes the approved benchmark
-limits. ADR-0017, ADR-0019, and ADR-0023 are accepted. One real design-partner
-task must show that evidence-backed memory improves an engineering decision.
-Maintainers must have this result before they decide ADR-0018 and ADR-0021.
+limits. The first
+[privacy-reviewed real design-partner outcome](docs/research/phase0-design-partner-evaluation-2026-07-30.md)
+was correct and useful but did not change the decision. The
+[second outcome](docs/research/phase0-design-partner-evaluation-2026-07-30-task-02.md)
+materially changed the useful decision relative to both declared baselines.
+ADRs 0017 through 0021, plus ADR-0023, are accepted where applicable to the
+Phase 0 implementation; the stable public API remains deferred.
 
 ## Local verification
 
@@ -594,6 +598,8 @@ command surface.
 - [Versioned schemas](docs/schemas/README.md)
 - [Benchmark manifests](benchmarks/README.md)
 - [Phase 0 Codex utility evaluation](docs/research/phase0-codex-utility-evaluation-2026-07-28.md)
+- [Phase 0 design-partner evaluation outcome (task-01)](docs/research/phase0-design-partner-evaluation-2026-07-30.md)
+- [Phase 0 design-partner evaluation outcome (task-02)](docs/research/phase0-design-partner-evaluation-2026-07-30-task-02.md)
 - [Phase 0 ratification review](docs/research/phase0-ratification-review-2026-07-28.md)
 - [Full research and implementation plan](plan.md)
 
