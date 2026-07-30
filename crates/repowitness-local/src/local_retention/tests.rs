@@ -524,7 +524,6 @@ fn mutation_lease_path(database: &Path) -> PathBuf {
     PathBuf::from(value)
 }
 
-#[cfg(unix)]
 fn alias_lease_path(database: &Path) -> PathBuf {
     mutation_lease_path(database)
 }
