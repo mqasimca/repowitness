@@ -14,7 +14,7 @@ my %expected = (
     'third_party/tree-sitter-typescript/README.md'
       => '57352b23cb92e3c3244c7ea91c2f4a2fe894ae974d99de8c20a4b112951b6a6c',
     'third_party/tree-sitter-typescript/REPOWITNESS-PROVENANCE.md'
-      => '90dde769ec375704a164b0aa49d7f14eb137ffe8a1fa6411bcf53e47a3270bc6',
+      => '77aee0ab2e104affbf632ba02c159ceb71587a42c3b0a42fd0ce5e051f02ab8e',
     'third_party/tree-sitter-typescript/bindings/rust/build.rs'
       => '8e3ee9baddea25add039fc5d12d76fecfe81f1fd175429eb08694ccfcdaf85f4',
     'third_party/tree-sitter-typescript/bindings/rust/lib.rs'

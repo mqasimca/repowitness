@@ -1,16 +1,16 @@
 # Fuzz targets
 
-The standalone `memory_record` target exercises arbitrary YAML bytes plus
-structured mutations of both accepted version-1 golden profiles. Any accepted
-record is generated again, reparsed, and required to preserve its domain value,
-canonical JSON, and canonical digest.
+The standalone `memory_record` target uses arbitrary YAML bytes and structured
+mutations of both accepted version-1 golden profiles. For each accepted record,
+it generates and parses the record again. The domain value, canonical JSON, and
+canonical digest must stay the same.
 
-The `phase1_inputs` target sends bounded arbitrary bytes through every strict
-Phase 1 native-graph and compatibility-MCP request decoder plus the three
-configuration-file layers. It also applies bounded byte mutations to accepted
-synthetic configuration, status, search, and architecture request seeds, so
-validation code is reached from an accepted representation. It does not
-perform filesystem, database, Git, network, or MCP transport I/O.
+The `phase1_inputs` target sends bounded arbitrary bytes to each strict Phase 1
+native-graph and compatibility-MCP request decoder. It also sends these bytes
+to the three configuration-file layers. The target applies bounded byte changes
+to accepted synthetic configuration, status, search, and architecture request
+seeds. This lets validation code process accepted input. The target does not use
+the filesystem, database, Git, network, or MCP transport I/O.
 
 Install the official runner and use a supported nightly toolchain:
 
@@ -29,14 +29,13 @@ cargo +nightly fuzz run phase1_inputs -- \
   -print_final_stats=1
 ```
 
-The fuzz crate has its own committed lockfile and is intentionally outside the
-production workspace. `make fuzz-check` verifies that its target and lockfile
-still build, while `make deny` audits both the production and fuzz dependency
-graphs. The exact `libfuzzer-sys` 0.4.13 pin wraps LLVM libFuzzer, compiles a
-native runtime through its build script, and has a compound
-`(MIT OR Apache-2.0) AND NCSA` license; the NCSA term is admitted only for that
-exact package in `deny.toml`.
+The fuzz crate has its own committed lockfile. It is outside the production
+workspace. `make fuzz-check` checks that its target and lockfile build.
+`make deny` checks the production and fuzz dependency graphs. The exact
+`libfuzzer-sys` 0.4.13 pin uses LLVM libFuzzer. Its build script compiles a
+native runtime. Its license is `(MIT OR Apache-2.0) AND NCSA`. `deny.toml`
+allows the NCSA term only for this package.
 
-Corpus, artifact, coverage, and target directories are ignored. Preserve any
-reproducer that finds a defect as a reviewed regression fixture before
-clearing generated artifacts.
+Corpus, artifact, coverage, and target directories are ignored. If a reproducer
+finds a defect, keep it as a reviewed regression fixture. Then clear generated
+artifacts.

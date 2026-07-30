@@ -19,7 +19,7 @@ use POSIX qw(WNOHANG _exit setpgid uname);
 use Time::HiRes qw(sleep time);
 
 my $GENERATOR_VERSION = '0.24.4';
-my $NODE_VERSION      = 'v26.5.0';
+my $NODE_MAJOR_VERSION = 26;
 my $DOWNLOAD_LIMIT    = 20_000_000;
 my $EXPANDED_LIMIT    = 50_000_000;
 my $OUTPUT_LIMIT      = 1_048_576;
@@ -70,8 +70,8 @@ my $node_version = run_bounded(
     command    => [ 'node', '--version' ],
 );
 chomp $node_version;
-$node_version eq $NODE_VERSION
-  or die "vendored grammar regeneration requires Node.js $NODE_VERSION\n";
+$node_version =~ /\Av$NODE_MAJOR_VERSION\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?\z/
+  or die "vendored grammar regeneration requires Node.js v$NODE_MAJOR_VERSION.*\n";
 
 my $release_url =
     "https://github.com/tree-sitter/tree-sitter/releases/download/"

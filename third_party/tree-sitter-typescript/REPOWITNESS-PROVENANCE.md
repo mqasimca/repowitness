@@ -71,11 +71,12 @@ From the repository root:
 ./scripts/check-vendored-grammar-regeneration
 ```
 
-The checker requires Node.js 26.5.0 and supports macOS and Linux on ARM64 and
-x86-64. The pinned CLI asset hashes are part of the checker. It runs in an
-isolated temporary directory with bounded subprocess time and output, a
-dedicated npm cache, the public npm registry, lifecycle scripts disabled, and
-ambient Node injection variables removed.
+The checker accepts any Node.js `v26.*` runtime and supports macOS and Linux
+on ARM64 and x86-64. CI pins Node.js 26.5.0 to retain one reproducible
+regeneration environment. The pinned CLI asset hashes are part of the checker.
+It runs in an isolated temporary directory with bounded subprocess time and
+output, a dedicated npm cache, the public npm registry, lifecycle scripts
+disabled, and ambient Node injection variables removed.
 
 Both grammar gates must pass without updating expected values unless the
 parser change has received a new review and local patch version:
