@@ -18,7 +18,7 @@ use repowitness_application::{
 };
 
 use crate::{
-    contained_source::FileIdentity,
+    contained_source::{FileIdentity, file_has_single_link},
     sqlite::{inspect_sqlite_environment, validate_database_read_only},
 };
 
@@ -607,16 +607,14 @@ impl ValidatedDatabase {
         let Ok(metadata) = file.metadata() else {
             return DatabaseOpenOutcome::Unavailable;
         };
-        if !metadata.is_file() || !has_one_link(&metadata) {
+        if !metadata.is_file() || !file_has_single_link(&file).is_ok_and(|single_link| single_link)
+        {
             return DatabaseOpenOutcome::Unavailable;
         }
         let Ok(current_metadata) = fs::symlink_metadata(path) else {
             return DatabaseOpenOutcome::Unavailable;
         };
-        if current_metadata.file_type().is_symlink()
-            || !current_metadata.is_file()
-            || !has_one_link(&current_metadata)
-        {
+        if current_metadata.file_type().is_symlink() || !current_metadata.is_file() {
             return DatabaseOpenOutcome::Unavailable;
         }
         let Ok(identity) = file.try_clone().and_then(FileIdentity::from_file) else {
@@ -636,13 +634,13 @@ impl ValidatedDatabase {
     }
 
     fn identity_is_current(&self) -> bool {
-        fs::symlink_metadata(&self.canonical_path).is_ok_and(|metadata| {
-            !metadata.file_type().is_symlink()
-                && metadata.is_file()
-                && has_one_link(&metadata)
-                && FileIdentity::from_path(&self.canonical_path)
-                    .is_ok_and(|current| current == self.identity)
-        })
+        file_has_single_link(&self._capability).is_ok_and(|single_link| single_link)
+            && fs::symlink_metadata(&self.canonical_path).is_ok_and(|metadata| {
+                !metadata.file_type().is_symlink()
+                    && metadata.is_file()
+                    && FileIdentity::from_path(&self.canonical_path)
+                        .is_ok_and(|current| current == self.identity)
+            })
     }
 }
 
@@ -663,18 +661,6 @@ fn configure_nonblocking_open(options: &mut OpenOptions) {
 
 #[cfg(not(unix))]
 fn configure_nonblocking_open(_options: &mut OpenOptions) {}
-
-#[cfg(unix)]
-fn has_one_link(metadata: &std::fs::Metadata) -> bool {
-    use std::os::unix::fs::MetadataExt;
-
-    metadata.nlink() == 1
-}
-
-#[cfg(not(unix))]
-fn has_one_link(_metadata: &std::fs::Metadata) -> bool {
-    true
-}
 
 #[cfg(test)]
 mod tests;
