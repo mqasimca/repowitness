@@ -17,8 +17,10 @@ use repowitness_application::{
     ResolvedPreference, SourceLanguage,
 };
 
+#[cfg(windows)]
+use crate::contained_source::file_has_single_link;
 use crate::{
-    contained_source::{FileIdentity, file_has_single_link},
+    contained_source::FileIdentity,
     sqlite::{inspect_sqlite_environment, validate_database_read_only},
 };
 
@@ -607,14 +609,16 @@ impl ValidatedDatabase {
         let Ok(metadata) = file.metadata() else {
             return DatabaseOpenOutcome::Unavailable;
         };
-        if !metadata.is_file() || !file_has_single_link(&file).is_ok_and(|single_link| single_link)
-        {
+        if !metadata.is_file() || !opened_database_has_one_link(&file, &metadata) {
             return DatabaseOpenOutcome::Unavailable;
         }
         let Ok(current_metadata) = fs::symlink_metadata(path) else {
             return DatabaseOpenOutcome::Unavailable;
         };
-        if current_metadata.file_type().is_symlink() || !current_metadata.is_file() {
+        if current_metadata.file_type().is_symlink()
+            || !current_metadata.is_file()
+            || !current_database_has_one_link(&file, &current_metadata)
+        {
             return DatabaseOpenOutcome::Unavailable;
         }
         let Ok(identity) = file.try_clone().and_then(FileIdentity::from_file) else {
@@ -634,13 +638,13 @@ impl ValidatedDatabase {
     }
 
     fn identity_is_current(&self) -> bool {
-        file_has_single_link(&self._capability).is_ok_and(|single_link| single_link)
-            && fs::symlink_metadata(&self.canonical_path).is_ok_and(|metadata| {
-                !metadata.file_type().is_symlink()
-                    && metadata.is_file()
-                    && FileIdentity::from_path(&self.canonical_path)
-                        .is_ok_and(|current| current == self.identity)
-            })
+        fs::symlink_metadata(&self.canonical_path).is_ok_and(|metadata| {
+            !metadata.file_type().is_symlink()
+                && metadata.is_file()
+                && current_database_has_one_link(&self._capability, &metadata)
+                && FileIdentity::from_path(&self.canonical_path)
+                    .is_ok_and(|current| current == self.identity)
+        })
     }
 }
 
@@ -661,6 +665,38 @@ fn configure_nonblocking_open(options: &mut OpenOptions) {
 
 #[cfg(not(unix))]
 fn configure_nonblocking_open(_options: &mut OpenOptions) {}
+
+#[cfg(windows)]
+fn opened_database_has_one_link(file: &std::fs::File, _metadata: &std::fs::Metadata) -> bool {
+    file_has_single_link(file).is_ok_and(|single_link| single_link)
+}
+
+#[cfg(not(windows))]
+fn opened_database_has_one_link(_file: &std::fs::File, metadata: &std::fs::Metadata) -> bool {
+    has_one_link(metadata)
+}
+
+#[cfg(windows)]
+fn current_database_has_one_link(file: &std::fs::File, _metadata: &std::fs::Metadata) -> bool {
+    file_has_single_link(file).is_ok_and(|single_link| single_link)
+}
+
+#[cfg(not(windows))]
+fn current_database_has_one_link(_file: &std::fs::File, metadata: &std::fs::Metadata) -> bool {
+    has_one_link(metadata)
+}
+
+#[cfg(unix)]
+fn has_one_link(metadata: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+
+    metadata.nlink() == 1
+}
+
+#[cfg(not(unix))]
+fn has_one_link(_metadata: &std::fs::Metadata) -> bool {
+    true
+}
 
 #[cfg(test)]
 mod tests;
