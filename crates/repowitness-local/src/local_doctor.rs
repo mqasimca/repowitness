@@ -693,7 +693,7 @@ fn has_one_link(metadata: &std::fs::Metadata) -> bool {
     metadata.nlink() == 1
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn has_one_link(_metadata: &std::fs::Metadata) -> bool {
     true
 }
