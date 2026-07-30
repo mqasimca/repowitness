@@ -43,6 +43,10 @@ fn index_local_repository_with_mode(
     )
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "the explicit indexing lifecycle keeps cleanup after every writer-owned outcome visible"
+)]
 fn index_local_repository_with_mode_and_control(
     request: LocalIndexRequest<'_>,
     cancelled: Arc<AtomicBool>,
@@ -100,58 +104,63 @@ fn index_local_repository_with_mode_and_control(
         deadline,
     )
     .map_err(map_store_startup_error)?;
-    after_phase(LocalIndexPhase::WriterStarted);
-    let publication_database_identity = database_alias_identity(&database)?;
-    if publication_database_identity.as_ref() != Some(writer.opened_database_identity()) {
-        return Err(LocalIndexError::DatabaseChangedDuringIndexing);
-    }
-    let final_fence = LocalSourceSlotFinalFence::new(
-        &worktree,
-        &database,
-        Some(writer.opened_database_identity()),
-        publication.identity,
-        languages,
-        configured_limits,
-    );
-    let publication = if skip_unchanged {
-        reconcile_prepared_local_index(
-            &writer,
-            repository,
-            publication,
-            &final_fence,
-            || after_phase(LocalIndexPhase::GraphStaged),
-            &cancelled,
-            deadline,
-            startup.recovered_generations(),
-            report_input,
-        )?
-    } else {
-        publish_prepared_local_index(
-            &writer,
-            repository,
-            publication,
-            &final_fence,
-            || after_phase(LocalIndexPhase::GraphStaged),
-            &cancelled,
-            deadline,
-        )
-        .map(|(generation, source_epoch)| {
-            LocalReconciliationOutcome::Published(activated_report(
-                generation,
-                source_epoch.get(),
+    let result = (|| {
+        after_phase(LocalIndexPhase::WriterStarted);
+        let publication_database_identity = database_alias_identity(&database)?;
+        if publication_database_identity.as_ref() != Some(writer.opened_database_identity()) {
+            return Err(LocalIndexError::DatabaseChangedDuringIndexing);
+        }
+        let final_fence = LocalSourceSlotFinalFence::new(
+            &worktree,
+            &database,
+            Some(writer.opened_database_identity()),
+            publication.identity,
+            languages,
+            configured_limits,
+        );
+        let publication = if skip_unchanged {
+            reconcile_prepared_local_index(
+                &writer,
+                repository,
+                publication,
+                &final_fence,
+                || after_phase(LocalIndexPhase::GraphStaged),
+                &cancelled,
+                deadline,
                 startup.recovered_generations(),
                 report_input,
-            ))
-        })?
-    };
-    let committed = !matches!(publication, LocalReconciliationOutcome::Unchanged(_));
-    if committed {
-        after_phase(LocalIndexPhase::PublicationCommitted);
-    }
+            )?
+        } else {
+            publish_prepared_local_index(
+                &writer,
+                repository,
+                publication,
+                &final_fence,
+                || after_phase(LocalIndexPhase::GraphStaged),
+                &cancelled,
+                deadline,
+            )
+            .map(|(generation, source_epoch)| {
+                LocalReconciliationOutcome::Published(activated_report(
+                    generation,
+                    source_epoch.get(),
+                    startup.recovered_generations(),
+                    report_input,
+                ))
+            })?
+        };
+        if !matches!(publication, LocalReconciliationOutcome::Unchanged(_)) {
+            after_phase(LocalIndexPhase::PublicationCommitted);
+        }
+        Ok(publication)
+    })();
+    let committed = result
+        .as_ref()
+        .is_ok_and(|publication| !matches!(publication, LocalReconciliationOutcome::Unchanged(_)));
     let _maintenance =
         post_commit::finish_index_writer(writer, committed, deadline, maintenance_deadline);
 
-    Ok(publication)
+    result
 }
 
 #[allow(

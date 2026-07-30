@@ -94,6 +94,7 @@ fn fixture_repository(directory: &TempDirectory) -> PathBuf {
     let repository = directory.repository();
     fs::create_dir_all(repository.join("src")).expect("fixture source directory should be created");
     let status = Command::new("git")
+        .args(["-c", "core.autocrlf=false", "-c", "core.eol=lf"])
         .args(["init", "--quiet"])
         .arg(&repository)
         .status()
@@ -108,6 +109,7 @@ fn fixture_repository(directory: &TempDirectory) -> PathBuf {
         .expect("non-Rust fixture should be written");
     let status = Command::new("git")
         .current_dir(&repository)
+        .args(["-c", "core.autocrlf=false", "-c", "core.eol=lf"])
         .args(["add", "--", "src/lib.rs", "README.md"])
         .status()
         .expect("Git should start");
