@@ -47,6 +47,7 @@ pub(crate) fn build_retention_plan_with_budget(
     hasher.update(policy.digest().as_bytes());
     hash_retention_roots(
         transaction,
+        policy,
         &mut hasher,
         &mut budget,
         &mut root_count,
@@ -304,6 +305,7 @@ fn validate_generation_pin(
 
 fn hash_retention_roots(
     transaction: &Transaction<'_>,
+    policy: &GenerationRetentionPolicy,
     hasher: &mut Sha256,
     budget: &mut RetentionWorkBudget,
     root_count: &mut u64,
@@ -313,7 +315,16 @@ fn hash_retention_roots(
     hash_workspace_roots(transaction, hasher, budget, root_count, cancelled, deadline)?;
     hash_source_slot_roots(transaction, hasher, budget, root_count, cancelled, deadline)?;
     hash_active_view_roots(transaction, hasher, budget, root_count, cancelled, deadline)?;
-    hash_current_receipt_roots(transaction, hasher, budget, root_count, cancelled, deadline)
+    hash_current_receipt_roots(transaction, hasher, budget, root_count, cancelled, deadline)?;
+    hash_enforced_retention_root_relations(
+        transaction,
+        policy,
+        hasher,
+        budget,
+        root_count,
+        cancelled,
+        deadline,
+    )
 }
 
 fn hash_workspace_roots(

@@ -320,7 +320,7 @@ fn repository_and_database_symlinks_are_rejected_without_following_them() {
     assert!(!aliased_inside_database.exists());
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[test]
 fn multiply_linked_database_is_rejected_before_sqlite_open() {
     let directory = TempDirectory::new();

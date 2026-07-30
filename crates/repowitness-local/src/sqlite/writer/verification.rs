@@ -301,9 +301,7 @@ impl WriterState {
                 [digest.as_bytes().as_slice()],
             )
             .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
-        transaction
-            .commit()
-            .map_err(|_| SqliteStoreError::DatabaseOperationFailed)
+        commit_mutation(transaction)
     }
 
     fn delete_staging_artifact(&mut self, digest: &[u8; 32]) -> Result<(), SqliteStoreError> {
@@ -327,9 +325,7 @@ impl WriterState {
                 [digest.as_slice()],
             )
             .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
-        transaction
-            .commit()
-            .map_err(|_| SqliteStoreError::DatabaseOperationFailed)
+        commit_mutation(transaction)
     }
 
     fn transaction(&mut self) -> Result<Transaction<'_>, SqliteStoreError> {

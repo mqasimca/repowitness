@@ -21,8 +21,12 @@ fn run_memory_revalidate(
         Err(message) => return emit_error(stderr, EXIT_USAGE, message),
     };
     match memory.revalidate(&invocation) {
-        Ok(report) => emit_memory_revalidation_report(stdout, report),
-        Err(_) => emit_error(stderr, EXIT_SOFTWARE, "error: memory revalidation failed\n"),
+        Ok(report) => emit_memory_revalidation_report(stdout, stderr, report),
+        Err(error) => emit_memory_error(
+            stderr,
+            "error: memory revalidation failed\n",
+            error,
+        ),
     }
 }
 
@@ -77,7 +81,7 @@ fn run_memory_recall(
     };
     match memory.recall(&invocation, &configuration) {
         Ok(report) => emit_memory_recall_report(stdout, &report),
-        Err(_) => emit_error(stderr, EXIT_SOFTWARE, "error: memory recall failed\n"),
+        Err(error) => emit_memory_error(stderr, "error: memory recall failed\n", error),
     }
 }
 

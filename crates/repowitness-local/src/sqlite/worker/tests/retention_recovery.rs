@@ -123,3 +123,108 @@ fn startup_revokes_stale_garbage_marks_and_preserves_roots() {
         .shutdown(deadline())
         .expect("reopened store should stop");
 }
+
+#[test]
+fn dependent_delete_failure_rolls_back_rows_marks_audit_and_plan_state() {
+    let directory = TempDirectory::new();
+    let repository = RepositoryIdentityDigest::new([0xD9; 32]);
+    let (store, _) = OwnedSqliteIndex::start(&directory.database(), 123, deadline())
+        .expect("retention store should start");
+    let generations = retention_history(&store, repository, 4, 0xD0);
+    let policy = retention_policy(1, RetentionLimits::default(), RetentionPins::default());
+    let plan = plan_retention(&store, policy.clone());
+    assert_eq!(plan.candidate_generations(), &generations[..2]);
+
+    let connection =
+        Connection::open(directory.database()).expect("fault fixture database should open");
+    connection
+        .execute_batch(
+            "CREATE TRIGGER fail_retention_dependent_delete
+             BEFORE DELETE ON generation_files BEGIN
+                 SELECT RAISE(ABORT, 'injected dependent-delete failure');
+             END;",
+        )
+        .expect("dependent-delete fault should install");
+    let before = rollback_sensitive_retention_counts(&connection);
+    drop(connection);
+
+    assert_eq!(
+        store.apply_generation_retention(RetentionApplyRequest::new(
+            policy.clone(),
+            plan.plan_digest(),
+            Arc::new(AtomicBool::new(false)),
+            deadline(),
+        )),
+        Err(SqliteStoreError::IntegrityCheckFailed)
+    );
+
+    let connection =
+        Connection::open(directory.database()).expect("rolled-back database should open");
+    assert_eq!(rollback_sensitive_retention_counts(&connection), before);
+    assert_eq!(
+        connection
+            .query_row("PRAGMA quick_check", [], |row| row.get::<_, String>(0))
+            .expect("quick check should complete"),
+        "ok"
+    );
+    assert_eq!(
+        connection
+            .query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .expect("foreign-key check should complete"),
+        0
+    );
+    connection
+        .execute_batch("DROP TRIGGER fail_retention_dependent_delete")
+        .expect("dependent-delete fault should be removable");
+    drop(connection);
+
+    assert_eq!(
+        plan_retention(&store, policy.clone()),
+        plan,
+        "rollback must preserve the exact deterministic plan"
+    );
+    let outcome = store
+        .apply_generation_retention(RetentionApplyRequest::new(
+            policy,
+            plan.plan_digest(),
+            Arc::new(AtomicBool::new(false)),
+            deadline(),
+        ))
+        .expect("the same plan should commit after removing the fault");
+    assert_eq!(outcome.generation_count(), 2);
+    store.shutdown(deadline()).expect("store should stop");
+}
+
+fn rollback_sensitive_retention_counts(connection: &Connection) -> Vec<i64> {
+    [
+        "index_generations",
+        "workspace_views",
+        "workspace_view_members",
+        "source_slot_generation_receipts",
+        "generation_search",
+        "generation_search_rebuild",
+        "generation_facts",
+        "generation_files",
+        "source_snapshots",
+        "source_manifest_entries",
+        "analysis_artifacts",
+        "artifact_facts",
+        "retention_collection_audit",
+        "retention_generation_garbage",
+        "retention_snapshot_garbage",
+        "retention_artifact_garbage",
+        "retention_workspace_view_garbage",
+        "retention_source_slot_receipt_garbage",
+    ]
+    .into_iter()
+    .map(|relation| {
+        connection
+            .query_row(&format!("SELECT count(*) FROM {relation}"), [], |row| {
+                row.get(0)
+            })
+            .unwrap_or_else(|_| panic!("{relation} count should be readable"))
+    })
+    .collect()
+}

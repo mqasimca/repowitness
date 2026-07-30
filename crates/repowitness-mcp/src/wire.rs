@@ -16,12 +16,14 @@ mod context_build;
 mod diagnostics;
 mod graph;
 mod memory_manage;
+mod memory_mutation;
 mod memory_recall;
+mod repository_service_error;
 
 pub use compatibility::{
     COMPATIBILITY_PROFILE_VERSION, CompatibilityGraphSchema, CompatibilityGraphSchemaLimits,
-    CompatibilityLevels, CompatibilityNamespace, CompatibilityOutput, CompatibilityReceipt,
-    GET_ARCHITECTURE_ALIAS_TOOL_NAME, GET_CODE_SNIPPET_ALIAS_TOOL_NAME,
+    CompatibilityLevels, CompatibilityNamespace, CompatibilityObservation, CompatibilityOutput,
+    CompatibilityReceipt, GET_ARCHITECTURE_ALIAS_TOOL_NAME, GET_CODE_SNIPPET_ALIAS_TOOL_NAME,
     GET_GRAPH_SCHEMA_ALIAS_TOOL_NAME, GetArchitectureInput, GetCodeSnippetInput,
     GetGraphSchemaInput, INCUMBENT_COMPATIBLE_PROFILE, INCUMBENT_COMPATIBLE_SURFACE,
     INDEX_STATUS_ALIAS_TOOL_NAME, IndexStatusInput, SEARCH_CODE_ALIAS_TOOL_NAME,
@@ -50,15 +52,19 @@ pub use graph::{
     McpGraphTraceTruncation,
 };
 pub use memory_manage::{
-    MemoryManageFileIdentityStatus, MemoryManageInput, MemoryManageOperation, MemoryManageOutput,
+    MEMORY_MANAGE_SCHEMA_VERSION, MemoryManageDatabaseIdentityStatus,
+    MemoryManageFileIdentityStatus, MemoryManageInput, MemoryManageMaintenanceStatus,
+    MemoryManageMaintenanceStepStatus, MemoryManageOperation, MemoryManageOutput,
     MemoryManagePublicationStatus, MemoryManagePublicationStepStatus, MemoryManageReceipt,
     MemoryManageReviewDecision, MemoryManageServiceRequest,
 };
+pub use memory_mutation::{MemoryMutationOperation, MemoryMutationRequestScope};
 pub use memory_recall::{
     McpMemoryCandidate, McpMemoryCoverage, McpMemoryEvidence, McpMemoryOccurrence,
     McpMemoryProducer, McpMemoryRecord, McpMemoryTarget, McpSelectedMemory, MemoryRecallInput,
     MemoryRecallOutput, MemoryRecallServiceRequest, MemoryRecallServiceSelection,
 };
+pub use repository_service_error::RepositoryServiceError;
 
 /// MCP tool name for bounded lexical supported-language symbol search.
 pub const CODE_SEARCH_TOOL_NAME: &str = "code_search";
@@ -313,41 +319,6 @@ impl fmt::Debug for SymbolGetServiceRequest {
             .finish()
     }
 }
-
-/// Stable categorical failure returned by the injected repository service.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum RepositoryServiceError {
-    /// Local code search failed without a usable result.
-    CodeSearch,
-    /// Context compilation failed without a usable result.
-    ContextBuild,
-    /// Repository diagnostics failed without a usable result.
-    Diagnostics,
-    /// Native Rust graph read failed without a usable result.
-    GraphRead,
-    /// Memory recall failed without a usable result.
-    MemoryRecall,
-    /// Authorized local memory management failed without a usable result.
-    MemoryManage,
-    /// Exact symbol retrieval failed without a usable result.
-    SymbolGet,
-}
-
-impl fmt::Display for RepositoryServiceError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::CodeSearch => "code search failed",
-            Self::ContextBuild => "context build failed",
-            Self::Diagnostics => "repository diagnostics failed",
-            Self::GraphRead => "Rust graph read failed",
-            Self::MemoryRecall => "memory recall failed",
-            Self::MemoryManage => "memory management failed",
-            Self::SymbolGet => "symbol retrieval failed",
-        })
-    }
-}
-
-impl std::error::Error for RepositoryServiceError {}
 
 /// Synchronous repository operations injected by the CLI composition root.
 ///

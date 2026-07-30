@@ -79,6 +79,14 @@ async fn enabled_server_validates_and_forwards_memory_manage() {
         response
             .structured_content
             .as_ref()
+            .and_then(|value| value.get("schema_version"))
+            .and_then(serde_json::Value::as_u64),
+        Some(u64::from(MEMORY_MANAGE_SCHEMA_VERSION))
+    );
+    assert_eq!(
+        response
+            .structured_content
+            .as_ref()
             .and_then(|value| value.get("receipt"))
             .and_then(|value| value.get("operation"))
             .and_then(serde_json::Value::as_str),

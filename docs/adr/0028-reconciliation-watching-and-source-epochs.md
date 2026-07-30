@@ -214,15 +214,18 @@ forced process termination is tested separately.
 
 ## Follow-up
 
-- Implement the bounded polling supervisor over the existing reconciliation
-  and one-shot index use case.
-- Replace the fixed one-shot source epoch with durable reservation and
-  compare-and-set behavior.
-- Connect CLI and MCP task cancellation to the shared token before starting
-  work.
-- Add native watcher adapters only after a benchmark justifies them.
-- Define retained-generation pinning and garbage collection in a focused
-  decision before long-running watch mode is promoted.
+- Implemented locally under this proposed contract: the bounded polling
+  supervisor, mandatory complete reconciliation schedule, durable monotonic
+  source-slot epochs and completion receipts, final source fencing, and the
+  CLI watch command with cooperative Unix and Windows shutdown signaling.
+- Deterministic retention planning, exact apply, root revalidation, and
+  aggregate audit are implemented under the still-Proposed
+  [ADR-0029](0029-bounded-generation-retention-and-garbage-collection.md).
+- Maintainer ratification of the configuration, connected-workspace, watcher,
+  retention, migration, and resource-budget contracts remains a Phase 1 gate.
+  The implementation does not make these proposed decisions accepted.
+- Add native watcher adapters only after measured latency or CPU evidence
+  justifies them; they must continue to feed this reconciliation contract.
 
 ## Supersession
 

@@ -153,7 +153,7 @@ fn mcp_memory_manage_is_process_level_default_deny_and_explicitly_enabled() {
     let written = written["result"]["structuredContent"]
         .as_object()
         .expect("successful memory write must include structured content");
-    assert_eq!(written["schema_version"], serde_json::json!(1));
+    assert_eq!(written["schema_version"], serde_json::json!(2));
     assert_eq!(
         written["receipt"]["operation"],
         serde_json::json!("write")

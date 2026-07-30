@@ -77,16 +77,16 @@ impl RepositoryMemory for FakeMemory {
     fn revalidate(
         &self,
         _invocation: &MemoryRevalidationInvocation,
-    ) -> Result<CliMemoryRevalidationReport, String> {
-        Err("must not be called".to_owned())
+    ) -> Result<CliMemoryRevalidationReport, CliMemoryError> {
+        Err(CliMemoryError::Failed)
     }
 
     fn recall(
         &self,
         _invocation: &MemoryRecallInvocation,
         _configuration: &ResolvedConfiguration,
-    ) -> Result<MemoryRecallOutput, String> {
-        Err("must not be called".to_owned())
+    ) -> Result<MemoryRecallOutput, CliMemoryError> {
+        Err(CliMemoryError::Failed)
     }
 }
 

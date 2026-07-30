@@ -16,9 +16,11 @@ use rusqlite::Connection;
 
 use super::{
     LocalMemoryApprovalRequest, LocalMemoryCorrespondenceReviewRequest,
-    LocalMemoryHistoryImportLimits, LocalMemoryHistoryImportRequest, LocalMemoryManageError,
-    LocalMemoryWriteRequest, approve_local_memory, import_local_memory_history,
-    review_local_memory_correspondence, validate_local_memory_actor, write_local_memory,
+    LocalMemoryDatabaseIdentity, LocalMemoryHistoryImportLimits, LocalMemoryHistoryImportRequest,
+    LocalMemoryMaintenance, LocalMemoryMaintenanceStep, LocalMemoryManageError,
+    LocalMemoryMutation, LocalMemoryWriteRequest, approve_local_memory,
+    import_local_memory_history, map_store_error, review_local_memory_correspondence,
+    validate_local_memory_actor, write_local_memory,
 };
 use crate::{
     ConfigurationFileLayer, LocalIndexRequest, MemoryFormatControl, index_local_repository,
@@ -28,6 +30,46 @@ use crate::{
 const REPOSITORY_ID: &str =
     "rwi1:h:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 const RECORD_ID: &str = "mem_00000000000000000000000000";
+
+#[test]
+fn unknown_sqlite_mutations_keep_operation_specific_memory_guidance() {
+    let cases = [
+        (
+            LocalMemoryMutation::StoreStartup,
+            "reopen the store and run read-only database diagnostics before retrying startup",
+        ),
+        (
+            LocalMemoryMutation::Approval,
+            "reload the exact memory revision, worktree observation, and local approval receipt before retrying",
+        ),
+        (
+            LocalMemoryMutation::HistoryImport,
+            "reload the immutable memory journal and compare every intended revision and Git observation before retrying",
+        ),
+        (
+            LocalMemoryMutation::CorrespondenceReview,
+            "reload correspondence-review history for the exact revision and evidence ordinal before retrying",
+        ),
+        (
+            LocalMemoryMutation::Checkpoint,
+            "retain the known memory receipt and retry only the idempotent checkpoint maintenance step",
+        ),
+    ];
+
+    for (operation, guidance) in cases {
+        let error = map_store_error(crate::SqliteStoreError::MutationOutcomeUnknown, operation);
+        assert_eq!(
+            error,
+            LocalMemoryManageError::MutationOutcomeUnknown { operation }
+        );
+        assert_eq!(error.reconciliation_guidance(), Some(guidance));
+        assert_eq!(
+            error.to_string(),
+            "memory mutation outcome could not be determined"
+        );
+    }
+}
+
 const MEMORY_YAML: &[u8] = include_bytes!("../../tests/fixtures/memory-v1/commit.yaml");
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
@@ -206,6 +248,7 @@ fn current_record_approval_is_exact_idempotent_and_separate_from_authored_text()
     assert!(first.version_inserted());
     assert!(first.observation_inserted());
     assert!(first.approval_inserted());
+    assert_eq!(first.maintenance(), LocalMemoryMaintenance::Complete);
 
     let repeated = approve_local_memory(request, Arc::new(AtomicBool::new(false)))
         .expect("exact repeated approval should be idempotent");
@@ -213,6 +256,7 @@ fn current_record_approval_is_exact_idempotent_and_separate_from_authored_text()
     assert!(!repeated.version_inserted());
     assert!(!repeated.observation_inserted());
     assert!(!repeated.approval_inserted());
+    assert_eq!(repeated.maintenance(), LocalMemoryMaintenance::Complete);
 
     let connection = Connection::open(database).expect("database should open");
     let operations: (i64, i64) = connection
@@ -228,7 +272,56 @@ fn current_record_approval_is_exact_idempotent_and_separate_from_authored_text()
     assert_eq!(operations, (1, 1));
 }
 
+#[cfg(unix)]
+#[test]
+fn approval_reports_database_replacement_after_the_commit() {
+    let repository = GitFixture::new();
+    let outside = TempDirectory::new("approval-replacement");
+    let database = indexed_database(&repository, &outside);
+    let moved = outside.path().join("writer-opened.sqlite3");
+    repository.write_memory(MEMORY_YAML);
+    let request = LocalMemoryApprovalRequest::new(
+        repository.path(),
+        &database,
+        REPOSITORY_ID,
+        RECORD_ID,
+        "trusted-test-actor",
+        456,
+        1_722_000_000_000,
+    );
+
+    let receipt =
+        super::approval::approve_with_hook(request, Arc::new(AtomicBool::new(false)), || {
+            fs::rename(&database, &moved).expect("writer-opened database should move");
+            fs::copy(&moved, &database).expect("database path should be replaced");
+        })
+        .expect("known approval commit should retain its receipt");
+
+    let maintenance = receipt.maintenance();
+    assert!(!maintenance.complete());
+    assert_eq!(maintenance.warning_count(), 1);
+    assert_eq!(
+        maintenance.checkpoint(),
+        LocalMemoryMaintenanceStep::Complete
+    );
+    assert_eq!(maintenance.shutdown(), LocalMemoryMaintenanceStep::Complete);
+    assert_eq!(
+        maintenance.database_identity(),
+        LocalMemoryDatabaseIdentity::ChangedAfterCommit
+    );
+    let approvals: i64 = Connection::open(moved)
+        .expect("writer-opened database should remain readable")
+        .query_row(
+            "SELECT count(*) FROM memory_audit WHERE operation = 'locally_approved'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("known approval should remain durable");
+    assert_eq!(approvals, 1);
+}
+
 mod history;
+mod maintenance;
 
 #[test]
 fn canonical_write_creates_updates_and_rejects_a_stale_parent() {

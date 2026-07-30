@@ -1,3 +1,5 @@
+#[cfg(test)]
+use std::cell::Cell;
 use std::{
     collections::BTreeSet,
     sync::{
@@ -181,6 +183,70 @@ impl CheckpointOutcome {
 pub(super) struct WriteControl<'a> {
     pub(super) cancelled: &'a Arc<AtomicBool>,
     pub(super) deadline: Instant,
+}
+
+#[cfg(test)]
+thread_local! {
+    static MUTATION_COMMIT_IN_PROGRESS: Cell<bool> = const { Cell::new(false) };
+}
+
+#[cfg(test)]
+struct MutationCommitScope;
+
+#[cfg(test)]
+impl MutationCommitScope {
+    fn enter() -> Self {
+        MUTATION_COMMIT_IN_PROGRESS.with(|in_progress| {
+            assert!(
+                !in_progress.replace(true),
+                "mutation commit scopes must not nest"
+            );
+        });
+        Self
+    }
+}
+
+#[cfg(test)]
+impl Drop for MutationCommitScope {
+    fn drop(&mut self) {
+        MUTATION_COMMIT_IN_PROGRESS.with(|in_progress| {
+            assert!(
+                in_progress.replace(false),
+                "mutation commit scope must remain active until drop"
+            );
+        });
+    }
+}
+
+#[cfg(test)]
+pub(super) fn mutation_commit_in_progress() -> bool {
+    MUTATION_COMMIT_IN_PROGRESS.with(Cell::get)
+}
+
+pub(super) fn commit_mutation(transaction: Transaction<'_>) -> Result<(), SqliteStoreError> {
+    #[cfg(test)]
+    let _scope = MutationCommitScope::enter();
+    transaction
+        .commit()
+        .map_err(|_| SqliteStoreError::MutationOutcomeUnknown)
+}
+
+pub(super) struct WriterMutationResult<T> {
+    result: Result<T, SqliteStoreError>,
+    connection_usable: bool,
+}
+
+impl<T> WriterMutationResult<T> {
+    pub(super) const fn new(result: Result<T, SqliteStoreError>, connection_usable: bool) -> Self {
+        Self {
+            result,
+            connection_usable,
+        }
+    }
+
+    pub(super) fn into_parts(self) -> (Result<T, SqliteStoreError>, bool) {
+        (self.result, self.connection_usable)
+    }
 }
 
 #[derive(Clone, Copy)]

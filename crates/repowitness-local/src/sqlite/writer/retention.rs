@@ -119,9 +119,7 @@ impl WriterState {
             deadline,
         )?;
         check_retention_control(cancelled, deadline)?;
-        transaction
-            .commit()
-            .map_err(|error| retention_database_error(error, cancelled, deadline))?;
+        commit_mutation(transaction)?;
         Ok(outcome)
     }
 }
@@ -161,5 +159,6 @@ pub(crate) fn retention_database_error(
 }
 
 include!("retention/budget.rs");
+include!("retention/root_relations.rs");
 include!("retention/plan.rs");
 include!("retention/sweep.rs");

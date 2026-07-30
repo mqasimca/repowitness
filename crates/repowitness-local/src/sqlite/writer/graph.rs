@@ -215,9 +215,7 @@ impl WriterState {
                     )
                     .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
             }
-            transaction
-                .commit()
-                .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
+            commit_mutation(transaction)?;
             changed == 1
         };
         if !inserted {
@@ -298,9 +296,7 @@ impl WriterState {
                     )
                     .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
             }
-            transaction
-                .commit()
-                .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
+            commit_mutation(transaction)?;
         }
         Ok(())
     }
@@ -331,9 +327,7 @@ impl WriterState {
                     )
                     .map_err(|_| SqliteStoreError::InvalidGraphPublication)?;
             }
-            transaction
-                .commit()
-                .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
+            commit_mutation(transaction)?;
         }
         Ok(())
     }
@@ -365,9 +359,7 @@ impl WriterState {
                     )
                     .map_err(|_| SqliteStoreError::InvalidGraphPublication)?;
             }
-            transaction
-                .commit()
-                .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
+            commit_mutation(transaction)?;
         }
         Ok(())
     }
@@ -409,9 +401,7 @@ impl WriterState {
                     )
                     .map_err(|_| SqliteStoreError::InvalidGraphPublication)?;
             }
-            transaction
-                .commit()
-                .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
+            commit_mutation(transaction)?;
         }
         Ok(())
     }
@@ -462,9 +452,7 @@ impl WriterState {
                     )
                     .map_err(|_| SqliteStoreError::InvalidGraphPublication)?;
             }
-            transaction
-                .commit()
-                .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
+            commit_mutation(transaction)?;
         }
         Ok(())
     }
@@ -540,9 +528,7 @@ impl WriterState {
                 )
                 .map_err(|_| SqliteStoreError::InvalidGraphPublication)?;
         }
-        transaction
-            .commit()
-            .map_err(|_| SqliteStoreError::DatabaseOperationFailed)
+        commit_mutation(transaction)
     }
 
     fn stage_graph_edges(
@@ -594,9 +580,7 @@ impl WriterState {
                     )
                     .map_err(|_| SqliteStoreError::InvalidGraphPublication)?;
             }
-            transaction
-                .commit()
-                .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
+            commit_mutation(transaction)?;
         }
         Ok(())
     }

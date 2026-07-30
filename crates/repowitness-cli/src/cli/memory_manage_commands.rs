@@ -22,7 +22,7 @@ fn run_memory_manage(
     };
     match memory.manage(&invocation) {
         Ok(report) => emit_memory_manage_report(stdout, stderr, report),
-        Err(_) => emit_error(stderr, EXIT_SOFTWARE, "error: memory management failed\n"),
+        Err(error) => emit_memory_error(stderr, "error: memory management failed\n", error),
     }
 }
 
@@ -375,6 +375,7 @@ fn emit_memory_manage_report(
     if !memory_manage_report_is_valid(&report) {
         return emit_error(stderr, EXIT_SOFTWARE, "error: memory management failed\n");
     }
+    let (request_scope, operation) = memory_manage_report_mutation(&report);
     let result = match report {
         CliMemoryManageReport::Write {
             revision,
@@ -383,7 +384,7 @@ fn emit_memory_manage_report(
             publication,
         } => writeln!(
             writer,
-            "{{\"schema_version\":1,\"operation\":\"write\",\"revision_sha256\":\"{revision}\",\"created\":{created},\"canonical_bytes\":{canonical_bytes},\"publication\":{{\"complete\":{},\"warning_count\":{},\"temporary_cleanup\":\"{}\",\"target_identity\":\"{}\",\"records_directory_identity\":\"{}\",\"directory_sync\":\"{}\"}}}}",
+            "{{\"schema_version\":{MEMORY_MANAGE_SCHEMA_VERSION},\"operation\":\"write\",\"revision_sha256\":\"{revision}\",\"created\":{created},\"canonical_bytes\":{canonical_bytes},\"publication\":{{\"complete\":{},\"warning_count\":{},\"temporary_cleanup\":\"{}\",\"target_identity\":\"{}\",\"records_directory_identity\":\"{}\",\"directory_sync\":\"{}\"}}}}",
             publication.complete,
             publication.warning_count,
             publication.temporary_cleanup,
@@ -396,13 +397,19 @@ fn emit_memory_manage_report(
             version_inserted,
             observation_inserted,
             approval_inserted,
+            maintenance,
         } => writeln!(
             writer,
-            "{{\"schema_version\":1,\"operation\":\"approve\",\"revision_sha256\":\"{revision}\",\"version_inserted\":{version_inserted},\"observation_inserted\":{observation_inserted},\"approval_inserted\":{approval_inserted}}}"
+            "{{\"schema_version\":{MEMORY_MANAGE_SCHEMA_VERSION},\"operation\":\"approve\",\"revision_sha256\":\"{revision}\",\"version_inserted\":{version_inserted},\"observation_inserted\":{observation_inserted},\"approval_inserted\":{approval_inserted},\"maintenance\":{}}}",
+            cli_memory_maintenance_json(maintenance)
         ),
-        CliMemoryManageReport::Review { inserted } => writeln!(
+        CliMemoryManageReport::Review {
+            inserted,
+            maintenance,
+        } => writeln!(
             writer,
-            "{{\"schema_version\":1,\"operation\":\"review\",\"inserted\":{inserted}}}"
+            "{{\"schema_version\":{MEMORY_MANAGE_SCHEMA_VERSION},\"operation\":\"review\",\"inserted\":{inserted},\"maintenance\":{}}}",
+            cli_memory_maintenance_json(maintenance)
         ),
         CliMemoryManageReport::ImportHistory {
             commits_inspected,
@@ -412,15 +419,40 @@ fn emit_memory_manage_report(
             total_record_bytes,
             git_processes,
             history_complete,
+            maintenance,
         } => writeln!(
             writer,
-            "{{\"schema_version\":1,\"operation\":\"import_history\",\"commits_inspected\":{commits_inspected},\"records_inspected\":{records_inspected},\"imported_versions\":{imported_versions},\"appended_observations\":{appended_observations},\"total_record_bytes\":{total_record_bytes},\"git_processes\":{git_processes},\"history_complete\":{history_complete}}}"
+            "{{\"schema_version\":{MEMORY_MANAGE_SCHEMA_VERSION},\"operation\":\"import_history\",\"commits_inspected\":{commits_inspected},\"records_inspected\":{records_inspected},\"imported_versions\":{imported_versions},\"appended_observations\":{appended_observations},\"total_record_bytes\":{total_record_bytes},\"git_processes\":{git_processes},\"history_complete\":{history_complete},\"maintenance\":{}}}",
+            cli_memory_maintenance_json(maintenance)
         ),
     };
     if result.is_ok() {
         EXIT_SUCCESS
     } else {
-        EXIT_IO
+        emit_memory_receipt_delivery_failure(stderr, request_scope, operation)
+    }
+}
+
+const fn memory_manage_report_mutation(
+    report: &CliMemoryManageReport,
+) -> (MemoryMutationRequestScope, MemoryMutationOperation) {
+    match report {
+        CliMemoryManageReport::Write { .. } => (
+            MemoryMutationRequestScope::Write,
+            MemoryMutationOperation::CanonicalWrite,
+        ),
+        CliMemoryManageReport::Approve { .. } => (
+            MemoryMutationRequestScope::Approve,
+            MemoryMutationOperation::Approval,
+        ),
+        CliMemoryManageReport::Review { .. } => (
+            MemoryMutationRequestScope::Review,
+            MemoryMutationOperation::CorrespondenceReview,
+        ),
+        CliMemoryManageReport::ImportHistory { .. } => (
+            MemoryMutationRequestScope::ImportHistory,
+            MemoryMutationOperation::HistoryImport,
+        ),
     }
 }
 
@@ -431,8 +463,15 @@ fn memory_manage_report_is_valid(report: &CliMemoryManageReport) -> bool {
             publication,
             ..
         } => valid_memory_manage_revision(revision) && publication_is_valid(publication),
-        CliMemoryManageReport::Approve { revision, .. } => valid_memory_manage_revision(revision),
-        CliMemoryManageReport::Review { .. } | CliMemoryManageReport::ImportHistory { .. } => true,
+        CliMemoryManageReport::Approve {
+            revision,
+            maintenance,
+            ..
+        } => valid_memory_manage_revision(revision) && maintenance_is_valid(maintenance),
+        CliMemoryManageReport::Review { maintenance, .. }
+        | CliMemoryManageReport::ImportHistory { maintenance, .. } => {
+            maintenance_is_valid(maintenance)
+        }
     }
 }
 
@@ -443,9 +482,41 @@ fn valid_memory_manage_revision(revision: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
 }
 
+fn maintenance_is_valid(maintenance: &CliMemoryMaintenanceStatus) -> bool {
+    let checkpoint_deferred = maintenance.checkpoint == "deferred";
+    let shutdown_deferred = maintenance.shutdown == "deferred";
+    let identity_unconfirmed = maintenance.database_identity != "confirmed_at_final_fence";
+    matches!(maintenance.checkpoint, "complete" | "deferred")
+        && matches!(maintenance.shutdown, "complete" | "deferred")
+        && matches!(
+            maintenance.database_identity,
+            "confirmed_at_final_fence" | "changed_after_commit" | "unconfirmed"
+        )
+        && maintenance.warning_count
+            == u8::from(checkpoint_deferred)
+                + u8::from(shutdown_deferred)
+                + u8::from(identity_unconfirmed)
+        && maintenance.complete
+            == (!checkpoint_deferred && !shutdown_deferred && !identity_unconfirmed)
+}
+
+fn cli_memory_maintenance_json(maintenance: CliMemoryMaintenanceStatus) -> String {
+    format!(
+        "{{\"complete\":{},\"warning_count\":{},\"checkpoint\":\"{}\",\"shutdown\":\"{}\",\"database_identity\":\"{}\"}}",
+        maintenance.complete,
+        maintenance.warning_count,
+        maintenance.checkpoint,
+        maintenance.shutdown,
+        maintenance.database_identity
+    )
+}
+
 fn publication_is_valid(publication: &CliMemoryPublicationStatus) -> bool {
     publication.warning_count <= 4
-        && matches!(publication.temporary_cleanup, "not_required" | "complete" | "deferred")
+        && matches!(
+            publication.temporary_cleanup,
+            "not_required" | "complete" | "deferred"
+        )
         && matches!(
             publication.target_identity,
             "confirmed_at_final_fence" | "changed_after_commit"
@@ -454,5 +525,8 @@ fn publication_is_valid(publication: &CliMemoryPublicationStatus) -> bool {
             publication.records_directory_identity,
             "confirmed_at_final_fence" | "changed_after_commit"
         )
-        && matches!(publication.directory_sync, "not_required" | "complete" | "deferred")
+        && matches!(
+            publication.directory_sync,
+            "not_required" | "complete" | "deferred"
+        )
 }

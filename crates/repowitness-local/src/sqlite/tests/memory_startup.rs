@@ -218,7 +218,7 @@ fn writer_revalidates_the_guarded_file_after_sqlite_opens() {
     );
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[test]
 fn writer_guard_rejects_a_hard_link_before_sqlite_can_write() {
     let directory = TempDirectory::new();

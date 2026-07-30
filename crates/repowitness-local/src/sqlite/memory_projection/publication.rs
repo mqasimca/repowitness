@@ -114,9 +114,7 @@ fn publish_memory_projection_inner(
         )
         .map_err(|_| control_database_error(control))?;
     check_control(control)?;
-    transaction
-        .commit()
-        .map_err(|_| control_database_error(control))?;
+    commit_mutation(transaction)?;
     Ok(MemoryProjectionPublication {
         projection_id,
         projected_records: record_count,

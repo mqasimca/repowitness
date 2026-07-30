@@ -37,6 +37,8 @@ impl OwnedSqliteIndex {
     ///
     /// Selector resolution and source preparation intentionally stay outside
     /// this crate-internal composition seam.
+    /// On [`SqliteStoreError::MutationOutcomeUnknown`], read the active
+    /// immutable workspace view before retrying.
     pub(crate) fn publish_completed_workspace_view(
         &self,
         connected_workspace: ConnectedWorkspaceId,
@@ -51,6 +53,9 @@ impl OwnedSqliteIndex {
     }
 
     /// Registers one immutable bounded source-slot membership set.
+    ///
+    /// On [`SqliteStoreError::MutationOutcomeUnknown`], reopen the store and
+    /// inspect durable membership and source-slot state before retrying.
     pub fn connect_workspace(
         &self,
         connected_workspace: ConnectedWorkspaceId,
@@ -70,7 +75,12 @@ impl OwnedSqliteIndex {
             })),
             deadline,
         )?;
-        match receive_mutation_reply(&receiver, Some(cancelled.as_ref()), deadline) {
+        match receive_mutation_reply(
+            &receiver,
+            Some(cancelled.as_ref()),
+            deadline,
+            Some(&self.unresolved_mutation),
+        ) {
             Ok(()) => Ok(()),
             Err(error) => {
                 cancelled.store(true, Ordering::Release);
@@ -103,6 +113,9 @@ impl OwnedSqliteIndex {
     }
 
     /// Atomically reserves the exact next durable epoch for one source slot.
+    ///
+    /// On [`SqliteStoreError::MutationOutcomeUnknown`], call
+    /// [`Self::source_slot_state`] before retrying the reservation.
     pub fn reserve_source_slot_epoch(
         &self,
         connected_workspace: ConnectedWorkspaceId,
@@ -124,10 +137,18 @@ impl OwnedSqliteIndex {
             })),
             deadline,
         )?;
-        receive_mutation_reply(&receiver, Some(cancelled.as_ref()), deadline)
+        receive_mutation_reply(
+            &receiver,
+            Some(cancelled.as_ref()),
+            deadline,
+            Some(&self.unresolved_mutation),
+        )
     }
 
     /// Binds one ready generation to a reserved epoch while it remains current.
+    ///
+    /// On [`SqliteStoreError::MutationOutcomeUnknown`], call
+    /// [`Self::source_slot_state`] and compare its completion before retrying.
     pub fn complete_source_slot_epoch(
         &self,
         connected_workspace: ConnectedWorkspaceId,
@@ -151,10 +172,19 @@ impl OwnedSqliteIndex {
             })),
             deadline,
         )?;
-        receive_mutation_reply(&receiver, Some(cancelled.as_ref()), deadline)
+        receive_mutation_reply(
+            &receiver,
+            Some(cancelled.as_ref()),
+            deadline,
+            Some(&self.unresolved_mutation),
+        )
     }
 
     /// Atomically publishes one complete immutable connected-workspace view.
+    ///
+    /// On [`SqliteStoreError::MutationOutcomeUnknown`], call
+    /// [`Self::active_workspace_view`] and compare the canonical members before
+    /// retrying.
     pub fn publish_workspace_view(
         &self,
         connected_workspace: ConnectedWorkspaceId,
@@ -174,7 +204,12 @@ impl OwnedSqliteIndex {
             })),
             deadline,
         )?;
-        match receive_mutation_reply(&receiver, Some(cancelled.as_ref()), deadline) {
+        match receive_mutation_reply(
+            &receiver,
+            Some(cancelled.as_ref()),
+            deadline,
+            Some(&self.unresolved_mutation),
+        ) {
             Ok(view) => Ok(view),
             Err(error) => {
                 cancelled.store(true, Ordering::Release);

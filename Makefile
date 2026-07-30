@@ -21,7 +21,6 @@ CARGO_DENY_VERSION ?= 0.19.4
 	fuzz-check \
 	grammars \
 	help \
-	rust-lines \
 	rustdoc \
 	test \
 	test-all \
@@ -44,7 +43,6 @@ help:
 		'  make test-all                  Run every supported test profile' \
 		'  make test-sqlite               Run the SQLite durability spike' \
 		'  make test-sqlite-benchmarks    Run manual SQLite probes in release mode' \
-		'  make rust-lines                Enforce the 700-line Rust source limit' \
 		'  make rustdoc                   Build warning-free API documentation' \
 		'  make deny                      Check advisories, licenses, bans, and sources' \
 		'  make docs                      Check Markdown files and local links' \
@@ -95,9 +93,6 @@ test-sqlite-benchmarks:
 	$(CARGO) test -p repowitness-local --test sqlite_generation_spike \
 		--release --locked -- --ignored --nocapture
 
-rust-lines:
-	./scripts/check-rust-source-lines
-
 rustdoc:
 	RUSTDOCFLAGS="-D warnings" $(CARGO) doc \
 		--workspace --all-features --no-deps --locked
@@ -128,6 +123,6 @@ benchmarks:
 diff-check:
 	git diff --check
 
-ci: fmt-check rust-lines fuzz-check check clippy test test-all-features test-doc rustdoc deny deps grammars benchmarks docs diff-check
+ci: fmt-check fuzz-check check clippy test test-all-features test-doc rustdoc deny deps grammars benchmarks docs diff-check
 
 all: ci

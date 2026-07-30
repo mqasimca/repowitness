@@ -1,0 +1,253 @@
+#!/bin/sh
+set -eu
+
+TEST_TEMP=$(mktemp -d "${TMPDIR:-/tmp}/repowitness-phase1-support.XXXXXXXX")
+FRESH_DATABASE_ONE=
+FRESH_DATABASE_TWO=
+INTERRUPT_SUPERVISOR=
+RESIDUAL_DESCENDANT=
+cleanup() {
+    if [ -n "$INTERRUPT_SUPERVISOR" ]; then
+        kill -TERM "$INTERRUPT_SUPERVISOR" 2>/dev/null || true
+        wait "$INTERRUPT_SUPERVISOR" 2>/dev/null || true
+    fi
+    if [ -n "$RESIDUAL_DESCENDANT" ]; then
+        kill -KILL "$RESIDUAL_DESCENDANT" 2>/dev/null || true
+    fi
+    rm -f \
+        "$TEST_TEMP/ok.out" "$TEST_TEMP/ok.err" \
+        "$TEST_TEMP/residual.out" "$TEST_TEMP/residual.err" \
+        "$TEST_TEMP/residual-descendant.pid" \
+        "$TEST_TEMP/large.out" "$TEST_TEMP/large.err" \
+        "$TEST_TEMP/slow.out" "$TEST_TEMP/slow.err" \
+        "$TEST_TEMP/failure.out" "$TEST_TEMP/failure.err" \
+        "$TEST_TEMP/interrupted.out" "$TEST_TEMP/interrupted.err" \
+        "$TEST_TEMP/interrupted-parent.pid" \
+        "$TEST_TEMP/interrupted-descendant.pid" \
+        "$TEST_TEMP/corpus-root.output" \
+        "$TEST_TEMP/corpus-root.errors" \
+        "$TEST_TEMP/environment-filesystem-type.output" \
+        "$TEST_TEMP/environment-filesystem-type.errors"
+    if [ -n "$FRESH_DATABASE_ONE" ]; then
+        rmdir "${FRESH_DATABASE_ONE%/*}"
+    fi
+    if [ -n "$FRESH_DATABASE_TWO" ]; then
+        rmdir "${FRESH_DATABASE_TWO%/*}"
+    fi
+    rmdir "$TEST_TEMP"
+}
+trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
+
+wait_for_processes_to_exit() {
+    perl -MTime::HiRes=clock_gettime,CLOCK_MONOTONIC,sleep -e '
+        use strict;
+        use warnings;
+        my @pids;
+        for my $path (@ARGV) {
+            open my $handle, "<:raw", $path or exit 1;
+            my $pid = <$handle>;
+            close $handle or exit 1;
+            chomp $pid;
+            exit 1 if $pid !~ /\A[1-9][0-9]*\z/;
+            push @pids, 0 + $pid;
+        }
+        my $deadline = clock_gettime(CLOCK_MONOTONIC) + 2;
+        while (clock_gettime(CLOCK_MONOTONIC) < $deadline) {
+            my @alive = grep { kill 0, $_ } @pids;
+            exit 0 if !@alive;
+            sleep 0.01;
+        }
+        exit 1;
+    ' "$@"
+}
+
+BENCHMARK_TEMP=$TEST_TEMP
+. ./scripts/phase1-benchmark-support
+
+resolved_corpus=$(resolve_local_corpus_root "$TEST_TEMP")
+case "$resolved_corpus" in
+    /*)
+        ;;
+    *)
+        echo "local corpus path was not canonicalized" >&2
+        exit 1
+        ;;
+esac
+if resolve_local_corpus_root "$TEST_TEMP/missing" >/dev/null; then
+    echo "missing local corpus path was accepted" >&2
+    exit 1
+fi
+
+workload=caller-state-must-survive
+FRESH_DATABASE_ONE=$(fresh_workload_database atomic-workspace)
+FRESH_DATABASE_TWO=$(fresh_workload_database atomic-workspace)
+[ "$workload" = caller-state-must-survive ]
+[ "$FRESH_DATABASE_ONE" != "$FRESH_DATABASE_TWO" ]
+[ ! -e "$FRESH_DATABASE_ONE" ]
+[ ! -e "$FRESH_DATABASE_TWO" ]
+if fresh_workload_database unexpected-workload >/dev/null; then
+    echo "fresh workload database accepted an unknown workload" >&2
+    exit 1
+fi
+printf 'database' >"$FRESH_DATABASE_ONE"
+printf 'lease' >"$FRESH_DATABASE_ONE.repowitness-mutation.lock"
+if ! remove_fresh_workload_database "$FRESH_DATABASE_ONE" \
+    || [ -e "${FRESH_DATABASE_ONE%/*}" ]
+then
+    echo "fresh workload database was not removed exactly" >&2
+    exit 1
+fi
+FRESH_DATABASE_ONE=
+if remove_fresh_workload_database "$TEST_TEMP/not-owned/index.sqlite3"; then
+    echo "fresh workload cleanup accepted an unowned path" >&2
+    exit 1
+fi
+
+if [ "$(uname -s)" = Darwin ]; then
+    capture_darwin_filesystem_type
+    filesystem_type=$(
+        required_single_line \
+            "$TEST_TEMP/environment-filesystem-type.output" "filesystem type"
+    )
+    case "$filesystem_type" in
+        ''|*[!+.A-Za-z0-9_-]*)
+            echo "Darwin filesystem type receipt was invalid" >&2
+            exit 1
+            ;;
+    esac
+fi
+
+run_bounded_capture "$TEST_TEMP/ok.out" "$TEST_TEMP/ok.err" \
+    perl -e 'print "ok\n"; warn "note\n"'
+[ "$(sed -n '1p' "$TEST_TEMP/ok.out")" = ok ]
+[ "$(sed -n '1p' "$TEST_TEMP/ok.err")" = note ]
+
+run_bounded_capture \
+    "$TEST_TEMP/residual.out" "$TEST_TEMP/residual.err" \
+    perl -MTime::HiRes=sleep -e '
+        use strict;
+        use warnings;
+        my $path = shift @ARGV;
+        my $descendant = fork();
+        exit 123 if !defined $descendant;
+        exit 0 if $descendant != 0;
+        open my $handle, ">:raw", $path or exit 120;
+        print {$handle} "$$\n" or exit 121;
+        close $handle or exit 122;
+        close STDIN;
+        close STDOUT;
+        close STDERR;
+        $SIG{TERM} = sub {};
+        sleep 30;
+        exit 0;
+    ' -- "$TEST_TEMP/residual-descendant.pid"
+RESIDUAL_DESCENDANT=$(sed -n '1p' \
+    "$TEST_TEMP/residual-descendant.pid")
+case "$RESIDUAL_DESCENDANT" in
+    ''|*[!0-9]*)
+        echo "bounded capture residual fixture did not start" >&2
+        exit 1
+        ;;
+esac
+if ! wait_for_processes_to_exit \
+    "$TEST_TEMP/residual-descendant.pid"
+then
+    echo "bounded capture left a successful descendant running" >&2
+    exit 1
+fi
+RESIDUAL_DESCENDANT=
+
+if (
+    MAX_CAPTURED_OUTPUT_BYTES=4
+    run_bounded_capture "$TEST_TEMP/large.out" "$TEST_TEMP/large.err" \
+        perl -e 'print "12345"'
+)
+then
+    echo "bounded capture accepted oversized output" >&2
+    exit 1
+fi
+
+if (
+    PHASE1_CAPTURE_DEADLINE_MS=50
+    run_bounded_capture "$TEST_TEMP/slow.out" "$TEST_TEMP/slow.err" \
+        perl -MTime::HiRes=sleep -e 'sleep 1'
+)
+then
+    echo "bounded capture accepted a deadline violation" >&2
+    exit 1
+fi
+
+perl scripts/phase1-bounded-capture \
+    "$TEST_TEMP/interrupted.out" "$TEST_TEMP/interrupted.err" \
+    "$MAX_CAPTURED_OUTPUT_BYTES" 5000 \
+    perl -MTime::HiRes=sleep -e '
+        use strict;
+        use warnings;
+        my ($parent_path, $descendant_path) = @ARGV;
+        sub record_pid {
+            my ($path) = @_;
+            open my $handle, ">:raw", $path or exit 120;
+            print {$handle} "$$\n" or exit 121;
+            close $handle or exit 122;
+        }
+        record_pid($parent_path);
+        my $descendant = fork();
+        exit 123 if !defined $descendant;
+        if ($descendant == 0) {
+            record_pid($descendant_path);
+            sleep 30;
+            exit 0;
+        }
+        sleep 30;
+        waitpid($descendant, 0);
+    ' -- \
+    "$TEST_TEMP/interrupted-parent.pid" \
+    "$TEST_TEMP/interrupted-descendant.pid" &
+INTERRUPT_SUPERVISOR=$!
+wait_attempt=0
+while { [ ! -s "$TEST_TEMP/interrupted-parent.pid" ] \
+    || [ ! -s "$TEST_TEMP/interrupted-descendant.pid" ]; } \
+    && [ "$wait_attempt" -lt 100 ]
+do
+    sleep 0.01
+    wait_attempt=$((wait_attempt + 1))
+done
+if [ ! -s "$TEST_TEMP/interrupted-parent.pid" ] \
+    || [ ! -s "$TEST_TEMP/interrupted-descendant.pid" ]
+then
+    echo "bounded capture interruption fixture did not start" >&2
+    exit 1
+fi
+kill -TERM "$INTERRUPT_SUPERVISOR"
+if wait "$INTERRUPT_SUPERVISOR"; then
+    echo "bounded capture accepted an interrupted command" >&2
+    exit 1
+fi
+INTERRUPT_SUPERVISOR=
+if ! wait_for_processes_to_exit \
+    "$TEST_TEMP/interrupted-parent.pid" \
+    "$TEST_TEMP/interrupted-descendant.pid"
+then
+    echo "bounded capture left an interrupted process running" >&2
+    exit 1
+fi
+
+if (
+    PHASE1_CAPTURE_DEADLINE_MS=$((MAX_COMMAND_WALL_MS + 1))
+    run_bounded_capture "$TEST_TEMP/slow.out" "$TEST_TEMP/slow.err" \
+        perl -e 'exit 0'
+)
+then
+    echo "bounded capture accepted an oversized deadline" >&2
+    exit 1
+fi
+
+if run_bounded_capture "$TEST_TEMP/failure.out" "$TEST_TEMP/failure.err" \
+    perl -e 'exit 7'
+then
+    echo "bounded capture accepted a nonzero command" >&2
+    exit 1
+fi
+
+printf 'Phase 1 benchmark support checks passed\n'

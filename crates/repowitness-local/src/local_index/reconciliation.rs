@@ -171,7 +171,13 @@ fn reconcile_prepared_local_index(
 ) -> Result<LocalReconciliationOutcome, LocalIndexError> {
     let persisted_epoch = writer
         .ensure_workspace(repository, INITIAL_SOURCE_EPOCH, deadline)
-        .map_err(|source| LocalIndexError::WorkspaceRegistration { source })?;
+        .map_err(|source| {
+            map_index_mutation_error(
+                LocalIndexMutation::WorkspaceRegistration,
+                source,
+                |source| LocalIndexError::WorkspaceRegistration { source },
+            )
+        })?;
     let connected_workspace =
         repowitness_domain::ConnectedWorkspaceId::for_single_repository(repository);
     let source_slot = repowitness_domain::SourceSlotId::for_repository(repository);
@@ -214,7 +220,13 @@ fn reconcile_prepared_local_index(
                 completion.source_epoch().get(),
                 deadline,
             )
-            .map_err(|source| LocalIndexError::PublicationActivation { source })?;
+            .map_err(|source| {
+                map_index_mutation_error(
+                    LocalIndexMutation::GenerationPublication,
+                    source,
+                    |source| LocalIndexError::PublicationActivation { source },
+                )
+            })?;
         return Ok(LocalReconciliationOutcome::Resumed(activated_report(
             completion.generation(),
             completion.source_epoch().get(),

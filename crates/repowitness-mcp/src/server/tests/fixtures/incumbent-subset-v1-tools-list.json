@@ -1,0 +1,181 @@
+{
+  "schema_version": 1,
+  "profile": "incumbent-compatible",
+  "surface": "native-v1-plus-incumbent-subset-v1",
+  "surface_tool_count": 18,
+  "aliases": [
+    {
+      "name": "get_architecture",
+      "title": null,
+      "description": "Compatibility subset: return count-only Rust syntax-graph architecture with a versioned RepoWitness receipt.",
+      "input_properties": [
+        "graph_generation",
+        "max_output_bytes",
+        "max_results",
+        "timeout_ms",
+        "workspace_view"
+      ],
+      "input_required": [],
+      "input_additional_properties": false,
+      "output_schema_present": true,
+      "annotations": {
+        "title": null,
+        "read_only": true,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": false
+      }
+    },
+    {
+      "name": "get_code_snippet",
+      "title": null,
+      "description": "Compatibility subset: retrieve one exact digest-verified declaration with a versioned RepoWitness receipt.",
+      "input_properties": [
+        "artifact_sha256",
+        "content_sha256",
+        "fact_ordinal",
+        "generation",
+        "path",
+        "snapshot_sha256",
+        "timeout_ms"
+      ],
+      "input_required": [
+        "artifact_sha256",
+        "content_sha256",
+        "fact_ordinal",
+        "generation",
+        "path",
+        "snapshot_sha256"
+      ],
+      "input_additional_properties": false,
+      "output_schema_present": true,
+      "annotations": {
+        "title": null,
+        "read_only": true,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": false
+      }
+    },
+    {
+      "name": "get_graph_schema",
+      "title": null,
+      "description": "Compatibility subset: inspect graph kinds, limits, alias capability levels, limitations, and immutable status.",
+      "input_properties": [
+        "graph_generation",
+        "timeout_ms",
+        "workspace_view"
+      ],
+      "input_required": [],
+      "input_additional_properties": false,
+      "output_schema_present": true,
+      "annotations": {
+        "title": null,
+        "read_only": true,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": false
+      }
+    },
+    {
+      "name": "index_status",
+      "title": null,
+      "description": "Compatibility subset: inspect active immutable index status, coverage, freshness, and limitations.",
+      "input_properties": [
+        "timeout_ms"
+      ],
+      "input_required": [],
+      "input_additional_properties": false,
+      "output_schema_present": true,
+      "annotations": {
+        "title": null,
+        "read_only": true,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": false
+      }
+    },
+    {
+      "name": "search_code",
+      "title": null,
+      "description": "Compatibility subset: run bounded literal code search with complete native evidence and coverage.",
+      "input_properties": [
+        "max_results",
+        "query",
+        "timeout_ms"
+      ],
+      "input_required": [
+        "query"
+      ],
+      "input_additional_properties": false,
+      "output_schema_present": true,
+      "annotations": {
+        "title": null,
+        "read_only": true,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": false
+      }
+    },
+    {
+      "name": "search_graph",
+      "title": null,
+      "description": "Compatibility subset: search exact Rust definition names with immutable selectors and coverage.",
+      "input_properties": [
+        "graph_generation",
+        "max_output_bytes",
+        "max_results",
+        "query",
+        "timeout_ms",
+        "workspace_view"
+      ],
+      "input_required": [
+        "query"
+      ],
+      "input_additional_properties": false,
+      "output_schema_present": true,
+      "annotations": {
+        "title": null,
+        "read_only": true,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": false
+      }
+    },
+    {
+      "name": "trace_path",
+      "title": null,
+      "description": "Compatibility subset: traverse from an exact Rust selector to depth five with evidence and truncation.",
+      "input_properties": [
+        "direction",
+        "edge_kinds",
+        "graph_generation",
+        "max_depth",
+        "max_frontier",
+        "max_input_bytes",
+        "max_input_edges",
+        "max_output_bytes",
+        "max_results",
+        "max_visited_edges",
+        "max_visited_nodes",
+        "start",
+        "timeout_ms",
+        "workspace_view"
+      ],
+      "input_required": [
+        "direction",
+        "edge_kinds",
+        "start"
+      ],
+      "input_additional_properties": false,
+      "output_schema_present": true,
+      "annotations": {
+        "title": null,
+        "read_only": true,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": false
+      }
+    }
+  ]
+}

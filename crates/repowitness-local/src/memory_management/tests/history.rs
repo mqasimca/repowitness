@@ -27,6 +27,7 @@ fn reachable_history_imports_observations_only_and_retries_idempotently() {
     assert!(first.total_record_bytes() > 0);
     assert_eq!(first.git_processes(), 8);
     assert!(first.history_complete());
+    assert_eq!(first.maintenance(), LocalMemoryMaintenance::Complete);
 
     let repeated = import_local_memory_history(request, Arc::new(AtomicBool::new(false)))
         .expect("history retry should be idempotent");
@@ -35,6 +36,7 @@ fn reachable_history_imports_observations_only_and_retries_idempotently() {
     assert_eq!(repeated.imported_versions(), 0);
     assert_eq!(repeated.appended_observations(), 0);
     assert!(repeated.history_complete());
+    assert_eq!(repeated.maintenance(), LocalMemoryMaintenance::Complete);
 
     let connection = Connection::open(database).expect("database should open");
     let counts: (i64, i64, i64) = connection
@@ -49,6 +51,45 @@ fn reachable_history_imports_observations_only_and_retries_idempotently() {
         )
         .expect("history counts should be readable");
     assert_eq!(counts, (1, 2, 0));
+}
+
+#[cfg(unix)]
+#[test]
+fn history_import_reports_a_hard_link_added_after_the_commit() {
+    let repository = GitFixture::new();
+    repository.commit_memory(MEMORY_YAML, "memory");
+    let outside = TempDirectory::new("history-hard-link");
+    let database = outside.path().join("index.sqlite3");
+    let alias = outside.path().join("database-alias.sqlite3");
+    let request = LocalMemoryHistoryImportRequest::new(
+        repository.path(),
+        &database,
+        REPOSITORY_ID,
+        "trusted-history-observer",
+        123,
+        1_722_000_000_001,
+    );
+
+    let report = super::super::history::import_local_memory_history_with_hook(
+        request,
+        Arc::new(AtomicBool::new(false)),
+        || fs::hard_link(&database, &alias).expect("database hard link should be created"),
+    )
+    .expect("known history commit should retain its report");
+
+    let maintenance = report.maintenance();
+    assert!(!maintenance.complete());
+    assert_eq!(maintenance.warning_count(), 1);
+    assert_eq!(
+        maintenance.database_identity(),
+        LocalMemoryDatabaseIdentity::ChangedAfterCommit
+    );
+    assert_eq!(
+        maintenance.checkpoint(),
+        LocalMemoryMaintenanceStep::Complete
+    );
+    assert_eq!(maintenance.shutdown(), LocalMemoryMaintenanceStep::Complete);
+    assert!(alias.is_file());
 }
 
 #[test]

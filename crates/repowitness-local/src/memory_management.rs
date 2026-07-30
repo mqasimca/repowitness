@@ -25,11 +25,18 @@ use crate::{
 };
 
 mod approval;
+mod finalization;
 mod history;
 mod review;
 mod secret;
 mod write;
 
+#[cfg(test)]
+pub(crate) use finalization::finish_known_memory_mutation;
+pub use finalization::{
+    LocalMemoryDatabaseIdentity, LocalMemoryMaintenance, LocalMemoryMaintenanceStep,
+};
+pub(crate) use finalization::{OpenedMemoryStore, finish_known_memory_mutation_with_hook};
 pub use history::{
     LocalMemoryHistoryImportLimits, LocalMemoryHistoryImportReport,
     LocalMemoryHistoryImportRequest, import_local_memory_history,
@@ -287,6 +294,7 @@ pub struct LocalMemoryApprovalReceipt {
     version_inserted: bool,
     observation_inserted: bool,
     approval_inserted: bool,
+    maintenance: LocalMemoryMaintenance,
 }
 
 impl LocalMemoryApprovalReceipt {
@@ -313,15 +321,64 @@ impl LocalMemoryApprovalReceipt {
     pub const fn approval_inserted(self) -> bool {
         self.approval_inserted
     }
-}
 
-impl From<MemoryImportReceipt> for LocalMemoryApprovalReceipt {
-    fn from(receipt: MemoryImportReceipt) -> Self {
+    /// Returns the truthful post-commit SQLite maintenance status.
+    #[must_use]
+    pub const fn maintenance(self) -> LocalMemoryMaintenance {
+        self.maintenance
+    }
+
+    const fn with_maintenance(mut self, maintenance: LocalMemoryMaintenance) -> Self {
+        self.maintenance = maintenance;
+        self
+    }
+
+    fn from_unmaintained_import(receipt: MemoryImportReceipt) -> Self {
         Self {
             revision: receipt.revision(),
             version_inserted: receipt.version_inserted(),
             observation_inserted: receipt.observation_inserted(),
             approval_inserted: receipt.approval_inserted(),
+            maintenance: LocalMemoryMaintenance::pending(),
+        }
+    }
+}
+
+/// Public memory operation whose durable records require reconciliation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LocalMemoryMutation {
+    /// Writer startup recovery may have committed before its receipt was lost.
+    StoreStartup,
+    /// One current worktree memory version and local approval.
+    Approval,
+    /// One bounded set of observation-only Git history imports.
+    HistoryImport,
+    /// One exact trusted correspondence-review append.
+    CorrespondenceReview,
+    /// A post-commit truncating WAL checkpoint may have completed.
+    Checkpoint,
+}
+
+impl LocalMemoryMutation {
+    /// Returns non-sensitive authoritative reconciliation guidance.
+    #[must_use]
+    pub const fn reconciliation_guidance(self) -> &'static str {
+        match self {
+            Self::StoreStartup => {
+                "reopen the store and run read-only database diagnostics before retrying startup"
+            }
+            Self::Approval => {
+                "reload the exact memory revision, worktree observation, and local approval receipt before retrying"
+            }
+            Self::HistoryImport => {
+                "reload the immutable memory journal and compare every intended revision and Git observation before retrying"
+            }
+            Self::CorrespondenceReview => {
+                "reload correspondence-review history for the exact revision and evidence ordinal before retrying"
+            }
+            Self::Checkpoint => {
+                "retain the known memory receipt and retry only the idempotent checkpoint maintenance step"
+            }
         }
     }
 }
@@ -377,6 +434,11 @@ pub enum LocalMemoryManageError {
     ReviewLimitExceeded,
     /// The immutable journal or audit writer failed.
     PersistenceFailed,
+    /// A queued mutation may have committed without a definitive receipt.
+    MutationOutcomeUnknown {
+        /// Exact operation whose authoritative state must be read.
+        operation: LocalMemoryMutation,
+    },
     /// A fixed-width count could not represent the result.
     CountNotRepresentable,
 }
@@ -408,6 +470,9 @@ impl fmt::Display for LocalMemoryManageError {
             Self::HistoryLimitExceeded => "memory Git history exceeded a resource limit",
             Self::ReviewLimitExceeded => "memory correspondence review exceeded a resource limit",
             Self::PersistenceFailed => "memory persistence failed",
+            Self::MutationOutcomeUnknown { .. } => {
+                "memory mutation outcome could not be determined"
+            }
             Self::CountNotRepresentable => "memory management count cannot be represented",
         })
     }
@@ -415,7 +480,22 @@ impl fmt::Display for LocalMemoryManageError {
 
 impl Error for LocalMemoryManageError {}
 
+impl LocalMemoryManageError {
+    /// Returns operation-specific guidance only for an outcome-unknown mutation.
+    #[must_use]
+    pub const fn reconciliation_guidance(self) -> Option<&'static str> {
+        match self {
+            Self::MutationOutcomeUnknown { operation } => Some(operation.reconciliation_guidance()),
+            _ => None,
+        }
+    }
+}
+
 /// Approves one capability-contained current memory record.
+///
+/// On [`LocalMemoryManageError::MutationOutcomeUnknown`], reload the exact
+/// revision, observation, and approval described by the error guidance before
+/// retrying.
 pub fn approve_local_memory(
     request: LocalMemoryApprovalRequest<'_>,
     cancelled: Arc<AtomicBool>,
@@ -434,12 +514,25 @@ pub fn write_local_memory(
 }
 
 /// Appends or verifies one exact trusted correspondence-review event.
+///
+/// On [`LocalMemoryManageError::MutationOutcomeUnknown`], reload exact review
+/// history using the error guidance before retrying.
 pub fn review_local_memory_correspondence(
     request: LocalMemoryCorrespondenceReviewRequest<'_>,
     cancelled: Arc<AtomicBool>,
 ) -> Result<LocalMemoryCorrespondenceReviewReceipt, LocalMemoryManageError> {
     check_memory_write_policy(request.configuration)?;
     review::review(request, cancelled)
+}
+
+#[cfg(test)]
+pub(crate) fn review_local_memory_correspondence_with_hook(
+    request: LocalMemoryCorrespondenceReviewRequest<'_>,
+    cancelled: Arc<AtomicBool>,
+    after_commit: impl FnOnce(),
+) -> Result<LocalMemoryCorrespondenceReviewReceipt, LocalMemoryManageError> {
+    check_memory_write_policy(request.configuration)?;
+    review::review_with_hook(request, cancelled, after_commit)
 }
 
 /// Validates a fixed local trust actor before enabling a mutation capability.
@@ -490,20 +583,22 @@ fn open_store(
     migration_applied_at_unix_ms: u64,
     cancelled: Arc<AtomicBool>,
     deadline: Instant,
-) -> Result<OwnedSqliteIndex, LocalMemoryManageError> {
+) -> Result<OpenedMemoryStore, LocalMemoryManageError> {
     let database =
         validated_database_outside_worktree(worktree, database).map_err(map_database_error)?;
-    let lease = SqliteMutationLease::acquire(&database, deadline).map_err(map_store_error)?;
+    let lease = SqliteMutationLease::acquire(&database, deadline)
+        .map_err(|source| map_store_error(source, LocalMemoryMutation::StoreStartup))?;
     let identity = database_alias_identity(&database).map_err(map_database_error)?;
-    OwnedSqliteIndex::start_with_lease(
+    let (store, _) = OwnedSqliteIndex::start_with_lease(
         lease,
         identity,
         migration_applied_at_unix_ms,
         cancelled,
         deadline,
     )
-    .map(|(store, _)| store)
-    .map_err(map_store_error)
+    .map_err(|source| map_store_error(source, LocalMemoryMutation::StoreStartup))?;
+    OpenedMemoryStore::from_started(database, store, deadline)
+        .map_err(|source| map_store_error(source, LocalMemoryMutation::StoreStartup))
 }
 
 fn map_repository_identity_error(_: RepositoryIdentityTextError) -> LocalMemoryManageError {
@@ -537,8 +632,14 @@ fn map_file_error(error: MemoryFileImportError) -> LocalMemoryManageError {
     }
 }
 
-fn map_store_error(error: SqliteStoreError) -> LocalMemoryManageError {
+fn map_store_error(
+    error: SqliteStoreError,
+    operation: LocalMemoryMutation,
+) -> LocalMemoryManageError {
     match error {
+        SqliteStoreError::MutationOutcomeUnknown => {
+            LocalMemoryManageError::MutationOutcomeUnknown { operation }
+        }
         SqliteStoreError::Cancelled => LocalMemoryManageError::Cancelled,
         SqliteStoreError::DeadlineExceeded | SqliteStoreError::ReplyTimeout => {
             LocalMemoryManageError::DeadlineExceeded

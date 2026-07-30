@@ -203,14 +203,18 @@ package semantics.
 
 ## Follow-up
 
-- Add validated selector and package-scope domain/application values.
-- Extend the sanitized Git adapter with bounded selector resolution and final
-  revalidation.
-- Thread explicit source-slot requests through the internal multi-source
-  coordinator.
-- Add a versioned CLI/configuration surface only after the internal contract
-  and adversarial fixtures pass.
-- Revisit direct Git-object-tree reads only from a separate measured spike.
+- Implemented locally under this proposed contract: validated selectors and
+  package scopes, bounded sanitized Git resolution and final revalidation,
+  explicit source-slot requests, and atomic internal multi-source
+  coordination.
+- The versioned CLI surface is implemented through the explicit manifest
+  contract in still-Proposed
+  [ADR-0032](0032-explicit-connected-workspace-manifest.md).
+- Maintainer ratification of ADR-0026, this ADR, ADR-0032, migration 3, and the
+  associated cross-platform and resource budgets remains a Phase 1 gate. The
+  implementation does not make these proposed decisions accepted.
+- Revisit direct Git-object-tree reads only through a separate measured spike
+  with its own containment, identity, and dirty-worktree model.
 
 ## Supersession
 

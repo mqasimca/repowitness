@@ -148,6 +148,27 @@ impl FileIdentity {
     }
 }
 
+pub(crate) fn file_has_single_link(file: &std::fs::File) -> io::Result<bool> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+
+        file.metadata().map(|metadata| metadata.nlink() == 1)
+    }
+    #[cfg(windows)]
+    {
+        use cap_fs_ext::MetadataExt as _;
+
+        let file = File::from_std(file.try_clone()?);
+        file.metadata().map(|metadata| metadata.nlink() == 1)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = file;
+        Ok(false)
+    }
+}
+
 impl ContainedSourceRoot {
     /// Opens the explicitly authorized repository root as a directory capability.
     pub fn open(root: &Path) -> Result<Self, ContainedSourceError> {

@@ -28,9 +28,7 @@ impl WriterState {
         }
 
         check_control(control)?;
-        transaction
-            .commit()
-            .map_err(|_| SqliteStoreError::DatabaseOperationFailed)
+        commit_mutation(transaction)
     }
 }
 

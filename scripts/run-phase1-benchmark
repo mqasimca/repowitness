@@ -1,111 +1,31 @@
 #!/bin/sh
 set -eu
+umask 077
 
 MANIFEST=benchmarks/phase1/manifest.json
-MAX_CAPTURED_OUTPUT_BYTES=1048576
-
-# Runs one command while retaining at most one MiB of combined stdout and
-# stderr. Continue draining both streams after the limit so a verbose child
-# cannot block, then report the capture as failed without exposing its output.
-run_bounded_capture() {
-    stdout_path=$1
-    stderr_path=$2
-    shift 2
-    perl -MIPC::Open3 -MIO::Select -MSymbol=gensym -e '
-        use strict;
-        use warnings;
-
-        my ($stdout_path, $stderr_path, $maximum, @command) = @ARGV;
-        exit 1 if !defined($maximum) || $maximum !~ /\A[1-9][0-9]*\z/;
-        my ($stdin, $stdout);
-        my $stderr = gensym;
-        my $pid = eval { open3($stdin, $stdout, $stderr, @command) };
-        exit 1 if $@ || !defined $pid;
-        close $stdin;
-
-        open my $stdout_file, ">:raw", $stdout_path or exit 1;
-        open my $stderr_file, ">:raw", $stderr_path or exit 1;
-        my $ready = IO::Select->new($stdout, $stderr);
-        my $captured = 0;
-        my $over_limit = 0;
-        while ($ready->count()) {
-            for my $handle ($ready->can_read()) {
-                my $chunk = q{};
-                my $read = sysread($handle, $chunk, 8192);
-                if (!defined $read) {
-                    $ready->remove($handle);
-                    next;
-                }
-                if ($read == 0) {
-                    $ready->remove($handle);
-                    next;
-                }
-                my $remaining = $maximum - $captured;
-                if ($remaining > 0) {
-                    my $retained = $read > $remaining ? $remaining : $read;
-                    my $target = fileno($handle) == fileno($stdout)
-                        ? $stdout_file
-                        : $stderr_file;
-                    print {$target} substr($chunk, 0, $retained) or exit 1;
-                    $captured += $retained;
-                }
-                $over_limit = 1 if $read > $remaining;
-            }
-        }
-        close $stdout_file or exit 1;
-        close $stderr_file or exit 1;
-        waitpid($pid, 0);
-        exit 1 if $over_limit || $? != 0;
-    ' "$stdout_path" "$stderr_path" "$MAX_CAPTURED_OUTPUT_BYTES" "$@"
-}
-
-# Runs the fixed sanitized Git adapter through the same bounded capture as every
-# other external command. The Perl program is static; corpus-derived values are
-# passed only as argv, never interpolated into shell source.
-run_bounded_benchmark_git() {
-    stdout_path=$1
-    stderr_path=$2
-    shift 2
-    run_bounded_capture "$stdout_path" "$stderr_path" perl -e '
-        delete @ENV{qw(
-          GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY
-          GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_SHALLOW_FILE GIT_COMMON_DIR
-          GIT_CONFIG GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS GIT_NAMESPACE
-          GIT_IMPLICIT_WORK_TREE GIT_CEILING_DIRECTORIES
-          GIT_DISCOVERY_ACROSS_FILESYSTEM GIT_REFERENCE_BACKEND
-          GIT_LITERAL_PATHSPECS GIT_GLOB_PATHSPECS GIT_NOGLOB_PATHSPECS
-          GIT_ICASE_PATHSPECS GIT_EXTERNAL_DIFF GIT_EXEC_PATH GIT_TEMPLATE_DIR
-          GIT_TRACE GIT_TRACE2 GIT_TRACE2_EVENT GIT_TRACE2_PERF
-        )};
-        $ENV{GIT_CONFIG_NOSYSTEM} = q{1};
-        $ENV{GIT_CONFIG_GLOBAL} = q{/dev/null};
-        $ENV{GIT_CONFIG_SYSTEM} = q{/dev/null};
-        $ENV{GIT_TERMINAL_PROMPT} = q{0};
-        $ENV{GCM_INTERACTIVE} = q{never};
-        $ENV{GIT_OPTIONAL_LOCKS} = q{0};
-        $ENV{GIT_NO_REPLACE_OBJECTS} = q{1};
-        $ENV{GIT_PAGER} = q{cat};
-        $ENV{PAGER} = q{cat};
-        exec {q{git}} q{git}, q{--no-pager}, q{--literal-pathspecs},
-          q{-c}, q{core.fsmonitor=false}, q{-c}, q{core.hooksPath=/dev/null},
-          q{-c}, q{core.excludesFile=/dev/null}, q{-c}, q{core.untrackedCache=false},
-          q{-c}, q{diff.external=}, q{-c}, q{protocol.file.allow=always}, @ARGV;
-        exit 127;
-    ' -- "$@"
-}
+. ./scripts/phase1-benchmark-support
+. ./scripts/phase1-benchmark-suites
+unset PHASE1_CAPTURE_DEADLINE_MS
 
 if [ "$#" -ne 1 ]; then
     echo "usage: ./scripts/run-phase1-benchmark <public-corpus>" >&2
     exit 64
 fi
 
-CORPUS_ROOT=$1
+CORPUS_INPUT=$1
 
 BENCHMARK_TEMP=$(mktemp -d "${TMPDIR:-/tmp}/repowitness-phase1.XXXXXXXX")
 cleanup() {
     rm -rf "$BENCHMARK_TEMP"
 }
-trap cleanup EXIT HUP INT TERM
+trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
+
+if ! CORPUS_ROOT=$(resolve_local_corpus_root "$CORPUS_INPUT"); then
+    echo "error: benchmark corpus path is invalid" >&2
+    exit 65
+fi
+unset CORPUS_INPUT
 
 if ! run_bounded_capture \
     "$BENCHMARK_TEMP/manifest-check.output" "$BENCHMARK_TEMP/manifest-check.log" \
@@ -157,7 +77,86 @@ if ! run_bounded_capture \
     }
     die "benchmark workload profile differs from the runner\n"
       if join("\0", sort keys %by_id) ne join("\0", sort @expected);
-    print join " ", $revision, map { $_, $by_id{$_} } @expected;
+    for my $id (
+        qw(
+        quiet-polling-no-publication
+        native-graph-read-suite
+        retention-plan-apply-restart
+        )
+      )
+    {
+        die "operation-probe workloads require at least two runs\n"
+          if $by_id{$id} < 2;
+    }
+    my $correctness = $manifest->{budgets}->{correctness};
+    my $resources = $manifest->{budgets}->{resources};
+    my $phase1 = $manifest->{budgets}->{phase1_resources};
+    my $environment = $manifest->{run_environment};
+    die "benchmark resource profile is invalid\n"
+      if ref($correctness) ne "HASH" || ref($resources) ne "HASH"
+      || ref($phase1) ne "HASH" || ref($environment) ne "HASH";
+    for my $field (
+        qw(
+        max_false_confirmed_claims
+        max_silent_truncations
+        max_mixed_generation_reads
+        max_false_automatic_relinks
+        )
+      )
+    {
+        die "benchmark correctness profile is invalid\n"
+          if !defined($correctness->{$field}) || ref($correctness->{$field})
+          || $correctness->{$field} !~ /\A0\z/;
+    }
+    my $warm_query_runs = $environment->{warm_query_runs};
+    my $quiet_poll_session_ms = $phase1->{quiet_poll_session_ms};
+    die "benchmark warm-query profile is invalid\n"
+      if !defined($warm_query_runs) || ref($warm_query_runs)
+      || $warm_query_runs !~ /\A[1-9][0-9]*\z/ || $warm_query_runs > 1000
+      || $warm_query_runs != $by_id{"native-graph-read-suite"}
+      || !JSON::PP::is_bool($environment->{cold_and_warm_runs_required})
+      || !$environment->{cold_and_warm_runs_required};
+    die "benchmark quiet-poll session is invalid\n"
+      if !defined($quiet_poll_session_ms) || ref($quiet_poll_session_ms)
+      || $quiet_poll_session_ms !~ /\A[1-9][0-9]*\z/
+      || $quiet_poll_session_ms < 100 || $quiet_poll_session_ms > 10_000;
+    my @budget_values = (
+      $resources->{max_full_index_wall_ms},
+      $resources->{max_peak_rss_mib},
+      $resources->{max_warm_query_p95_ms},
+      $resources->{max_material_result_bytes},
+      $resources->{max_database_bytes},
+      $resources->{max_wal_bytes_after_completion},
+      $phase1->{max_two_source_publication_wall_ms},
+      $phase1->{max_quiet_poll_p95_ms},
+      $phase1->{max_native_graph_read_p95_ms},
+      $phase1->{max_retention_plan_wall_ms},
+      $phase1->{max_retention_apply_wall_ms},
+      $phase1->{max_retained_generations_per_source_slot_after_collection},
+    );
+    my @minimums = (1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1);
+    my @maximums = (
+      3_600_000, 1_048_576, 3_600_000, 25_165_824,
+      17_179_869_184, 17_179_869_184, 895_000, 3_600_000,
+      3_600_000, 3_600_000, 3_600_000, 1_000,
+    );
+    for my $index (0 .. $#budget_values) {
+        my $value = $budget_values[$index];
+        die "benchmark resource profile is invalid\n"
+          if !defined($value) || ref($value) || $value !~ /\A[0-9]+\z/
+          || $value < $minimums[$index]
+          || $value > $maximums[$index];
+    }
+    die "warm-query and native-graph budgets must match\n"
+      if $resources->{max_warm_query_p95_ms}
+      != $phase1->{max_native_graph_read_p95_ms};
+    print join " ",
+      $revision,
+      (map { $_, $by_id{$_} } @expected),
+      $warm_query_runs,
+      "true",
+      $quiet_poll_session_ms,
+      @budget_values;
 ' -- "$MANIFEST"
 then
     echo "error: benchmark manifest execution profile was invalid" >&2
@@ -167,7 +166,7 @@ EXECUTION_VALUES=$(cat "$BENCHMARK_TEMP/manifest-values.output")
 set -f
 set -- $EXECUTION_VALUES
 set +f
-if [ "$#" -ne 17 ]; then
+if [ "$#" -ne 32 ]; then
     echo "error: benchmark manifest execution profile was incomplete" >&2
     exit 65
 fi
@@ -190,6 +189,25 @@ COMPATIBILITY_WORKLOAD=$5
 COMPATIBILITY_RUNS=$6
 RETENTION_WORKLOAD=$7
 RETENTION_RUNS=$8
+shift 8
+WARM_QUERY_RUNS=$1
+COLD_AND_WARM_RUNS_REQUIRED=$2
+QUIET_POLL_SESSION_MS=$3
+shift 3
+MAX_FULL_INDEX_WALL_MS=$1
+MAX_PEAK_RSS_MIB=$2
+MAX_WARM_QUERY_MS=$3
+MAX_MATERIAL_RESULT_BYTES=$4
+MAX_DATABASE_BYTES=$5
+MAX_WAL_BYTES_AFTER_COMPLETION=$6
+MAX_TWO_SOURCE_PUBLICATION_MS=$7
+MAX_QUIET_POLL_MS=$8
+MAX_NATIVE_GRAPH_READ_MS=$9
+shift 9
+MAX_RETENTION_PLAN_MS=$1
+MAX_RETENTION_APPLY_MS=$2
+MAX_RETAINED_GENERATIONS=$3
+MAX_PEAK_RSS_KIB=$((MAX_PEAK_RSS_MIB * 1024))
 
 if ! run_bounded_benchmark_git \
     "$BENCHMARK_TEMP/corpus-revision.output" "$BENCHMARK_TEMP/corpus-preflight.log" \
@@ -217,53 +235,49 @@ fi
 
 WORKTREE_ONE=$BENCHMARK_TEMP/worktree-one
 WORKTREE_TWO=$BENCHMARK_TEMP/worktree-two
-DATABASE=$BENCHMARK_TEMP/index.sqlite3
+OPERATION_DATABASE=$BENCHMARK_TEMP/operation-index.sqlite3
 ATOMIC_MANIFEST=$BENCHMARK_TEMP/atomic-workspace.toml
 TWO_WORKTREE_MANIFEST=$BENCHMARK_TEMP/two-worktree-workspace.toml
 CLI=target/release/repowitness
+OPERATION_PROBE=target/release/examples/phase1_operation_probe
 
-if ! run_bounded_benchmark_git \
-    "$BENCHMARK_TEMP/clone-one.output" "$BENCHMARK_TEMP/clone-one.errors" \
-    clone --quiet --no-local --no-checkout -- "$CORPUS_ROOT" "$WORKTREE_ONE" \
-    || ! run_bounded_benchmark_git \
-        "$BENCHMARK_TEMP/checkout-one.output" "$BENCHMARK_TEMP/checkout-one.errors" \
-        -C "$WORKTREE_ONE" checkout --quiet --detach "$EXPECTED_REVISION" \
-    || ! run_bounded_benchmark_git \
-        "$BENCHMARK_TEMP/clone-two.output" "$BENCHMARK_TEMP/clone-two.errors" \
-        clone --quiet --no-local --no-checkout -- "$CORPUS_ROOT" "$WORKTREE_TWO" \
-    || ! run_bounded_benchmark_git \
-        "$BENCHMARK_TEMP/checkout-two.output" "$BENCHMARK_TEMP/checkout-two.errors" \
-        -C "$WORKTREE_TWO" checkout --quiet --detach "$EXPECTED_REVISION"
+if ! create_bounded_checkout "$WORKTREE_ONE" worktree-one \
+    || ! create_bounded_checkout "$WORKTREE_TWO" worktree-two
 then
     echo "error: benchmark corpus setup failed" >&2
     exit 65
 fi
 
 if ! run_bounded_capture "$BENCHMARK_TEMP/build.output" "$BENCHMARK_TEMP/build.log" \
-    cargo build --release --locked -p repowitness-cli --bin repowitness
+    cargo build --release --locked \
+        -p repowitness-cli --bin repowitness \
+        -p repowitness-local --example phase1_operation_probe
 then
     echo "error: benchmark runner build failed" >&2
     exit 70
 fi
 if ! run_bounded_capture \
     "$BENCHMARK_TEMP/local-tests-build.output" "$BENCHMARK_TEMP/local-tests-build.log" \
-    cargo test -p repowitness-local --release --locked --no-run \
+    cargo test -p repowitness-local --release --locked --lib --no-run \
     || ! run_bounded_capture \
         "$BENCHMARK_TEMP/cli-tests-build.output" "$BENCHMARK_TEMP/cli-tests-build.log" \
         cargo test -p repowitness-cli --release --locked --test cli_contract --no-run \
     || ! run_bounded_capture \
         "$BENCHMARK_TEMP/mcp-tests-build.output" "$BENCHMARK_TEMP/mcp-tests-build.log" \
-        cargo test -p repowitness-mcp --release --locked --no-run
+        cargo test -p repowitness-mcp --release --locked --lib --no-run
 then
     echo "error: benchmark runner test preparation failed" >&2
     exit 70
 fi
 
 generate_identity() {
-    run_bounded_capture \
+    if ! run_bounded_capture \
         "$BENCHMARK_TEMP/identity.output" "$BENCHMARK_TEMP/identity.errors" \
         "$CLI" identity generate "$1"
-    tr -d '\n' <"$BENCHMARK_TEMP/identity.output"
+    then
+        return 1
+    fi
+    required_single_line "$BENCHMARK_TEMP/identity.output" "generated identity"
 }
 
 CONNECTED_ONE=$(generate_identity connected-workspace)
@@ -271,6 +285,7 @@ CONNECTED_TWO=$(generate_identity connected-workspace)
 REPOSITORY_ONE=$(generate_identity repository)
 REPOSITORY_TWO=$(generate_identity repository)
 REPOSITORY_THREE=$(generate_identity repository)
+OPERATION_REPOSITORY=$(generate_identity repository)
 SLOT_ONE=$(generate_identity source-slot)
 SLOT_TWO=$(generate_identity source-slot)
 SLOT_THREE=$(generate_identity source-slot)
@@ -319,21 +334,45 @@ write_manifest \
     "$TWO_WORKTREE_MANIFEST" "$CONNECTED_TWO" "$SLOT_THREE" "$REPOSITORY_THREE" "$WORKTREE_ONE" \
     "$SLOT_FOUR" "$REPOSITORY_THREE" "$WORKTREE_TWO"
 
-now_ms() {
-    perl -MTime::HiRes=time -e 'printf "%.0f\n", time * 1000'
-}
-
 run_workload() {
     workload=$1
     runs=$2
     expected_tests=$3
-    shift 3
+    measurement=$4
+    maximum_p95_ms=$5
+    shift 5
+    case "$measurement" in
+        operation|test-harness)
+            ;;
+        *)
+            echo "error: benchmark timing profile is invalid" >&2
+            return 1
+            ;;
+    esac
+    case "$maximum_p95_ms" in
+        ''|*[!0-9]*)
+            echo "error: benchmark timing budget is invalid" >&2
+            return 1
+            ;;
+    esac
+    command_deadline_ms=$MAX_COMMAND_WALL_MS
+    if [ "$maximum_p95_ms" -gt 0 ]; then
+        if [ "$maximum_p95_ms" -gt \
+            $((MAX_COMMAND_WALL_MS - COMMAND_DEADLINE_GRACE_MS)) ]
+        then
+            echo "error: benchmark timing budget exceeds the capture bound" >&2
+            return 1
+        fi
+        command_deadline_ms=$((maximum_p95_ms + COMMAND_DEADLINE_GRACE_MS))
+    fi
     timings=$BENCHMARK_TEMP/$workload.timings
     output=$BENCHMARK_TEMP/$workload.output
     errors=$BENCHMARK_TEMP/$workload.errors
     attempt=1
     : >"$timings"
-    if ! run_workload_command "$output" "$errors" "$@"; then
+    if ! PHASE1_CAPTURE_DEADLINE_MS=$command_deadline_ms \
+        run_workload_command "$output" "$errors" "$@"
+    then
         echo "error: benchmark workload failed: $workload" >&2
         return 1
     fi
@@ -344,8 +383,13 @@ run_workload() {
         return 1
     fi
     while [ "$attempt" -le "$runs" ]; do
-        started=$(now_ms)
-        if ! run_workload_command "$output" "$errors" "$@"; then
+        if ! started=$(monotonic_now_us); then
+            echo "error: benchmark monotonic clock was unavailable" >&2
+            return 1
+        fi
+        if ! PHASE1_CAPTURE_DEADLINE_MS=$command_deadline_ms \
+            run_workload_command "$output" "$errors" "$@"
+        then
             echo "error: benchmark workload failed: $workload" >&2
             return 1
         fi
@@ -355,13 +399,17 @@ run_workload() {
             echo "error: benchmark workload did not execute its expected tests: $workload" >&2
             return 1
         fi
-        finished=$(now_ms)
-        elapsed=$((finished - started))
-        if [ "$elapsed" -lt 0 ]; then
+        if ! finished=$(monotonic_now_us); then
+            echo "error: benchmark monotonic clock was unavailable" >&2
+            return 1
+        fi
+        elapsed_us=$((finished - started))
+        if [ "$elapsed_us" -lt 0 ]; then
             echo "error: benchmark clock moved backwards" >&2
             return 1
         fi
-        printf '%s\n' "$elapsed" >>"$timings"
+        elapsed_ms=$(((elapsed_us + 999) / 1000))
+        printf '%s\n' "$elapsed_ms" >>"$timings"
         attempt=$((attempt + 1))
     done
     rank=$(((runs * 95 + 99) / 100))
@@ -372,37 +420,44 @@ run_workload() {
             return 1
             ;;
     esac
-    printf 'workload=%s runs=%s test_harness_p95_ms=%s status=passed\n' \
-        "$workload" "$runs" "$p95"
+    if [ "$maximum_p95_ms" -gt 0 ] && [ "$p95" -gt "$maximum_p95_ms" ]; then
+        echo "error: benchmark workload exceeded its wall-time budget: $workload" >&2
+        return 1
+    fi
+    printf 'workload=%s runs=%s measurement=%s wall_p95_ms=%s status=passed\n' \
+        "$workload" "$runs" "$measurement" "$p95"
 }
 
 # Shell functions are intentionally internal, fixed workload adapters. They
 # emit no output themselves and capture their small structured CLI reports in
 # dedicated files. External commands always use the bounded stream capture.
-run_workload_command() {
+run_workload_command() (
     output=$1
     errors=$2
     shift 2
     case "$1" in
-        run_atomic_workspace|run_two_worktree_workspace|run_compatibility_suite)
+        run_atomic_workspace|run_two_worktree_workspace|run_compatibility_suite|run_retention_suite)
             "$@" >"$output" 2>"$errors"
             ;;
         *)
             run_bounded_capture "$output" "$errors" "$@"
             ;;
     esac
-}
+)
 
 verify_workspace_report() {
     report=$1
-    first_root=$2
-    second_root=$3
-    first_repository=$4
-    second_repository=$5
-    grep -qx 'status=ok' "$report"
-    grep -qx 'operation=workspace_index' "$report"
-    grep -qx 'source_slots=2' "$report"
-    grep -qx 'outcome=published' "$report"
+    database=$2
+    first_root=$3
+    second_root=$4
+    first_repository=$5
+    second_repository=$6
+    if ! perl scripts/check-phase1-workspace-receipt \
+        "$report" "$database" \
+        "$MAX_DATABASE_BYTES" "$MAX_WAL_BYTES_AFTER_COMPLETION" >/dev/null
+    then
+        return 1
+    fi
     for sensitive in \
         "$BENCHMARK_TEMP" "$first_root" "$second_root" \
         "$first_repository" "$second_repository"
@@ -415,57 +470,223 @@ verify_workspace_report() {
 
 run_atomic_workspace() {
     report=$BENCHMARK_TEMP/atomic-workspace.report
-    run_bounded_capture "$report" "$BENCHMARK_TEMP/atomic-workspace.errors" \
-        "$CLI" workspace index --manifest "$ATOMIC_MANIFEST" --database "$DATABASE"
-    verify_workspace_report \
-        "$report" "$WORKTREE_ONE" "$WORKTREE_TWO" "$REPOSITORY_ONE" "$REPOSITORY_TWO"
+    database=$(fresh_workload_database atomic-workspace) || return 1
+    if ! run_bounded_capture "$report" "$BENCHMARK_TEMP/atomic-workspace.errors" \
+        "$CLI" workspace index --manifest "$ATOMIC_MANIFEST" --database "$database"
+    then
+        return 1
+    fi
+    if ! verify_workspace_report \
+        "$report" "$database" \
+        "$WORKTREE_ONE" "$WORKTREE_TWO" "$REPOSITORY_ONE" "$REPOSITORY_TWO"
+    then
+        return 1
+    fi
+    remove_fresh_workload_database "$database"
 }
 
 run_two_worktree_workspace() {
     report=$BENCHMARK_TEMP/two-worktree-workspace.report
-    run_bounded_capture "$report" "$BENCHMARK_TEMP/two-worktree-workspace.errors" \
-        "$CLI" workspace index --manifest "$TWO_WORKTREE_MANIFEST" --database "$DATABASE"
-    verify_workspace_report \
-        "$report" "$WORKTREE_ONE" "$WORKTREE_TWO" "$REPOSITORY_THREE" "$REPOSITORY_THREE"
-}
-
-run_exact_test() {
-    output=$BENCHMARK_TEMP/exact-test.output
-    errors=$BENCHMARK_TEMP/exact-test.errors
-    if ! run_bounded_capture "$output" "$errors" "$@"; then
+    database=$(fresh_workload_database two-worktree-workspace) || return 1
+    if ! run_bounded_capture "$report" "$BENCHMARK_TEMP/two-worktree-workspace.errors" \
+        "$CLI" workspace index --manifest "$TWO_WORKTREE_MANIFEST" --database "$database"
+    then
         return 1
     fi
-    grep -Fq 'test result: ok. 1 passed; 0 failed;' "$output"
+    if ! verify_workspace_report \
+        "$report" "$database" \
+        "$WORKTREE_ONE" "$WORKTREE_TWO" "$REPOSITORY_THREE" "$REPOSITORY_THREE"
+    then
+        return 1
+    fi
+    remove_fresh_workload_database "$database"
 }
 
-run_compatibility_suite() {
-    run_exact_test cargo test -p repowitness-mcp --release --locked \
-        server::tests::compatibility::opt_in_surface_is_exact_sorted_read_only_and_excludes_unimplemented_names \
-        -- --exact --test-threads=1
-    run_exact_test cargo test -p repowitness-mcp --release --locked \
-        server::tests::compatibility::compatibility_aliases_forward_to_canonical_use_cases_and_preserve_receipts \
-        -- --exact --test-threads=1
+run_operation_probe() {
+    output=$BENCHMARK_TEMP/operation-probe.output
+    errors=$BENCHMARK_TEMP/operation-probe.errors
+    time_output=$BENCHMARK_TEMP/operation-probe.time
+    case "$(uname -s)" in
+        Linux)
+            if [ ! -x /usr/bin/time ] \
+                || ! run_bounded_capture "$output" "$errors" \
+                    /usr/bin/time -f 'peak_rss_kib=%M' -o "$time_output" \
+                    "$OPERATION_PROBE" \
+                    "$WORKTREE_ONE" "$OPERATION_DATABASE" "$OPERATION_REPOSITORY" \
+                    "$QUIET_RUNS" "$GRAPH_RUNS" "$RETENTION_RUNS" \
+                    "$WARM_QUERY_RUNS" "$COLD_AND_WARM_RUNS_REQUIRED" \
+                    "$QUIET_POLL_SESSION_MS" \
+                    "$MAX_FULL_INDEX_WALL_MS" \
+                    "$MAX_QUIET_POLL_MS" "$MAX_WARM_QUERY_MS" \
+                    "$MAX_NATIVE_GRAPH_READ_MS" \
+                    "$MAX_RETENTION_PLAN_MS" "$MAX_RETENTION_APPLY_MS" \
+                    "$MAX_RETAINED_GENERATIONS" "$MAX_MATERIAL_RESULT_BYTES" \
+                    "$MAX_DATABASE_BYTES" "$MAX_WAL_BYTES_AFTER_COMPLETION"
+            then
+                echo "error: Phase 1 operation probe failed" >&2
+                return 1
+            fi
+            peak_rss_kib=$(sed -n 's/^peak_rss_kib=//p' "$time_output")
+            ;;
+        Darwin)
+            if [ ! -x /usr/bin/time ] \
+                || ! run_bounded_capture "$output" "$errors" \
+                    /usr/bin/time -l "$OPERATION_PROBE" \
+                    "$WORKTREE_ONE" "$OPERATION_DATABASE" "$OPERATION_REPOSITORY" \
+                    "$QUIET_RUNS" "$GRAPH_RUNS" "$RETENTION_RUNS" \
+                    "$WARM_QUERY_RUNS" "$COLD_AND_WARM_RUNS_REQUIRED" \
+                    "$QUIET_POLL_SESSION_MS" \
+                    "$MAX_FULL_INDEX_WALL_MS" \
+                    "$MAX_QUIET_POLL_MS" "$MAX_WARM_QUERY_MS" \
+                    "$MAX_NATIVE_GRAPH_READ_MS" \
+                    "$MAX_RETENTION_PLAN_MS" "$MAX_RETENTION_APPLY_MS" \
+                    "$MAX_RETAINED_GENERATIONS" "$MAX_MATERIAL_RESULT_BYTES" \
+                    "$MAX_DATABASE_BYTES" "$MAX_WAL_BYTES_AFTER_COMPLETION"
+            then
+                echo "error: Phase 1 operation probe failed" >&2
+                return 1
+            fi
+            peak_rss_kib=$(awk '
+                /maximum resident set size/ {
+                    printf "%d\n", $1 / 1024
+                    found = 1
+                    exit
+                }
+                END { if (!found) exit 1 }
+            ' "$errors") || return 1
+            ;;
+        *)
+            echo "error: operation probe RSS measurement is unsupported" >&2
+            return 1
+            ;;
+    esac
+    case "$peak_rss_kib" in
+        ''|*[!0-9]*|0)
+            echo "error: operation probe peak RSS receipt was invalid" >&2
+            return 1
+            ;;
+    esac
+    if [ "$peak_rss_kib" -gt "$MAX_PEAK_RSS_KIB" ]; then
+        echo "error: operation probe exceeded the peak RSS budget" >&2
+        return 1
+    fi
+    if ! grep -qx 'benchmark_id=phase1-trustworthy-local-core-v1' "$output" \
+        || ! grep -qx "budget_max_full_index_wall_ms=$MAX_FULL_INDEX_WALL_MS" "$output" \
+        || ! grep -qx "budget_max_warm_query_p95_ms=$MAX_WARM_QUERY_MS" "$output" \
+        || ! grep -qx \
+            "native_graph_material_result_bound_bytes=$MAX_MATERIAL_RESULT_BYTES" \
+            "$output" \
+        || ! grep -qx \
+            "budget_max_material_result_bytes=$MAX_MATERIAL_RESULT_BYTES" \
+            "$output" \
+        || ! grep -qx "budget_max_database_bytes=$MAX_DATABASE_BYTES" "$output" \
+        || ! grep -qx \
+            "budget_max_wal_bytes_after_completion=$MAX_WAL_BYTES_AFTER_COMPLETION" \
+            "$output" \
+        || ! grep -qx "database_bytes=[0-9][0-9]*" "$output" \
+        || ! grep -qx "wal_bytes=$MAX_WAL_BYTES_AFTER_COMPLETION" "$output"
+    then
+        echo "error: operation probe resource receipt validation failed" >&2
+        return 1
+    fi
+    if ! grep -qx 'probe_kind=operation-level' "$output" \
+        || ! grep -qx "warm_query_runs=$WARM_QUERY_RUNS" "$output" \
+        || ! grep -qx 'warm_query_p95_us=[0-9][0-9]*' "$output" \
+        || ! grep -qx \
+            "cold_and_warm_runs_required=$COLD_AND_WARM_RUNS_REQUIRED" "$output" \
+        || ! grep -qx "quiet_poll_session_ms=$QUIET_POLL_SESSION_MS" "$output" \
+        || ! grep -qx "quiet_poll_runs=$QUIET_RUNS" "$output" \
+        || ! grep -qx "native_graph_read_runs=$GRAPH_RUNS" "$output" \
+        || ! grep -qx "retention_runs=$RETENTION_RUNS" "$output" \
+        || ! grep -qx 'quiet_poll_publications=0' "$output" \
+        || ! grep -qx 'unchanged_generation_delta=0' "$output" \
+        || ! grep -qx 'mixed_generation_reads=0' "$output" \
+        || ! grep -qx 'retention_final_candidates=0' "$output" \
+        || ! grep -qx 'correctness_failures=0' "$output"
+    then
+        echo "error: operation probe correctness receipt validation failed" >&2
+        return 1
+    fi
+    for sensitive in \
+        "$BENCHMARK_TEMP" "$WORKTREE_ONE" "$WORKTREE_TWO" \
+        "$OPERATION_DATABASE" "$OPERATION_REPOSITORY"
+    do
+        if grep -Fq "$sensitive" "$output"; then
+            echo "error: operation probe output exposed a private input" >&2
+            return 1
+        fi
+    done
+    echo "peak_rss_kib=$peak_rss_kib"
+    cat "$output"
 }
 
-run_workload "$ATOMIC_WORKLOAD" "$ATOMIC_RUNS" 0 run_atomic_workspace
-run_workload "$TWO_WORKTREE_WORKLOAD" "$TWO_WORKTREE_RUNS" 0 run_two_worktree_workspace
-run_workload "$QUIET_WORKLOAD" "$QUIET_RUNS" 1 \
-    cargo test -p repowitness-local --release --locked \
+if ! emit_run_environment; then
+    echo "error: benchmark environment receipt was incomplete" >&2
+    exit 65
+fi
+if ! run_operation_probe_contract_suite; then
+    echo "error: Phase 1 operation-probe contract tests failed" >&2
+    exit 1
+fi
+if ! run_trustworthiness_suite; then
+    echo "error: Phase 1 trustworthiness regressions failed" >&2
+    exit 1
+fi
+if ! run_operation_probe; then
+    exit 1
+fi
+if ! run_workload \
+    "$ATOMIC_WORKLOAD" "$ATOMIC_RUNS" 0 operation \
+    "$MAX_TWO_SOURCE_PUBLICATION_MS" run_atomic_workspace
+then
+    exit 1
+fi
+if ! run_workload \
+    "$TWO_WORKTREE_WORKLOAD" "$TWO_WORKTREE_RUNS" 0 operation \
+    "$MAX_TWO_SOURCE_PUBLICATION_MS" run_two_worktree_workspace
+then
+    exit 1
+fi
+if ! run_workload "$QUIET_WORKLOAD" "$QUIET_RUNS" 1 test-harness 0 \
+    cargo test -p repowitness-local --release --locked --lib \
     local_index::tests::watched_reconciliation_skips_unchanged_source_and_publishes_changes \
     -- --exact --test-threads=1
-run_workload "$SELECTOR_WORKLOAD" "$SELECTOR_RUNS" 1 \
-    cargo test -p repowitness-local --release --locked \
+then
+    exit 1
+fi
+if ! run_workload "$SELECTOR_WORKLOAD" "$SELECTOR_RUNS" 1 test-harness 0 \
+    cargo test -p repowitness-local --release --locked --lib \
     local_index::connected_workspace::tests::faults::moving_ref_after_preparation_fails_the_final_fence_and_preserves_view \
     -- --exact --test-threads=1
-run_workload "$SCOPE_WORKLOAD" "$SCOPE_RUNS" 3 \
-    cargo test -p repowitness-local --release --locked \
+then
+    exit 1
+fi
+if ! run_workload "$SCOPE_WORKLOAD" "$SCOPE_RUNS" 3 test-harness 0 \
+    cargo test -p repowitness-local --release --locked --lib \
     local_index::connected_workspace::tests::scopes:: -- --test-threads=1
-run_workload "$GRAPH_WORKLOAD" "$GRAPH_RUNS" 1 \
+then
+    exit 1
+fi
+if ! run_workload "$GRAPH_WORKLOAD" "$GRAPH_RUNS" 1 test-harness 0 \
     cargo test -p repowitness-cli --release --locked --test cli_contract \
     mcp_stdio_indexes_searches_retrieves_and_rejects_a_stale_selector -- --exact --test-threads=1
-run_workload "$COMPATIBILITY_WORKLOAD" "$COMPATIBILITY_RUNS" 0 run_compatibility_suite
-run_workload "$RETENTION_WORKLOAD" "$RETENTION_RUNS" 1 \
-    cargo test -p repowitness-cli --release --locked --test cli_contract \
-    gc_plan_apply_replay_and_stale_rejection_preserve_the_active_generation -- --exact --test-threads=1
+then
+    exit 1
+fi
+if ! run_workload \
+    "$COMPATIBILITY_WORKLOAD" "$COMPATIBILITY_RUNS" 0 test-harness 0 \
+    run_compatibility_suite
+then
+    exit 1
+fi
+if ! run_workload \
+    "$RETENTION_WORKLOAD" "$RETENTION_RUNS" 0 test-harness 0 \
+    run_retention_suite
+then
+    exit 1
+fi
+if ! verify_final_git_state; then
+    exit 1
+fi
 
 printf 'status=passed phase=phase1 workloads=8\n'

@@ -101,6 +101,51 @@ fn version_one_database_upgrades_without_losing_immutable_artifacts() {
 }
 
 #[test]
+fn cancellation_after_committed_migrations_reports_unknown_and_preserves_the_upgrade() {
+    let directory = TempDirectory::new();
+    let database = directory.database();
+    let mut connection =
+        Connection::open(&database).expect("version-one fixture database should open");
+    apply_migration(&mut connection, 1, MIGRATION_1_NAME, MIGRATION_1, 111)
+        .expect("accepted version-one baseline should apply");
+    drop(connection);
+
+    let expected_identity =
+        database_file_identity(&database).expect("database identity should be captured");
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let hook_cancelled = Arc::clone(&cancelled);
+    let deadline = Instant::now()
+        .checked_add(Duration::from_secs(5))
+        .expect("test deadline should be representable");
+
+    let error = open_index_writer_with_identity_and_migration_hook(
+        &database,
+        expected_identity,
+        222,
+        Some(cancelled),
+        Some(deadline),
+        move |migrated| {
+            assert!(migrated, "the version-one fixture must be upgraded");
+            hook_cancelled.store(true, Ordering::Release);
+        },
+    )
+    .expect_err("post-commit cancellation must report an unknown mutation outcome");
+    assert_eq!(error, SqliteStoreError::MutationOutcomeUnknown);
+
+    let connection = raw_connection(&database);
+    let user_version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .expect("upgraded schema version should remain readable");
+    let ledger_rows: i64 = connection
+        .query_row("SELECT count(*) FROM schema_migrations", [], |row| {
+            row.get(0)
+        })
+        .expect("upgraded migration ledger should remain readable");
+    assert_eq!(user_version, SCHEMA_VERSION);
+    assert_eq!(ledger_rows, SCHEMA_VERSION);
+}
+
+#[test]
 fn reopening_current_version_is_idempotent() {
     let directory = TempDirectory::new();
     let database = directory.database();

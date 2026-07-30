@@ -10,7 +10,7 @@ pub use input::{
 pub(crate) use output::{CompatibilityAlias, compatibility_output, graph_schema_output};
 pub use output::{
     CompatibilityGraphSchema, CompatibilityGraphSchemaLimits, CompatibilityLevels,
-    CompatibilityNamespace, CompatibilityOutput, CompatibilityReceipt,
+    CompatibilityNamespace, CompatibilityObservation, CompatibilityOutput, CompatibilityReceipt,
 };
 
 /// Version of the independently authored compatibility request/receipt profile.

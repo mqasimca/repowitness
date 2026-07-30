@@ -65,6 +65,7 @@ my @required_workloads = qw(
 );
 my %required_workloads = map { $_ => 1 } @required_workloads;
 my %seen_workloads;
+my %workload_iterations;
 my $workloads = $manifest->{phase1_workloads};
 report('phase1_workloads must be an array')
   if !is_array($workloads);
@@ -82,12 +83,30 @@ if (is_array($workloads)) {
         report("Phase 1 workload '$id' iterations must be 1 through 1000")
           if !is_positive_integer($workload->{iterations})
           || $workload->{iterations} > 1_000;
+        $workload_iterations{$id} = $workload->{iterations}
+          if is_non_empty_string($id)
+          && $required_workloads{$id}
+          && is_positive_integer($workload->{iterations})
+          && $workload->{iterations} <= 1_000
+          && !exists $workload_iterations{$id};
     }
     for my $id (@required_workloads) {
         report("missing Phase 1 workload '$id'") if !$seen_workloads{$id};
     }
     report('Phase 1 workload inventory contains unexpected entries')
       if keys(%seen_workloads) != @required_workloads;
+    for my $id (
+        qw(
+        quiet-polling-no-publication
+        native-graph-read-suite
+        retention-plan-apply-restart
+        )
+      )
+    {
+        report("Phase 1 workload '$id' requires at least two iterations")
+          if defined($workload_iterations{$id})
+          && $workload_iterations{$id} < 2;
+    }
 }
 
 my $budgets = $manifest->{budgets};
@@ -99,6 +118,10 @@ if (is_object($budgets)) {
     if (is_object($correctness)) {
         for my $field (
             qw(
+            max_false_confirmed_claims
+            max_silent_truncations
+            max_mixed_generation_reads
+            max_false_automatic_relinks
             max_partial_workspace_views
             max_selector_retargets
             max_unreported_scope_omissions
@@ -114,6 +137,30 @@ if (is_object($budgets)) {
         }
     }
 
+    my $base_resources = $budgets->{resources};
+    report('resources must be an object')
+      if !is_object($base_resources);
+    if (is_object($base_resources)) {
+        for my $field (
+            qw(
+            max_full_index_wall_ms
+            max_peak_rss_mib
+            max_warm_query_p95_ms
+            max_material_result_bytes
+            max_database_bytes
+            )
+          )
+        {
+            report("Phase 1 resource budget $field must be positive")
+              if !is_positive_integer($base_resources->{$field});
+        }
+        report('max_wal_bytes_after_completion must equal zero')
+          if !is_non_negative_integer(
+            $base_resources->{max_wal_bytes_after_completion}
+          )
+          || $base_resources->{max_wal_bytes_after_completion} != 0;
+    }
+
     my $resources = $budgets->{phase1_resources};
     report('phase1_resources must be an object')
       if !is_object($resources);
@@ -121,6 +168,7 @@ if (is_object($budgets)) {
         for my $field (
             qw(
             max_two_source_publication_wall_ms
+            quiet_poll_session_ms
             max_quiet_poll_p95_ms
             max_native_graph_read_p95_ms
             max_retention_plan_wall_ms
@@ -137,10 +185,35 @@ if (is_object($budgets)) {
             $resources->{max_unchanged_generation_delta}
           )
           || $resources->{max_unchanged_generation_delta} != 0;
+        report('max_two_source_publication_wall_ms exceeds the capture bound')
+          if is_positive_integer(
+            $resources->{max_two_source_publication_wall_ms}
+          )
+          && $resources->{max_two_source_publication_wall_ms} > 895_000;
+        report('quiet_poll_session_ms must be 100 through 10000')
+          if !is_positive_integer($resources->{quiet_poll_session_ms})
+          || $resources->{quiet_poll_session_ms} < 100
+          || $resources->{quiet_poll_session_ms} > 10_000;
+    }
+    if (is_object($base_resources) && is_object($resources)) {
+        report('warm-query and native-graph latency budgets must match')
+          if is_positive_integer($base_resources->{max_warm_query_p95_ms})
+          && is_positive_integer($resources->{max_native_graph_read_p95_ms})
+          && $base_resources->{max_warm_query_p95_ms}
+          != $resources->{max_native_graph_read_p95_ms};
     }
 }
 
 my @required_capture = qw(
+  repowitness_revision
+  corpus_revision
+  rust_toolchain
+  operating_system
+  cpu_model
+  logical_cpu_count
+  memory_mib
+  filesystem_type
+  resolved_configuration_digest
   sqlite_version
   git_version
   selector_profile
@@ -151,16 +224,161 @@ my $environment = $manifest->{run_environment};
 if (!is_object($environment) || !is_array($environment->{capture})) {
     report('Phase 1 run_environment.capture must be an array');
 } else {
-    my %captured = map { $_ => 1 } @{$environment->{capture}};
+    my %required = map { $_ => 1 } @required_capture;
+    my %captured;
+    for my $field (@{$environment->{capture}}) {
+        report('Phase 1 run_environment.capture contains an invalid field')
+          if !is_non_empty_string($field) || !$required{$field};
+        report("Phase 1 run_environment.capture repeats '$field'")
+          if is_non_empty_string($field) && $captured{$field}++;
+    }
     for my $field (@required_capture) {
         report("Phase 1 run_environment.capture omits '$field'")
           if !$captured{$field};
     }
+    report('Phase 1 run_environment.capture inventory is not exact')
+      if @{$environment->{capture}} != @required_capture;
+}
+if (is_object($environment)) {
+    report('Phase 1 warm_query_runs must be 2 through 1000')
+      if !is_positive_integer($environment->{warm_query_runs})
+      || $environment->{warm_query_runs} < 2
+      || $environment->{warm_query_runs} > 1_000;
+    report('Phase 1 cold_and_warm_runs_required must be true')
+      if !JSON::PP::is_bool($environment->{cold_and_warm_runs_required})
+      || !$environment->{cold_and_warm_runs_required};
+    report('warm-query runs must match native-graph workload iterations')
+      if is_positive_integer($environment->{warm_query_runs})
+      && defined($workload_iterations{'native-graph-read-suite'})
+      && $environment->{warm_query_runs}
+      != $workload_iterations{'native-graph-read-suite'};
 }
 
 if (@errors) {
     print STDERR join("\n", @errors), "\n";
     exit 1;
 }
+
+sub require_file_text {
+    my ($path, @required_text) = @_;
+    open my $handle, '<:raw', $path or die "$path: cannot read\n";
+    local $/;
+    my $text = <$handle>;
+    close $handle;
+    for my $required (@required_text) {
+        die "$path: missing required gate '$required'\n"
+          if index($text, $required) < 0;
+    }
+}
+
+sub reject_file_text {
+    my ($path, @forbidden_text) = @_;
+    open my $handle, '<:raw', $path or die "$path: cannot read\n";
+    local $/;
+    my $text = <$handle>;
+    close $handle;
+    for my $forbidden (@forbidden_text) {
+        die "$path: contains fail-open gate '$forbidden'\n"
+          if index($text, $forbidden) >= 0;
+    }
+}
+
+require_file_text(
+    'scripts/run-phase1-benchmark',
+    'scripts/phase1-benchmark-support',
+    'max_full_index_wall_ms',
+    'max_peak_rss_mib',
+    'max_warm_query_p95_ms',
+    'max_database_bytes',
+    'max_wal_bytes_after_completion',
+    'fresh_workload_database atomic-workspace',
+    'fresh_workload_database two-worktree-workspace',
+    'resolve_local_corpus_root "$CORPUS_INPUT"',
+    'create_bounded_checkout "$WORKTREE_ONE" worktree-one',
+    'remove_fresh_workload_database "$database"',
+    'run_workload_command() (',
+    'check-phase1-workspace-receipt',
+    'scripts/phase1-benchmark-suites',
+    'run_operation_probe_contract_suite',
+    'run_trustworthiness_suite',
+    'verify_final_git_state',
+);
+require_file_text(
+    'scripts/phase1-benchmark-suites',
+    '--example phase1_operation_probe',
+    'missing_git_object_history_is_indeterminate_and_never_auto_links',
+    'truncation_is_reported_even_when_other_work_is_partial',
+    'cross_generation_graph_source_is_hashed_bounded_excluded_and_apply_safe',
+    'dependent_delete_failure_rolls_back_rows_marks_audit_and_plan_state',
+);
+require_file_text(
+    'scripts/phase1-benchmark-support',
+    'MAX_COMMAND_WALL_MS',
+    'resolve_local_corpus_root',
+    'protocol.allow=never',
+    'protocol.file.allow=always',
+    'capture_darwin_filesystem_type',
+    'fetch --quiet --depth=1 --no-tags',
+    'rev-parse --is-shallow-repository',
+    'remove_fresh_workload_database',
+    'verify_clean_checkout',
+    'scripts/phase1-bounded-capture',
+);
+require_file_text(
+    'scripts/phase1-bounded-capture',
+    'CLOCK_MONOTONIC',
+    'EINTR',
+    '$SIG{TERM}',
+    'status_reader',
+    'Cleanup runs on success too',
+    "kill 'TERM', -\$pid",
+    "kill 'TERM', \$pid",
+    "kill 'KILL', -\$pid",
+    "kill 'KILL', \$pid",
+);
+require_file_text(
+    'crates/repowitness-local/examples/phase1_operation_probe.rs',
+    'warm_query_runs',
+    'cold_and_warm_runs_required',
+    'quiet_poll_session_ms',
+    'budget_max_warm_query_p95_ms',
+);
+require_file_text(
+    'crates/repowitness-local/examples/phase1_operation_probe/graph.rs',
+    'bounded_limits(max_result_bytes)',
+    'native graph evidence did not resolve its exact selector',
+);
+require_file_text(
+    '.github/workflows/phase1-benchmark.yml',
+    'check-phase1-benchmark-receipt',
+    'source_status=$(git status',
+    'final_source_status=$(git status',
+    'final_corpus_status=$(git --no-pager',
+    'final_revision',
+    'expected_corpus_revision',
+    'fetch --quiet --depth=1 --no-tags',
+    'rev-parse --is-shallow-repository',
+    'pipeline_status=("${PIPESTATUS[@]}")',
+    'benchmark_status=${pipeline_status[0]:-1}',
+    'evidence_status=${pipeline_status[1]:-1}',
+);
+reject_file_text(
+    '.github/workflows/phase1-benchmark.yml',
+    '[[ -n "$(',
+    '[[ -z "$(',
+    'benchmark_status=${PIPESTATUS[0]}',
+);
+reject_file_text(
+    'scripts/run-phase1-benchmark',
+    'clone --quiet --no-local',
+    'worktree add',
+);
+
+system('perl', 'scripts/check-phase1-benchmark-receipt', '--self-test') == 0
+  or die "Phase 1 benchmark receipt self-tests failed\n";
+system('perl', 'scripts/check-phase1-workspace-receipt', '--self-test') == 0
+  or die "Phase 1 workspace receipt self-tests failed\n";
+system('sh', 'scripts/check-phase1-benchmark-support') == 0
+  or die "Phase 1 benchmark support checks failed\n";
 
 print "Phase 1 benchmark contract checks passed\n";

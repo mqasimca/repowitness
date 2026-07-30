@@ -1,0 +1,278 @@
+name: Phase 1 benchmark
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase1-benchmark-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  benchmark:
+    name: clean Phase 1 benchmark
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: "1"
+    steps:
+      - name: Check out the exact RepoWitness revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: Verify the clean benchmark source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "Phase 1 release attestation runs only from main" >&2
+            exit 1
+          fi
+          actual_revision=$(git rev-parse --verify HEAD)
+          if [[ ! "$actual_revision" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "RepoWitness revision is not a full lowercase commit ID" >&2
+            exit 1
+          fi
+          if [[ "$actual_revision" != "$GITHUB_SHA" ]]; then
+            echo "RepoWitness checkout does not match the dispatched revision" >&2
+            exit 1
+          fi
+          if ! source_status=$(git status --porcelain --untracked-files=all); then
+            echo "RepoWitness status could not be read" >&2
+            exit 1
+          fi
+          if [[ -n "$source_status" ]]; then
+            echo "RepoWitness checkout is not clean" >&2
+            exit 1
+          fi
+          ./scripts/check-benchmarks
+
+      - name: Initialize the public attestation
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          evidence_dir="$RUNNER_TEMP/phase1-benchmark-evidence"
+          install -d -m 0700 "$evidence_dir"
+          {
+            echo "schema_version=1"
+            echo "workflow_run_id=$GITHUB_RUN_ID"
+            echo "workflow_run_attempt=$GITHUB_RUN_ATTEMPT"
+            echo "workflow_ref=$GITHUB_REF"
+            echo "repowitness_revision=$GITHUB_SHA"
+          } >"$evidence_dir/attestation.txt"
+          cp benchmarks/phase1/manifest.json "$evidence_dir/manifest.json"
+
+      - name: Obtain the pinned public corpus
+        shell: bash
+        env:
+          GIT_CONFIG_GLOBAL: /dev/null
+          GIT_CONFIG_NOSYSTEM: "1"
+          GIT_CONFIG_SYSTEM: /dev/null
+          GIT_TERMINAL_PROMPT: "0"
+        run: |
+          set -Eeuo pipefail
+          readarray -t corpus_values < <(
+            perl -MJSON::PP -e '
+              my $path = shift @ARGV;
+              open my $handle, "<:raw", $path
+                or die "cannot read benchmark manifest\n";
+              local $/;
+              my $manifest = decode_json(<$handle>);
+              close $handle;
+              my $corpus = $manifest->{corpora}->[0];
+              print "$corpus->{repository}\n$corpus->{revision}\n";
+            ' benchmarks/phase1/manifest.json
+          )
+          if [[ "${#corpus_values[@]}" -ne 2 ]]; then
+            echo "Benchmark corpus profile is incomplete" >&2
+            exit 1
+          fi
+          corpus_repository=${corpus_values[0]}
+          corpus_revision=${corpus_values[1]}
+          if [[ "$corpus_repository" != \
+            "https://github.com/tokio-rs/mini-redis.git" ]]; then
+            echo "Benchmark corpus repository is not allow-listed" >&2
+            exit 1
+          fi
+          if [[ ! "$corpus_revision" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Benchmark corpus revision is invalid" >&2
+            exit 1
+          fi
+
+          corpus_root="$RUNNER_TEMP/phase1-benchmark-corpus"
+          if [[ -e "$corpus_root" ]]; then
+            echo "Benchmark corpus destination already exists" >&2
+            exit 1
+          fi
+          install -d -m 0700 "$corpus_root"
+          git --no-pager \
+            -c core.fsmonitor=false \
+            -c core.hooksPath=/dev/null \
+            -c core.untrackedCache=false \
+            -c protocol.version=2 \
+            -C "$corpus_root" init --quiet
+          git --no-pager \
+            -c core.fsmonitor=false \
+            -c core.hooksPath=/dev/null \
+            -c core.untrackedCache=false \
+            -c protocol.version=2 \
+            -C "$corpus_root" remote add origin "$corpus_repository"
+          git --no-pager \
+            -c core.fsmonitor=false \
+            -c core.hooksPath=/dev/null \
+            -c core.untrackedCache=false \
+            -c protocol.version=2 \
+            -C "$corpus_root" fetch --quiet --depth=1 --no-tags \
+            origin "$corpus_revision"
+          git --no-pager -C "$corpus_root" \
+            -c core.hooksPath=/dev/null \
+            checkout --quiet --detach FETCH_HEAD
+          actual_revision=$(git --no-pager -C "$corpus_root" \
+            rev-parse --verify HEAD)
+          if [[ "$actual_revision" != "$corpus_revision" ]]; then
+            echo "Benchmark corpus checkout does not match the manifest" >&2
+            exit 1
+          fi
+          shallow=$(git --no-pager -C "$corpus_root" \
+            rev-parse --is-shallow-repository)
+          commit_count=$(git --no-pager -C "$corpus_root" \
+            rev-list --count HEAD)
+          if [[ "$shallow" != "true" || "$commit_count" != "1" ]]; then
+            echo "Benchmark corpus checkout is not bounded to one commit" >&2
+            exit 1
+          fi
+          if ! corpus_status=$(git --no-pager -C "$corpus_root" \
+            status --porcelain --untracked-files=all); then
+            echo "Benchmark corpus status could not be read" >&2
+            exit 1
+          fi
+          if [[ -n "$corpus_status" ]]; then
+            echo "Benchmark corpus checkout is not clean" >&2
+            exit 1
+          fi
+
+      - name: Run and verify the benchmark
+        id: benchmark
+        shell: bash
+        run: |
+          set -uo pipefail
+          evidence_dir="$RUNNER_TEMP/phase1-benchmark-evidence"
+          output="$evidence_dir/benchmark-output.txt"
+          write_checksums() (
+            cd "$evidence_dir"
+            sha256sum attestation.txt benchmark-output.txt manifest.json \
+              >SHA256SUMS
+          )
+
+          set +e
+          ./scripts/run-phase1-benchmark \
+            "$RUNNER_TEMP/phase1-benchmark-corpus" 2>&1 | tee "$output"
+          pipeline_status=("${PIPESTATUS[@]}")
+          set -e
+          benchmark_status=${pipeline_status[0]:-1}
+          evidence_status=${pipeline_status[1]:-1}
+          echo "benchmark_exit_code=$benchmark_status" \
+            >>"$evidence_dir/attestation.txt"
+          echo "evidence_capture_exit_code=$evidence_status" \
+            >>"$evidence_dir/attestation.txt"
+          if [[ "$benchmark_status" -ne 0 || "$evidence_status" -ne 0 ]]; then
+            echo "attestation_valid=false" \
+              >>"$evidence_dir/attestation.txt"
+            write_checksums
+            if [[ "$benchmark_status" -ne 0 ]]; then
+              exit "$benchmark_status"
+            fi
+            exit "$evidence_status"
+          fi
+
+          validation_status=0
+          final_revision=
+          corpus_revision=
+          expected_corpus_revision=
+          perl scripts/check-phase1-benchmark-receipt \
+            "$output" "$GITHUB_SHA" || validation_status=1
+          final_revision=$(git rev-parse --verify HEAD) \
+            || validation_status=1
+          [[ "$final_revision" == "$GITHUB_SHA" ]] \
+            || validation_status=1
+          final_source_status=
+          final_source_status=$(git status --porcelain --untracked-files=all) \
+            || validation_status=1
+          [[ -z "$final_source_status" ]] || validation_status=1
+          corpus_root="$RUNNER_TEMP/phase1-benchmark-corpus"
+          expected_corpus_revision=$(perl -MJSON::PP -e '
+            my $path = shift @ARGV;
+            open my $handle, "<:raw", $path
+              or die "cannot read benchmark manifest\n";
+            local $/;
+            my $manifest = decode_json(<$handle>);
+            close $handle;
+            print $manifest->{corpora}->[0]->{revision};
+          ' benchmarks/phase1/manifest.json) || validation_status=1
+          corpus_revision=$(git --no-pager -C "$corpus_root" \
+            rev-parse --verify HEAD) || validation_status=1
+          [[ "$corpus_revision" == "$expected_corpus_revision" ]] \
+            || validation_status=1
+          final_corpus_status=
+          final_corpus_status=$(git --no-pager -C "$corpus_root" \
+            status --porcelain --untracked-files=all) \
+            || validation_status=1
+          [[ -z "$final_corpus_status" ]] || validation_status=1
+          if [[ "$validation_status" -ne 0 ]]; then
+            echo "attestation_valid=false" \
+              >>"$evidence_dir/attestation.txt"
+            write_checksums
+            echo "Benchmark output failed attestation validation" >&2
+            exit 1
+          fi
+
+          echo "attestation_valid=true" \
+            >>"$evidence_dir/attestation.txt"
+          write_checksums
+
+      - name: Write the benchmark summary
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          output="$RUNNER_TEMP/phase1-benchmark-evidence/benchmark-output.txt"
+          {
+            echo "## Phase 1 benchmark"
+            echo
+            echo "- Revision: \`$GITHUB_SHA\`"
+            echo "- Platform: Ubuntu 24.04"
+            echo "- Benchmark outcome: \`${{ steps.benchmark.outcome }}\`"
+          } >>"$GITHUB_STEP_SUMMARY"
+          if [[ -f "$output" ]]; then
+            {
+              echo
+              echo '```text'
+              summary_pattern='^(cold_index_wall_us|peak_rss_kib|'
+              summary_pattern="${summary_pattern}quiet_poll_p95_us|"
+              summary_pattern="${summary_pattern}native_graph_read_p95_us|"
+              summary_pattern="${summary_pattern}retention_plan_p95_us|"
+              summary_pattern="${summary_pattern}retention_apply_p95_us|"
+              summary_pattern="${summary_pattern}retained_generations_per_source_slot|"
+              summary_pattern="${summary_pattern}database_bytes|wal_bytes|"
+              summary_pattern="${summary_pattern}correctness_failures)="
+              grep -E "$summary_pattern" "$output" || true
+              echo '```'
+            } >>"$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Retain the public benchmark evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: phase1-benchmark-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/phase1-benchmark-evidence
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 9

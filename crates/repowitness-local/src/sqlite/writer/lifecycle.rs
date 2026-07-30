@@ -53,6 +53,19 @@ impl WriterState {
         Self { connection }
     }
 
+    #[cfg(test)]
+    pub(super) fn install_commit_failure_control(
+        &self,
+        fail_next_commit: Arc<AtomicBool>,
+    ) -> Result<(), SqliteStoreError> {
+        self.connection
+            .commit_hook(Some(move || {
+                mutation_commit_in_progress()
+                    && fail_next_commit.swap(false, Ordering::AcqRel)
+            }))
+            .map_err(|_| SqliteStoreError::DatabaseOperationFailed)
+    }
+
     pub(super) fn load_memory_source(
         &mut self,
         repository: RepositoryIdentityDigest,
@@ -83,8 +96,14 @@ impl WriterState {
         &mut self,
         prepared: &PreparedMemoryCorrespondenceReview,
         control: WriteControl<'_>,
-    ) -> Result<MemoryCorrespondenceReviewReceipt, SqliteStoreError> {
-        append_memory_correspondence_review(&mut self.connection, prepared, control)
+        force_progress_handler_clear_failure: bool,
+    ) -> WriterMutationResult<MemoryCorrespondenceReviewReceipt> {
+        append_memory_correspondence_review(
+            &mut self.connection,
+            prepared,
+            control,
+            force_progress_handler_clear_failure,
+        )
     }
 
     pub(super) fn load_memory_correspondence_reviews(
@@ -109,8 +128,14 @@ impl WriterState {
         &mut self,
         prepared: &PreparedMemoryProjection,
         control: WriteControl<'_>,
-    ) -> Result<MemoryProjectionPublication, SqliteStoreError> {
-        publish_memory_projection(&mut self.connection, prepared, control)
+        force_progress_handler_clear_failure: bool,
+    ) -> WriterMutationResult<MemoryProjectionPublication> {
+        publish_memory_projection(
+            &mut self.connection,
+            prepared,
+            control,
+            force_progress_handler_clear_failure,
+        )
     }
 
     pub(super) fn recover(
@@ -134,7 +159,8 @@ impl WriterState {
             .progress_handler(0, None::<fn() -> bool>)
             .map_err(|_| SqliteStoreError::DatabaseOperationFailed);
         match (result, clear_result) {
-            (Err(error), _) | (Ok(_), Err(error)) => Err(error),
+            (Err(error), _) => Err(error),
+            (Ok(_), Err(_)) => Err(SqliteStoreError::MutationOutcomeUnknown),
             (Ok(recovered), Ok(())) => Ok(recovered),
         }
     }
@@ -198,10 +224,10 @@ impl WriterState {
             }
         })?;
         check_recovery_control(cancelled, deadline)?;
-        transaction
-            .commit()
-            .map_err(|error| recovery_database_error(error, cancelled, deadline))?;
-        u64::try_from(incomplete.len()).map_err(|_| SqliteStoreError::CountNotRepresentable)
+        let recovered =
+            u64::try_from(incomplete.len()).map_err(|_| SqliteStoreError::CountNotRepresentable)?;
+        commit_mutation(transaction)?;
+        Ok(recovered)
     }
 
     pub(super) fn register_workspace(
@@ -222,35 +248,11 @@ impl WriterState {
         repository: RepositoryIdentityDigest,
         initial_source_epoch: u64,
     ) -> Result<(i64, SourceSlotEpoch), SqliteStoreError> {
-        let epoch = fixed_integer(initial_source_epoch)?;
         let transaction = self.transaction()?;
-        transaction
-            .execute(
-                "INSERT INTO workspaces(repository_identity, source_epoch)
-                 VALUES (?1, ?2)
-                 ON CONFLICT(repository_identity) DO NOTHING",
-                params![repository.as_bytes().as_slice(), epoch],
-            )
-            .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
-        let (workspace_id, stored_epoch): (i64, i64) = transaction
-            .query_row(
-                "SELECT workspace_id, source_epoch FROM workspaces
-                 WHERE repository_identity = ?1",
-                [repository.as_bytes().as_slice()],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
-        let source_epoch = decode_source_slot_epoch(stored_epoch)?;
-        ensure_default_workspace_membership(
-            &transaction,
-            repository,
-            workspace_id,
-            source_epoch,
-        )?;
-        transaction
-            .commit()
-            .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
-        Ok((workspace_id, source_epoch))
+        let workspace =
+            ensure_workspace_in_transaction(&transaction, repository, initial_source_epoch)?;
+        commit_mutation(transaction)?;
+        Ok(workspace)
     }
 
     pub(super) fn import_memory_version(
@@ -259,10 +261,6 @@ impl WriterState {
         control: WriteControl<'_>,
     ) -> Result<MemoryImportReceipt, SqliteStoreError> {
         check_control(control)?;
-        if prepared.record.scope().repository() != prepared.repository {
-            return Err(SqliteStoreError::InvalidMemoryImport);
-        }
-
         let transaction = self.transaction()?;
         let workspace_id = transaction
             .query_row(
@@ -273,51 +271,44 @@ impl WriterState {
             .optional()
             .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?
             .ok_or(SqliteStoreError::WorkspaceUnavailable)?;
-        let record_id = prepared.record.header().record_id();
-        let persisted_canonical = transaction
-            .query_row(
-                "SELECT canonical_json FROM memory_versions
-                 WHERE workspace_id = ?1 AND record_id = ?2 AND revision_digest = ?3",
-                params![
-                    workspace_id,
-                    record_id.as_bytes().as_slice(),
-                    prepared.revision.as_bytes().as_slice()
-                ],
-                |row| row.get::<_, Vec<u8>>(0),
-            )
-            .optional()
-            .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
-        let version_inserted = if let Some(persisted_canonical) = persisted_canonical {
-            if persisted_canonical != prepared.canonical_json {
-                return Err(SqliteStoreError::IntegrityCheckFailed);
+        let receipt =
+            import_memory_version_in_transaction(&transaction, workspace_id, prepared, control)?;
+        commit_mutation(transaction)?;
+        Ok(receipt)
+    }
+
+    pub(super) fn import_observed_memory_history(
+        &mut self,
+        repository: RepositoryIdentityDigest,
+        prepared: &[PreparedMemoryImport],
+        control: WriteControl<'_>,
+    ) -> Result<Box<[MemoryImportReceipt]>, SqliteStoreError> {
+        check_control(control)?;
+        let transaction = self.transaction()?;
+        let (workspace_id, source_epoch) =
+            ensure_workspace_in_transaction(&transaction, repository, 0)?;
+        if source_epoch.get() != 0 {
+            return Err(SqliteStoreError::StaleSourceEpoch);
+        }
+        let mut receipts = Vec::with_capacity(prepared.len());
+        for import in prepared {
+            check_control(control)?;
+            if import.repository != repository
+                || import.approval != repowitness_application::MemoryImportApproval::ObservedOnly
+            {
+                return Err(SqliteStoreError::InvalidMemoryImport);
             }
-            false
-        } else {
-            insert_memory_children(&transaction, workspace_id, prepared, control)?;
-            insert_memory_version(&transaction, workspace_id, prepared)?;
-            true
-        };
-        verify_memory_version(&transaction, workspace_id, prepared, control)?;
+            receipts.push(import_memory_version_in_transaction(
+                &transaction,
+                workspace_id,
+                import,
+                control,
+            )?);
+        }
         check_control(control)?;
-        let observation_inserted =
-            insert_memory_audit(&transaction, workspace_id, prepared, "observed")?;
-        check_control(control)?;
-        let approval_inserted = match prepared.approval {
-            repowitness_application::MemoryImportApproval::ObservedOnly => false,
-            repowitness_application::MemoryImportApproval::LocallyApproved => {
-                insert_memory_audit(&transaction, workspace_id, prepared, "locally_approved")?
-            }
-        };
-        check_control(control)?;
-        transaction
-            .commit()
-            .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
-        Ok(MemoryImportReceipt::new(
-            prepared.revision,
-            version_inserted,
-            observation_inserted,
-            approval_inserted,
-        ))
+        let receipts = receipts.into_boxed_slice();
+        commit_mutation(transaction)?;
+        Ok(receipts)
     }
 
     pub(super) fn advance_source_epoch(
@@ -361,9 +352,7 @@ impl WriterState {
         if changed != 1 {
             return Err(SqliteStoreError::StaleSourceEpoch);
         }
-        transaction
-            .commit()
-            .map_err(|_| SqliteStoreError::DatabaseOperationFailed)
+        commit_mutation(transaction)
     }
 
     pub(super) fn stage(
@@ -439,13 +428,7 @@ impl WriterState {
         }
         let repository_epoch =
             u64::try_from(repository_epoch).map_err(|_| SqliteStoreError::IntegrityCheckFailed)?;
-        self.stage(
-            repository_epoch,
-            identity,
-            prepared,
-            coverage,
-            control,
-        )
+        self.stage(repository_epoch, identity, prepared, coverage, control)
     }
 
     pub(super) fn activate(
@@ -531,9 +514,7 @@ impl WriterState {
             generation,
         )?;
         check_workspace_deadline(deadline)?;
-        transaction
-            .commit()
-            .map_err(|_| SqliteStoreError::DatabaseOperationFailed)
+        commit_mutation(transaction)
     }
 
     pub(super) fn active_generation(
@@ -565,6 +546,87 @@ impl WriterState {
             checkpointed_frames: positive_database_count(checkpointed_frames)?,
         })
     }
+}
+
+fn ensure_workspace_in_transaction(
+    transaction: &Transaction<'_>,
+    repository: RepositoryIdentityDigest,
+    initial_source_epoch: u64,
+) -> Result<(i64, SourceSlotEpoch), SqliteStoreError> {
+    let epoch = fixed_integer(initial_source_epoch)?;
+    transaction
+        .execute(
+            "INSERT INTO workspaces(repository_identity, source_epoch)
+             VALUES (?1, ?2)
+             ON CONFLICT(repository_identity) DO NOTHING",
+            params![repository.as_bytes().as_slice(), epoch],
+        )
+        .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
+    let (workspace_id, stored_epoch): (i64, i64) = transaction
+        .query_row(
+            "SELECT workspace_id, source_epoch FROM workspaces
+             WHERE repository_identity = ?1",
+            [repository.as_bytes().as_slice()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
+    let source_epoch = decode_source_slot_epoch(stored_epoch)?;
+    ensure_default_workspace_membership(transaction, repository, workspace_id, source_epoch)?;
+    Ok((workspace_id, source_epoch))
+}
+
+fn import_memory_version_in_transaction(
+    transaction: &Transaction<'_>,
+    workspace_id: i64,
+    prepared: &PreparedMemoryImport,
+    control: WriteControl<'_>,
+) -> Result<MemoryImportReceipt, SqliteStoreError> {
+    check_control(control)?;
+    if prepared.record.scope().repository() != prepared.repository {
+        return Err(SqliteStoreError::InvalidMemoryImport);
+    }
+    let record_id = prepared.record.header().record_id();
+    let persisted_canonical = transaction
+        .query_row(
+            "SELECT canonical_json FROM memory_versions
+             WHERE workspace_id = ?1 AND record_id = ?2 AND revision_digest = ?3",
+            params![
+                workspace_id,
+                record_id.as_bytes().as_slice(),
+                prepared.revision.as_bytes().as_slice()
+            ],
+            |row| row.get::<_, Vec<u8>>(0),
+        )
+        .optional()
+        .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
+    let version_inserted = if let Some(persisted_canonical) = persisted_canonical {
+        if persisted_canonical != prepared.canonical_json {
+            return Err(SqliteStoreError::IntegrityCheckFailed);
+        }
+        false
+    } else {
+        insert_memory_children(transaction, workspace_id, prepared, control)?;
+        insert_memory_version(transaction, workspace_id, prepared)?;
+        true
+    };
+    verify_memory_version(transaction, workspace_id, prepared, control)?;
+    check_control(control)?;
+    let observation_inserted =
+        insert_memory_audit(transaction, workspace_id, prepared, "observed")?;
+    check_control(control)?;
+    let approval_inserted = match prepared.approval {
+        repowitness_application::MemoryImportApproval::ObservedOnly => false,
+        repowitness_application::MemoryImportApproval::LocallyApproved => {
+            insert_memory_audit(transaction, workspace_id, prepared, "locally_approved")?
+        }
+    };
+    check_control(control)?;
+    Ok(MemoryImportReceipt::new(
+        prepared.revision,
+        version_inserted,
+        observation_inserted,
+        approval_inserted,
+    ))
 }
 
 fn clear_uncommitted_retention_marks(

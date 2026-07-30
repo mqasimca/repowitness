@@ -4,6 +4,9 @@ impl OwnedSqliteIndex {
     /// A failed, cancelled, or expired operation makes the candidate
     /// generation ineligible for activation and leaves the prior active
     /// generation readable.
+    ///
+    /// On [`SqliteStoreError::MutationOutcomeUnknown`], reopen the store and
+    /// inspect the candidate generation graph receipt before retrying.
     pub fn stage_rust_graph(
         &self,
         generation: GenerationId,
@@ -22,7 +25,12 @@ impl OwnedSqliteIndex {
             })),
             deadline,
         )?;
-        match receive_mutation_reply(&receiver, Some(cancelled.as_ref()), deadline) {
+        match receive_mutation_reply(
+            &receiver,
+            Some(cancelled.as_ref()),
+            deadline,
+            Some(&self.unresolved_mutation),
+        ) {
             Ok(()) => Ok(()),
             Err(error) => {
                 cancelled.store(true, Ordering::Release);

@@ -4,10 +4,17 @@ fn sanitized_git_command(worktree_root: &Path, scope: GitPathDiscoveryScope) -> 
         .arg("ls-files")
         .arg("-z")
         .arg("--full-name")
-        .arg("--cached")
         .arg("--deduplicate");
-    if matches!(scope, GitPathDiscoveryScope::CachedAndUntracked) {
-        command.arg("--others").arg("--exclude-standard");
+    match scope {
+        GitPathDiscoveryScope::Cached => {
+            command.arg("--cached");
+        }
+        GitPathDiscoveryScope::Untracked => {
+            command.arg("--others").arg("--exclude-standard");
+        }
+        GitPathDiscoveryScope::Deleted => {
+            command.arg("--deleted");
+        }
     }
     command
 }
@@ -19,6 +26,8 @@ pub(crate) fn sanitized_git_base_command(worktree_root: &Path) -> Command {
         .arg("--literal-pathspecs")
         .arg("-c")
         .arg("core.fsmonitor=false")
+        .arg("-c")
+        .arg("core.ignorecase=false")
         .arg("-c")
         .arg(format!("core.hooksPath={}", null_device()))
         .arg("-c")

@@ -29,13 +29,17 @@ The local runner exercises:
 - quiet polling cycles that publish no new epoch or generation;
 - bounded native graph status, search, evidence, architecture, trace, and
   impact reads;
-- the exact opt-in compatibility alias inventory and schema receipts; and
+- the exact opt-in compatibility alias inventory, local `tools/list` golden,
+  conservative name-only receipts, and all-alias boundary rejection; and
 - deterministic retention plan, stale-plan rejection, apply, restart, and
-  no-op replay.
+  no-op replay, including direct persisted-root and transactional-rollback
+  regressions.
 
 Every workload records aggregate counts and timings only. Normal output must
 not contain source text, symbol names outside the public corpus oracle,
-worktree paths, raw selector text, environment values, or credentials.
+worktree paths, raw selector text, credentials, secrets, or arbitrary
+environment variables. It does contain only the allow-listed aggregate
+platform and toolchain fields declared by the manifest.
 
 Run it against a clean checkout of the manifest-pinned public corpus:
 
@@ -43,14 +47,51 @@ Run it against a clean checkout of the manifest-pinned public corpus:
 ./scripts/run-phase1-benchmark /path/to/public-corpus
 ```
 
-The runner first indexes two disposable worktrees through the public CLI,
-prebuilds its release-mode test executables, verifies one warmup per workload,
-and then repeats focused regression workloads. Focused test workloads verify
-their expected executed-test counts, so an empty test filter cannot pass the
-gate. Its p95 values measure the warmed complete test harness, so they are
-useful for regression comparison but do not ratify the operation-level resource
-budgets below. A ratification run must use an exact-revision operation probe
-and record its clean environment attestation separately.
+The runner indexes two disposable worktrees through the public CLI into a new
+database for every warmup and measured publication sample, and runs a
+release-mode operation probe against a separate fresh database. The probe
+measures complete quiet reconciliation sessions, all six native graph read
+operations, and real retention plan/apply cycles. The native graph suite is
+the declared warm-query workload: its run count and latency budget must match
+the manifest's warm-query contract, and its receipt must match the native
+graph receipt exactly. Each workspace publication must also report complete
+post-commit maintenance and remain within the database and zero-WAL budgets.
+Its fresh database directory is removed immediately after those checks. Quiet
+polling uses a fixed manifest session duration that is independent of its p95
+budget; quiet and graph latency gates compare their calculated p95 rather than
+mistaking the budget for a per-sample maximum.
+The runner executes same-revision regressions that prove missing history stays
+indeterminate, ambiguous correspondence does not auto-link, and truncation is
+reported before it emits the corresponding zero-tolerance counters. It fails
+when a declared
+full-index wall, peak-resident-memory, graph-output, database-size,
+post-completion-WAL, operation-latency, retention, or correctness budget is
+exceeded. Graph receipts state the enforced material-output bound; they do not
+misrepresent unavailable per-result accounting as a measured evidence size.
+The runner also repeats focused release-mode regression workloads; those
+timings use a monotonic clock and are labelled
+`measurement=test-harness` and are comparison evidence, not operation latency.
+Every focused workload verifies its executed-test count, so an empty filter
+cannot pass the gate. The operation probe's percentile, digest, storage, and
+warm-query contract unit tests also run explicitly. Every material build,
+test, Git, environment-probe, and workload subprocess has a bounded combined
+capture and an absolute monotonic deadline. Local receipt parsers and small
+text utilities consume only those already bounded files.
+
+The manual `Phase 1 benchmark` GitHub Actions workflow checks out one exact
+`main` revision, fetches only the allow-listed corpus's pinned commit with
+depth one, requires both standalone depth-one disposable worktrees to be clean,
+records the declared environment fields, validates the complete receipt against an exact
+allow-list, rechecks the final repository and corpus revisions and statuses,
+and retains checksummed evidence. The local runner also verifies both
+disposable corpus worktrees at setup and after all workloads. A result becomes
+an attestation only after that workflow completes successfully for a committed
+exact revision.
+
+`scripts/check-benchmarks` also runs isolated receipt-parser and bounded-capture
+regressions. These cover duplicate, missing, unavailable, over-budget, and
+unexpected receipt data, plus capture overflow, deadline, and child-failure
+handling without running the corpus workload.
 
 ## Budgets
 

@@ -54,7 +54,7 @@ fn manage_mcp_memory_write(
             mcp_memory_publication_status(receipt.publication_status()),
         )
     })
-    .map_err(|_| RepositoryServiceError::MemoryManage)
+    .map_err(|error| mcp_memory_manage_error(MemoryMutationRequestScope::Write, error))
 }
 
 fn mcp_memory_publication_status(
@@ -70,9 +70,7 @@ fn mcp_memory_publication_status(
     }
 }
 
-const fn mcp_memory_identity(
-    status: MemoryFileIdentityStatus,
-) -> MemoryManageFileIdentityStatus {
+const fn mcp_memory_identity(status: MemoryFileIdentityStatus) -> MemoryManageFileIdentityStatus {
     match status {
         MemoryFileIdentityStatus::ConfirmedAtFinalFence => {
             MemoryManageFileIdentityStatus::ConfirmedAtFinalFence
@@ -120,14 +118,15 @@ fn manage_mcp_memory_approve(
         cancelled,
     )
     .map(|receipt| {
-        MemoryManageOutput::approve(
+        MemoryManageOutput::approve_with_maintenance(
             hex(receipt.revision().as_bytes()),
             receipt.version_inserted(),
             receipt.observation_inserted(),
             receipt.approval_inserted(),
+            mcp_memory_maintenance(receipt.maintenance()),
         )
     })
-    .map_err(|_| RepositoryServiceError::MemoryManage)
+    .map_err(|error| mcp_memory_manage_error(MemoryMutationRequestScope::Approve, error))
 }
 
 fn manage_mcp_memory_review(
@@ -138,15 +137,15 @@ fn manage_mcp_memory_review(
     cancelled: Arc<AtomicBool>,
 ) -> Result<MemoryManageOutput, RepositoryServiceError> {
     let MemoryManageServiceRequest::Review {
-            record_id,
-            revision_sha256,
-            evidence_ordinal,
-            decision,
-            target_path,
-            target_artifact_sha256,
-            target_fact_ordinal,
-            timeout,
-        } = request
+        record_id,
+        revision_sha256,
+        evidence_ordinal,
+        decision,
+        target_path,
+        target_artifact_sha256,
+        target_fact_ordinal,
+        timeout,
+    } = request
     else {
         unreachable!("review dispatcher supplied another operation");
     };
@@ -175,8 +174,13 @@ fn manage_mcp_memory_review(
         .with_deadline(timeout),
         cancelled,
     )
-    .map(|receipt| MemoryManageOutput::review(receipt.inserted()))
-    .map_err(|_| RepositoryServiceError::MemoryManage)
+    .map(|receipt| {
+        MemoryManageOutput::review_with_maintenance(
+            receipt.inserted(),
+            mcp_memory_maintenance(receipt.maintenance()),
+        )
+    })
+    .map_err(|error| mcp_memory_manage_error(MemoryMutationRequestScope::Review, error))
 }
 
 fn manage_mcp_memory_history(
@@ -203,7 +207,7 @@ fn manage_mcp_memory_history(
         cancelled,
     )
     .map(|report| {
-        MemoryManageOutput::import_history(
+        MemoryManageOutput::import_history_with_maintenance(
             report.commits_inspected(),
             report.records_inspected(),
             report.imported_versions(),
@@ -211,7 +215,47 @@ fn manage_mcp_memory_history(
             report.total_record_bytes(),
             report.git_processes(),
             report.history_complete(),
+            mcp_memory_maintenance(report.maintenance()),
         )
     })
-    .map_err(|_| RepositoryServiceError::MemoryManage)
+    .map_err(|error| mcp_memory_manage_error(MemoryMutationRequestScope::ImportHistory, error))
+}
+
+const fn mcp_memory_manage_error(
+    request_scope: MemoryMutationRequestScope,
+    error: LocalMemoryManageError,
+) -> RepositoryServiceError {
+    match error {
+        LocalMemoryManageError::MutationOutcomeUnknown { operation } => {
+            RepositoryServiceError::memory_mutation_outcome_unknown(
+                request_scope,
+                memory_mutation_operation(operation),
+            )
+        }
+        _ => RepositoryServiceError::MemoryManage,
+    }
+}
+
+fn mcp_memory_maintenance(status: LocalMemoryMaintenance) -> MemoryManageMaintenanceStatus {
+    MemoryManageMaintenanceStatus::from_evidence(
+        match status.checkpoint() {
+            LocalMemoryMaintenanceStep::Complete => MemoryManageMaintenanceStepStatus::Complete,
+            LocalMemoryMaintenanceStep::Deferred => MemoryManageMaintenanceStepStatus::Deferred,
+        },
+        match status.shutdown() {
+            LocalMemoryMaintenanceStep::Complete => MemoryManageMaintenanceStepStatus::Complete,
+            LocalMemoryMaintenanceStep::Deferred => MemoryManageMaintenanceStepStatus::Deferred,
+        },
+        match status.database_identity() {
+            LocalMemoryDatabaseIdentity::ConfirmedAtFinalFence => {
+                MemoryManageDatabaseIdentityStatus::ConfirmedAtFinalFence
+            }
+            LocalMemoryDatabaseIdentity::ChangedAfterCommit => {
+                MemoryManageDatabaseIdentityStatus::ChangedAfterCommit
+            }
+            LocalMemoryDatabaseIdentity::Unconfirmed => {
+                MemoryManageDatabaseIdentityStatus::Unconfirmed
+            }
+        },
+    )
 }

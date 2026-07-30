@@ -16,23 +16,83 @@ enum CliMemoryRecallSelection {
     Query(OsString),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CliMemoryError {
+    Failed,
+    MutationOutcomeUnknown {
+        request_scope: MemoryMutationRequestScope,
+        operation: MemoryMutationOperation,
+    },
+}
+
+impl CliMemoryError {
+    const fn from_management(
+        request_scope: MemoryMutationRequestScope,
+        error: LocalMemoryManageError,
+    ) -> Self {
+        match error {
+            LocalMemoryManageError::MutationOutcomeUnknown { operation } => {
+                Self::MutationOutcomeUnknown {
+                    request_scope,
+                    operation: memory_mutation_operation(operation),
+                }
+            }
+            _ => Self::Failed,
+        }
+    }
+
+    fn from_revalidation(error: LocalMemoryRevalidationError) -> Self {
+        match error {
+            LocalMemoryRevalidationError::MutationOutcomeUnknown { operation } => {
+                Self::MutationOutcomeUnknown {
+                    request_scope: MemoryMutationRequestScope::Revalidation,
+                    operation: memory_revalidation_mutation_operation(operation),
+                }
+            }
+            _ => Self::Failed,
+        }
+    }
+}
+
+const fn memory_mutation_operation(operation: LocalMemoryMutation) -> MemoryMutationOperation {
+    match operation {
+        LocalMemoryMutation::StoreStartup => MemoryMutationOperation::StoreStartup,
+        LocalMemoryMutation::Approval => MemoryMutationOperation::Approval,
+        LocalMemoryMutation::HistoryImport => MemoryMutationOperation::HistoryImport,
+        LocalMemoryMutation::CorrespondenceReview => MemoryMutationOperation::CorrespondenceReview,
+        LocalMemoryMutation::Checkpoint => MemoryMutationOperation::Checkpoint,
+    }
+}
+
+const fn memory_revalidation_mutation_operation(
+    operation: LocalMemoryRevalidationMutation,
+) -> MemoryMutationOperation {
+    match operation {
+        LocalMemoryRevalidationMutation::StoreStartup => MemoryMutationOperation::StoreStartup,
+        LocalMemoryRevalidationMutation::ProjectionPublication => {
+            MemoryMutationOperation::ProjectionPublication
+        }
+        LocalMemoryRevalidationMutation::Checkpoint => MemoryMutationOperation::Checkpoint,
+    }
+}
+
 trait RepositoryMemory {
     fn revalidate(
         &self,
         invocation: &MemoryRevalidationInvocation,
-    ) -> Result<CliMemoryRevalidationReport, String>;
+    ) -> Result<CliMemoryRevalidationReport, CliMemoryError>;
 
     fn recall(
         &self,
         invocation: &MemoryRecallInvocation,
         configuration: &ResolvedConfiguration,
-    ) -> Result<MemoryRecallOutput, String>;
+    ) -> Result<MemoryRecallOutput, CliMemoryError>;
 
     fn manage(
         &self,
         _invocation: &MemoryManageInvocation,
-    ) -> Result<CliMemoryManageReport, String> {
-        Err("memory management adapter is unavailable".to_owned())
+    ) -> Result<CliMemoryManageReport, CliMemoryError> {
+        Err(CliMemoryError::Failed)
     }
 }
 
@@ -42,11 +102,11 @@ impl RepositoryMemory for LocalRepositoryMemory {
     fn revalidate(
         &self,
         invocation: &MemoryRevalidationInvocation,
-    ) -> Result<CliMemoryRevalidationReport, String> {
+    ) -> Result<CliMemoryRevalidationReport, CliMemoryError> {
         let repository_identity = invocation
             .repository_identity
             .to_str()
-            .ok_or_else(|| "repository identity text is not valid UTF-8".to_owned())?;
+            .ok_or(CliMemoryError::Failed)?;
         let applied_at_unix_ms = current_unix_ms()?;
         revalidate_local_memory(
             LocalMemoryRevalidationRequest::new(
@@ -58,50 +118,47 @@ impl RepositoryMemory for LocalRepositoryMemory {
             Arc::new(AtomicBool::new(false)),
         )
         .map(CliMemoryRevalidationReport::from)
-        .map_err(|error| error.to_string())
+        .map_err(CliMemoryError::from_revalidation)
     }
 
     fn recall(
         &self,
         invocation: &MemoryRecallInvocation,
         configuration: &ResolvedConfiguration,
-    ) -> Result<MemoryRecallOutput, String> {
+    ) -> Result<MemoryRecallOutput, CliMemoryError> {
         let repository_identity = invocation
             .repository_identity
             .to_str()
-            .ok_or_else(|| "repository identity text is not valid UTF-8".to_owned())?;
+            .ok_or(CliMemoryError::Failed)?;
         let selection = match &invocation.selection {
             CliMemoryRecallSelection::All => LocalMemoryRecallSelection::All,
-            CliMemoryRecallSelection::Query(query) => LocalMemoryRecallSelection::Query(
-                query
-                    .to_str()
-                    .ok_or_else(|| "memory query text is not valid UTF-8".to_owned())?,
-            ),
+            CliMemoryRecallSelection::Query(query) => {
+                LocalMemoryRecallSelection::Query(query.to_str().ok_or(CliMemoryError::Failed)?)
+            }
         };
         let request =
             LocalMemoryRecallRequest::new(&invocation.database, repository_identity, selection)
                 .with_max_results(invocation.max_results)
-                .map_err(|error| error.to_string())?
+                .map_err(|_| CliMemoryError::Failed)?
                 .with_configuration(configuration);
         recall_local_memory(request, Arc::new(AtomicBool::new(false)))
-            .map_err(|error| error.to_string())
-            .and_then(mcp_memory_output)
+            .map_err(|_| CliMemoryError::Failed)
+            .and_then(|result| mcp_memory_output(result).map_err(|_| CliMemoryError::Failed))
     }
 
     fn manage(
         &self,
         invocation: &MemoryManageInvocation,
-    ) -> Result<CliMemoryManageReport, String> {
+    ) -> Result<CliMemoryManageReport, CliMemoryError> {
         manage_local_memory(invocation)
     }
 }
 
-fn current_unix_ms() -> Result<u64, String> {
+fn current_unix_ms() -> Result<u64, CliMemoryError> {
     let elapsed = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_err(|_| "system clock is before the Unix epoch".to_owned())?;
-    u64::try_from(elapsed.as_millis())
-        .map_err(|_| "system clock is outside the supported range".to_owned())
+        .map_err(|_| CliMemoryError::Failed)?;
+    u64::try_from(elapsed.as_millis()).map_err(|_| CliMemoryError::Failed)
 }
 
 #[derive(Clone, Copy)]
@@ -115,6 +172,7 @@ struct CliMemoryRevalidationReport {
     unresolved_records: u32,
     git_queries: u32,
     head_available: bool,
+    maintenance: CliMemoryMaintenanceStatus,
 }
 
 impl From<LocalMemoryRevalidationReport> for CliMemoryRevalidationReport {
@@ -129,6 +187,7 @@ impl From<LocalMemoryRevalidationReport> for CliMemoryRevalidationReport {
             unresolved_records: report.unresolved_records(),
             git_queries: report.git_queries(),
             head_available: report.head_available(),
+            maintenance: cli_memory_maintenance(report.maintenance()),
         }
     }
 }

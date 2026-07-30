@@ -5,7 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::contained_source::FileIdentity;
+use crate::contained_source::{FileIdentity, file_has_single_link};
 use crate::sqlite::{
     GenerationId, GenerationRetentionPolicy, OwnedSqliteIndex, RetentionApplyRequest,
     RetentionLimits, RetentionPins, RetentionPlanDigest, SqliteMutationLease, SqliteStoreError,
@@ -66,6 +66,10 @@ pub fn plan_local_retention(
 }
 
 /// Revalidates and atomically applies one exact prior retention plan.
+///
+/// On [`LocalRetentionErrorKind::OutcomeUnknown`], obtain the
+/// [`LocalRetentionError::reconciliation_guidance`] and complete its read-only
+/// exact-receipt lookup before any fresh-plan comparison or apply retry.
 pub fn apply_local_retention(
     request: LocalRetentionApplyRequest<'_>,
 ) -> Result<LocalRetentionApplyReport, LocalRetentionError> {
@@ -295,14 +299,6 @@ fn validate_existing_database(path: &Path) -> Result<(), LocalRetentionError> {
     if !metadata.is_file() || metadata.file_type().is_symlink() {
         return Err(database_unavailable());
     }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-
-        if metadata.nlink() != 1 {
-            return Err(database_unavailable());
-        }
-    }
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;
@@ -311,6 +307,10 @@ fn validate_existing_database(path: &Path) -> Result<(), LocalRetentionError> {
         if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
             return Err(database_unavailable());
         }
+    }
+    let file = fs::File::open(path).map_err(|_| database_unavailable())?;
+    if !file_has_single_link(&file).map_err(|_| database_unavailable())? {
+        return Err(database_unavailable());
     }
     Ok(())
 }

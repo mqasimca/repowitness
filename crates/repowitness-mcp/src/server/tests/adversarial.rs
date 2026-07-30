@@ -1,5 +1,6 @@
 use std::future;
 
+use super::cancellation::CancellationService;
 use super::*;
 
 #[test]

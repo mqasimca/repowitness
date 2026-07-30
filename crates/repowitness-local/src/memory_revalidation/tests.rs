@@ -29,11 +29,13 @@ use rusqlite::Connection;
 use sha2::{Digest, Sha256};
 
 use super::{
-    LocalMemoryRevalidationError, LocalMemoryRevalidationLimits, LocalMemoryRevalidationRequest,
+    LocalMemoryRevalidationError, LocalMemoryRevalidationLimits, LocalMemoryRevalidationMutation,
+    LocalMemoryRevalidationRequest, map_revalidation_mutation_error, map_store_startup_error,
     revalidate_local_memory,
 };
 use crate::{
-    LocalIndexRequest, MemoryFormatControl, OwnedSqliteIndex, OwnedSqliteReader, SqliteStoreError,
+    LocalIndexRequest, LocalMemoryDatabaseIdentity, LocalMemoryMaintenanceStep,
+    MemoryFormatControl, OwnedSqliteIndex, OwnedSqliteReader, SqliteStoreError,
     index_local_repository, parse_memory_record,
 };
 
@@ -409,6 +411,10 @@ fn missing_git_object_history_is_indeterminate_and_never_auto_links() {
     assert_eq!(report.unresolved_records(), 1);
     assert_eq!(report.git_queries(), 3);
     assert!(report.head_available());
+    assert_eq!(
+        report.maintenance(),
+        crate::LocalMemoryMaintenance::Complete
+    );
 
     let connection = Connection::open(&database).expect("database should open");
     let state = connection
@@ -623,5 +629,6 @@ fn invalid_limits_cancellation_and_debug_fail_before_database_io() {
     assert!(!database.exists());
 }
 
+mod finalization;
 mod merges;
 mod reviews;

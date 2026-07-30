@@ -20,13 +20,14 @@ impl WriterState {
             .connection
             .progress_handler(0, None::<fn() -> bool>)
             .map_err(|_| SqliteStoreError::DatabaseOperationFailed);
-        clear_result?;
-        match result {
-            Err(SqliteStoreError::DatabaseOperationFailed) => {
+        match (result, clear_result) {
+            (Err(SqliteStoreError::DatabaseOperationFailed), Ok(())) => {
                 check_control(control)?;
                 Err(SqliteStoreError::DatabaseOperationFailed)
             }
-            other => other,
+            (Err(error), _) => Err(error),
+            (Ok(_), Err(error)) => Err(error),
+            (Ok(outcome), Ok(())) => Ok(outcome),
         }
     }
 
@@ -79,9 +80,7 @@ impl WriterState {
         reset
             .execute_batch(target.recreate_sql())
             .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
-        reset
-            .commit()
-            .map_err(|_| SqliteStoreError::DatabaseOperationFailed)
+        commit_mutation(reset)
     }
 
     fn populate_projection(
@@ -131,9 +130,7 @@ impl WriterState {
                     },
                 )
                 .map_err(projection_validation_error)?;
-            transaction
-                .commit()
-                .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
+            commit_mutation(transaction)?;
             rebuilt_rows = rebuilt_rows
                 .checked_add(
                     u64::try_from(inserted).map_err(|_| SqliteStoreError::CountNotRepresentable)?,
@@ -180,9 +177,7 @@ impl WriterState {
         if changed != 1 {
             return Err(SqliteStoreError::IntegrityCheckFailed);
         }
-        publication
-            .commit()
-            .map_err(|_| SqliteStoreError::DatabaseOperationFailed)
+        commit_mutation(publication)
     }
 
     fn active_search_projection(&self) -> Result<SearchProjection, SqliteStoreError> {

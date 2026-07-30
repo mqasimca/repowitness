@@ -79,6 +79,57 @@ impl<'root> ExactReadSession<'root> {
         read_regular_file(&mut file, limits, deadline, &mut is_cancelled)
     }
 
+    pub(crate) fn exact_components_available(
+        &mut self,
+        path: &RepositoryPath,
+        deadline_duration: Duration,
+        deadline: Instant,
+        is_cancelled: &mut impl FnMut() -> bool,
+    ) -> Result<bool, ContainedSourceError> {
+        check_control_duration(deadline_duration, deadline, is_cancelled)?;
+        let mut directory = self
+            .root
+            .root
+            .try_clone()
+            .map_err(|source| ContainedSourceError::RootClone { source })?;
+        let mut components = path.components().peekable();
+        let mut ordinal = 0_u32;
+        let mut parent = 0_usize;
+
+        while let Some(component) = components.next() {
+            ordinal = ordinal
+                .checked_add(1)
+                .ok_or(ContainedSourceError::ComponentCountOverflowed)?;
+            check_control_duration(deadline_duration, deadline, is_cancelled)?;
+            let Some(child) = self.nodes[parent].children.get(component).copied() else {
+                return Ok(false);
+            };
+            match self.ensure_exact_component(
+                &directory,
+                parent,
+                child,
+                ordinal,
+                deadline_duration,
+                deadline,
+                is_cancelled,
+            ) {
+                Ok(()) => {}
+                Err(ContainedSourceError::ExactComponentUnavailable { .. }) => return Ok(false),
+                Err(error) => return Err(error),
+            }
+            if components.peek().is_none() {
+                return Ok(true);
+            }
+            let component = repository_component(component)?;
+            directory = directory
+                .open_dir_nofollow(&component)
+                .map_err(|source| ContainedSourceError::DirectoryOpen { ordinal, source })?;
+            parent = child;
+        }
+
+        Err(ContainedSourceError::RepositoryPathHadNoComponents)
+    }
+
     fn plan(
         &mut self,
         path: &RepositoryPath,
@@ -134,7 +185,7 @@ impl<'root> ExactReadSession<'root> {
                 parent,
                 child,
                 ordinal,
-                limits,
+                limits.deadline(),
                 deadline,
                 is_cancelled,
             )?;
@@ -160,7 +211,7 @@ impl<'root> ExactReadSession<'root> {
         parent: usize,
         child: usize,
         ordinal: u32,
-        limits: SourceReadLimits,
+        deadline_duration: Duration,
         deadline: Instant,
         is_cancelled: &mut impl FnMut() -> bool,
     ) -> Result<(), ContainedSourceError> {
@@ -171,7 +222,7 @@ impl<'root> ExactReadSession<'root> {
             if self.nodes[parent].scan.exhausted {
                 return Err(ContainedSourceError::ExactComponentUnavailable { ordinal });
             }
-            check_control(limits, deadline, is_cancelled)?;
+            check_control_duration(deadline_duration, deadline, is_cancelled)?;
             if self.nodes[parent].scan.entries.is_none() {
                 self.nodes[parent].scan.entries = Some(directory.entries().map_err(|source| {
                     ContainedSourceError::DirectoryEntryRead { ordinal, source }
@@ -191,7 +242,14 @@ impl<'root> ExactReadSession<'root> {
                 scan.exhausted = true;
                 continue;
             };
-            self.record_entry(parent, ordinal, limits, deadline, is_cancelled, entry)?;
+            self.record_entry(
+                parent,
+                ordinal,
+                deadline_duration,
+                deadline,
+                is_cancelled,
+                entry,
+            )?;
         }
     }
 
@@ -199,7 +257,7 @@ impl<'root> ExactReadSession<'root> {
         &mut self,
         parent: usize,
         ordinal: u32,
-        limits: SourceReadLimits,
+        deadline_duration: Duration,
         deadline: Instant,
         is_cancelled: &mut impl FnMut() -> bool,
         entry: io::Result<DirEntry>,
@@ -215,7 +273,7 @@ impl<'root> ExactReadSession<'root> {
                 limit: MAX_EXACT_DIRECTORY_ENTRIES,
             });
         }
-        check_control(limits, deadline, is_cancelled)?;
+        check_control_duration(deadline_duration, deadline, is_cancelled)?;
         let entry =
             entry.map_err(|source| ContainedSourceError::DirectoryEntryRead { ordinal, source })?;
         let name = entry.file_name();

@@ -2,8 +2,17 @@
     clippy::too_many_lines,
     reason = "the single-owner loop is one exhaustive bounded command dispatcher"
 )]
-fn run_writer(state: &mut WriterState, receiver: Receiver<WriterCommand>) {
+fn run_writer(
+    state: &mut WriterState,
+    receiver: Receiver<WriterCommand>,
+    hooks: &mut WriterHooks,
+    unresolved_mutation: &AtomicBool,
+) {
     while let Ok(command) = receiver.recv() {
+        if command.is_mutating() && unresolved_mutation.load(Ordering::Acquire) {
+            command.reject_unresolved_mutation();
+            continue;
+        }
         match command {
             WriterCommand::Register {
                 repository,
@@ -16,7 +25,7 @@ fn run_writer(state: &mut WriterState, receiver: Receiver<WriterCommand>) {
                         .register_workspace(repository, initial_source_epoch)
                         .map(|_| ())
                 });
-                send_reply(reply, result);
+                send_mutation_reply(reply, result, hooks, unresolved_mutation);
             }
             WriterCommand::EnsureWorkspace {
                 repository,
@@ -29,7 +38,7 @@ fn run_writer(state: &mut WriterState, receiver: Receiver<WriterCommand>) {
                         .ensure_workspace(repository, initial_source_epoch)
                         .map(|(_, source_epoch)| source_epoch)
                 });
-                send_reply(reply, result);
+                send_mutation_reply(reply, result, hooks, unresolved_mutation);
             }
             WriterCommand::AdvanceEpoch {
                 repository,
@@ -40,7 +49,7 @@ fn run_writer(state: &mut WriterState, receiver: Receiver<WriterCommand>) {
             } => {
                 let result = check_deadline(deadline)
                     .and_then(|()| state.advance_source_epoch(repository, expected, next));
-                send_reply(reply, result);
+                send_mutation_reply(reply, result, hooks, unresolved_mutation);
             }
             WriterCommand::Stage(command) => {
                 let StageCommand {
@@ -62,7 +71,7 @@ fn run_writer(state: &mut WriterState, receiver: Receiver<WriterCommand>) {
                         deadline,
                     },
                 );
-                send_reply(reply, result);
+                send_mutation_reply(reply, result, hooks, unresolved_mutation);
             }
             WriterCommand::StageGraph(command) => {
                 let StageGraphCommand {
@@ -80,7 +89,7 @@ fn run_writer(state: &mut WriterState, receiver: Receiver<WriterCommand>) {
                         deadline,
                     },
                 );
-                send_reply(reply, result);
+                send_mutation_reply(reply, result, hooks, unresolved_mutation);
             }
             WriterCommand::StageSourceSlot(command) => {
                 let StageSourceSlotCommand {
@@ -95,11 +104,7 @@ fn run_writer(state: &mut WriterState, receiver: Receiver<WriterCommand>) {
                     reply,
                 } = *command;
                 let result = state.stage_source_slot(
-                    SourceSlotReservation::new(
-                        connected_workspace,
-                        source_slot,
-                        reserved_epoch,
-                    ),
+                    SourceSlotReservation::new(connected_workspace, source_slot, reserved_epoch),
                     identity,
                     &prepared,
                     coverage,
@@ -108,7 +113,7 @@ fn run_writer(state: &mut WriterState, receiver: Receiver<WriterCommand>) {
                         deadline,
                     },
                 );
-                send_reply(reply, result);
+                send_mutation_reply(reply, result, hooks, unresolved_mutation);
             }
             WriterCommand::ImportMemory(command) => {
                 let MemoryImportCommand {
@@ -124,7 +129,25 @@ fn run_writer(state: &mut WriterState, receiver: Receiver<WriterCommand>) {
                         deadline,
                     },
                 );
-                send_reply(reply, result);
+                send_mutation_reply(reply, result, hooks, unresolved_mutation);
+            }
+            WriterCommand::ImportObservedMemoryHistory(command) => {
+                let ObservedMemoryHistoryCommand {
+                    repository,
+                    prepared,
+                    cancelled,
+                    deadline,
+                    reply,
+                } = *command;
+                let result = state.import_observed_memory_history(
+                    repository,
+                    &prepared,
+                    WriteControl {
+                        cancelled: &cancelled,
+                        deadline,
+                    },
+                );
+                send_mutation_reply(reply, result, hooks, unresolved_mutation);
             }
             WriterCommand::AppendMemoryCorrespondenceReview(command) => {
                 let AppendMemoryCorrespondenceReviewCommand {
@@ -133,14 +156,24 @@ fn run_writer(state: &mut WriterState, receiver: Receiver<WriterCommand>) {
                     deadline,
                     reply,
                 } = *command;
-                let result = state.append_memory_correspondence_review(
+                let force_progress_handler_clear_failure =
+                    hooks.take_mutation_progress_handler_clear_failure();
+                let outcome = state.append_memory_correspondence_review(
                     &prepared,
                     WriteControl {
                         cancelled: &cancelled,
                         deadline,
                     },
+                    force_progress_handler_clear_failure,
                 );
-                send_reply(reply, result);
+                if !send_progress_managed_mutation_reply(
+                    reply,
+                    outcome,
+                    hooks,
+                    unresolved_mutation,
+                ) {
+                    break;
+                }
             }
             WriterCommand::LoadMemorySource {
                 repository,
@@ -222,14 +255,24 @@ fn run_writer(state: &mut WriterState, receiver: Receiver<WriterCommand>) {
                     deadline,
                     reply,
                 } = *command;
-                let result = state.publish_memory_projection(
+                let force_progress_handler_clear_failure =
+                    hooks.take_mutation_progress_handler_clear_failure();
+                let outcome = state.publish_memory_projection(
                     &prepared,
                     WriteControl {
                         cancelled: &cancelled,
                         deadline,
                     },
+                    force_progress_handler_clear_failure,
                 );
-                send_reply(reply, result);
+                if !send_progress_managed_mutation_reply(
+                    reply,
+                    outcome,
+                    hooks,
+                    unresolved_mutation,
+                ) {
+                    break;
+                }
             }
             WriterCommand::Activate {
                 generation,
@@ -239,7 +282,7 @@ fn run_writer(state: &mut WriterState, receiver: Receiver<WriterCommand>) {
             } => {
                 let result = check_deadline(deadline)
                     .and_then(|()| state.activate(generation, expected_source_epoch, deadline));
-                send_reply(reply, result);
+                send_mutation_reply(reply, result, hooks, unresolved_mutation);
             }
             WriterCommand::ActiveGeneration {
                 repository,
@@ -248,6 +291,7 @@ fn run_writer(state: &mut WriterState, receiver: Receiver<WriterCommand>) {
             } => {
                 let result =
                     check_deadline(deadline).and_then(|()| state.active_generation(repository));
+                hooks.before_read_reply();
                 send_reply(reply, result);
             }
             WriterCommand::ConnectWorkspace(command) => {
@@ -266,7 +310,7 @@ fn run_writer(state: &mut WriterState, receiver: Receiver<WriterCommand>) {
                         deadline,
                     },
                 );
-                send_reply(reply, result);
+                send_mutation_reply(reply, result, hooks, unresolved_mutation);
             }
             WriterCommand::SourceSlotState(command) => {
                 let SourceSlotStateCommand {
@@ -304,7 +348,7 @@ fn run_writer(state: &mut WriterState, receiver: Receiver<WriterCommand>) {
                         deadline,
                     },
                 );
-                send_reply(reply, result);
+                send_mutation_reply(reply, result, hooks, unresolved_mutation);
             }
             WriterCommand::CompleteSourceSlotEpoch(command) => {
                 let CompleteSourceSlotEpochCommand {
@@ -326,7 +370,7 @@ fn run_writer(state: &mut WriterState, receiver: Receiver<WriterCommand>) {
                         deadline,
                     },
                 );
-                send_reply(reply, result);
+                send_mutation_reply(reply, result, hooks, unresolved_mutation);
             }
             WriterCommand::PublishWorkspaceView(command) => {
                 let PublishWorkspaceViewCommand {
@@ -344,7 +388,7 @@ fn run_writer(state: &mut WriterState, receiver: Receiver<WriterCommand>) {
                         deadline,
                     },
                 );
-                send_reply(reply, result);
+                send_mutation_reply(reply, result, hooks, unresolved_mutation);
             }
             WriterCommand::ActiveWorkspaceView {
                 connected_workspace,
@@ -375,7 +419,7 @@ fn run_writer(state: &mut WriterState, receiver: Receiver<WriterCommand>) {
                         deadline,
                     },
                 );
-                send_reply(reply, result);
+                send_mutation_reply(reply, result, hooks, unresolved_mutation);
             }
             WriterCommand::PlanRetention(command) => {
                 let PlanRetentionCommand {
@@ -384,8 +428,7 @@ fn run_writer(state: &mut WriterState, receiver: Receiver<WriterCommand>) {
                     deadline,
                     reply,
                 } = *command;
-                let result =
-                    state.plan_generation_retention(&policy, cancelled, deadline);
+                let result = state.plan_generation_retention(&policy, cancelled, deadline);
                 send_reply(reply, result);
             }
             WriterCommand::ApplyRetention(command) => {
@@ -396,20 +439,17 @@ fn run_writer(state: &mut WriterState, receiver: Receiver<WriterCommand>) {
                     deadline,
                     reply,
                 } = *command;
-                let result = state.apply_generation_retention(
-                    &policy,
-                    expected_plan,
-                    cancelled,
-                    deadline,
-                );
-                send_reply(reply, result);
+                let result =
+                    state.apply_generation_retention(&policy, expected_plan, cancelled, deadline);
+                send_mutation_reply(reply, result, hooks, unresolved_mutation);
             }
             WriterCommand::Checkpoint { deadline, reply } => {
                 let result = check_deadline(deadline).and_then(|()| state.checkpoint());
-                send_reply(reply, result);
+                send_mutation_reply(reply, result, hooks, unresolved_mutation);
             }
             WriterCommand::Shutdown { reply } => {
                 send_reply(reply, Ok(()));
+                hooks.after_shutdown_reply();
                 break;
             }
         }
@@ -418,6 +458,29 @@ fn run_writer(state: &mut WriterState, receiver: Receiver<WriterCommand>) {
 
 fn send_reply<T>(reply: Reply<T>, result: Result<T, SqliteStoreError>) {
     let _ = reply.try_send(result);
+}
+
+fn send_mutation_reply<T>(
+    reply: Reply<T>,
+    result: Result<T, SqliteStoreError>,
+    hooks: &mut WriterHooks,
+    unresolved_mutation: &AtomicBool,
+) {
+    hooks.after_commit_before_reply(&result);
+    if reply.try_send(result).is_err() {
+        unresolved_mutation.store(true, Ordering::Release);
+    }
+}
+
+fn send_progress_managed_mutation_reply<T>(
+    reply: Reply<T>,
+    outcome: WriterMutationResult<T>,
+    hooks: &mut WriterHooks,
+    unresolved_mutation: &AtomicBool,
+) -> bool {
+    let (result, connection_usable) = outcome.into_parts();
+    send_mutation_reply(reply, result, hooks, unresolved_mutation);
+    connection_usable
 }
 
 fn receive_reply<T>(
@@ -447,16 +510,20 @@ fn receive_mutation_reply<T>(
     receiver: &Receiver<Result<T, SqliteStoreError>>,
     cancelled: Option<&AtomicBool>,
     deadline: Instant,
+    unresolved_mutation: Option<&AtomicBool>,
 ) -> Result<T, SqliteStoreError> {
     const OUTCOME_RESOLUTION_GRACE: Duration = Duration::from_millis(250);
 
     let remaining = deadline.saturating_duration_since(Instant::now());
     if !remaining.is_zero() {
         match receiver.recv_timeout(remaining) {
-            Ok(reply) => return reply,
+            Ok(reply) => return record_mutation_outcome(reply, unresolved_mutation),
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => {
-                return Err(SqliteStoreError::MutationOutcomeUnknown);
+                return record_mutation_outcome(
+                    Err(SqliteStoreError::MutationOutcomeUnknown),
+                    unresolved_mutation,
+                );
             }
         }
     }
@@ -464,9 +531,22 @@ fn receive_mutation_reply<T>(
     if let Some(cancelled) = cancelled {
         cancelled.store(true, Ordering::Release);
     }
-    receiver
+    let outcome = receiver
         .recv_timeout(OUTCOME_RESOLUTION_GRACE)
-        .map_err(|_| SqliteStoreError::MutationOutcomeUnknown)?
+        .unwrap_or(Err(SqliteStoreError::MutationOutcomeUnknown));
+    record_mutation_outcome(outcome, unresolved_mutation)
+}
+
+fn record_mutation_outcome<T>(
+    outcome: Result<T, SqliteStoreError>,
+    unresolved_mutation: Option<&AtomicBool>,
+) -> Result<T, SqliteStoreError> {
+    if matches!(&outcome, Err(SqliteStoreError::MutationOutcomeUnknown))
+        && let Some(unresolved_mutation) = unresolved_mutation
+    {
+        unresolved_mutation.store(true, Ordering::Release);
+    }
+    outcome
 }
 
 fn check_deadline(deadline: Instant) -> Result<(), SqliteStoreError> {

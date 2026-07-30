@@ -4,17 +4,34 @@ use std::sync::{
 };
 
 use rmcp::{ServiceExt, model::CallToolRequestParams};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 use super::*;
 use crate::{
-    MAX_MCP_INTEROPERABLE_INTEGER, McpContextCoverage, McpCoverage, McpMemoryCoverage,
-    McpMemoryProducer, McpMemoryTarget, McpSearchMatch, McpSpan, McpSymbol, MemoryManageOperation,
-    MemoryRecallServiceSelection, SymbolSelectorOutput,
+    MAX_MCP_INTEROPERABLE_INTEGER, MEMORY_MANAGE_SCHEMA_VERSION, McpContextCoverage, McpCoverage,
+    McpMemoryCoverage, McpMemoryProducer, McpMemoryTarget, McpSearchMatch, McpSpan, McpSymbol,
+    MemoryManageDatabaseIdentityStatus, MemoryManageMaintenanceStatus,
+    MemoryManageMaintenanceStepStatus, MemoryManageOperation, MemoryRecallServiceSelection,
+    SymbolSelectorOutput,
 };
 
 mod fixtures;
 use fixtures::*;
+
+const fn confirmed_memory_maintenance() -> MemoryManageMaintenanceStatus {
+    MemoryManageMaintenanceStatus::from_evidence(
+        MemoryManageMaintenanceStepStatus::Complete,
+        MemoryManageMaintenanceStepStatus::Complete,
+        MemoryManageDatabaseIdentityStatus::ConfirmedAtFinalFence,
+    )
+}
+
+const fn checkpoint_deferred_memory_maintenance() -> MemoryManageMaintenanceStatus {
+    MemoryManageMaintenanceStatus::from_evidence(
+        MemoryManageMaintenanceStepStatus::Deferred,
+        MemoryManageMaintenanceStepStatus::Complete,
+        MemoryManageDatabaseIdentityStatus::ConfirmedAtFinalFence,
+    )
+}
 
 struct FakeService {
     search_calls: AtomicUsize,
@@ -34,58 +51,6 @@ struct FakeService {
 struct ConcurrencyService {
     active: AtomicUsize,
     maximum: AtomicUsize,
-}
-
-struct CancellationService {
-    started: AtomicBool,
-    observed: AtomicBool,
-}
-
-impl RepositoryService for CancellationService {
-    fn code_search(
-        &self,
-        _request: CodeSearchServiceRequest,
-        cancelled: Arc<AtomicBool>,
-    ) -> Result<CodeSearchOutput, RepositoryServiceError> {
-        self.started.store(true, Ordering::Release);
-        while !cancelled.load(Ordering::Acquire) {
-            std::thread::sleep(Duration::from_millis(1));
-        }
-        self.observed.store(true, Ordering::Release);
-        Err(RepositoryServiceError::CodeSearch)
-    }
-
-    fn symbol_get(
-        &self,
-        _request: SymbolGetServiceRequest,
-        _cancelled: Arc<AtomicBool>,
-    ) -> Result<SymbolGetOutput, RepositoryServiceError> {
-        Err(RepositoryServiceError::SymbolGet)
-    }
-
-    fn context_build(
-        &self,
-        _request: ContextBuildServiceRequest,
-        _cancelled: Arc<AtomicBool>,
-    ) -> Result<ContextBuildOutput, RepositoryServiceError> {
-        Err(RepositoryServiceError::ContextBuild)
-    }
-
-    fn diagnostics(
-        &self,
-        _request: DiagnosticsServiceRequest,
-        _cancelled: Arc<AtomicBool>,
-    ) -> Result<DiagnosticsOutput, RepositoryServiceError> {
-        Err(RepositoryServiceError::Diagnostics)
-    }
-
-    fn memory_recall(
-        &self,
-        _request: MemoryRecallServiceRequest,
-        _cancelled: Arc<AtomicBool>,
-    ) -> Result<MemoryRecallOutput, RepositoryServiceError> {
-        Err(RepositoryServiceError::MemoryRecall)
-    }
 }
 
 impl RepositoryService for ConcurrencyService {
@@ -241,14 +206,19 @@ impl RepositoryService for FakeService {
             }
         };
         self.manage_request.lock().expect("lock").replace(operation);
-        Ok(MemoryManageOutput::review(true))
+        Ok(MemoryManageOutput::review_with_maintenance(
+            true,
+            confirmed_memory_maintenance(),
+        ))
     }
 }
 
 mod adversarial;
+mod cancellation;
 mod compatibility;
 mod graph;
 mod memory_manage;
+mod mutation_timeout;
 
 #[test]
 fn tool_contract_is_exact_sorted_versioned_and_read_only() {
@@ -577,121 +547,4 @@ async fn synchronous_repository_work_never_exceeds_the_semaphore_bound() {
     assert_eq!(service.maximum.load(Ordering::Acquire), 2);
     client.cancel().await.expect("client closes");
     server_task.await.expect("server task");
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn protocol_cancellation_reaches_blocking_work_and_suppresses_its_response() {
-    let service = Arc::new(CancellationService {
-        started: AtomicBool::new(false),
-        observed: AtomicBool::new(false),
-    });
-    let (server_transport, client_transport) = tokio::io::duplex(64 * 1024);
-    let server = RepoWitnessMcpServer::new(service.clone());
-    let server_task = tokio::spawn(async move {
-        server
-            .serve(server_transport)
-            .await
-            .expect("server starts")
-            .waiting()
-            .await
-            .expect("server stops")
-    });
-    let (client_read, mut client_write) = tokio::io::split(client_transport);
-    let mut client_read = BufReader::new(client_read);
-
-    send_json(
-        &mut client_write,
-        serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": "2025-11-25",
-                "capabilities": {},
-                "clientInfo": {"name": "cancellation-test", "version": "1"}
-            }
-        }),
-    )
-    .await;
-    assert_eq!(
-        read_json(&mut client_read).await["id"],
-        serde_json::json!(1)
-    );
-    send_json(
-        &mut client_write,
-        serde_json::json!({
-            "jsonrpc": "2.0",
-            "method": "notifications/initialized"
-        }),
-    )
-    .await;
-    send_json(
-        &mut client_write,
-        serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": 2,
-            "method": "tools/call",
-            "params": {
-                "name": "code_search",
-                "arguments": {"query": "run", "timeout_ms": 10000}
-            }
-        }),
-    )
-    .await;
-    tokio::time::timeout(Duration::from_secs(1), async {
-        while !service.started.load(Ordering::Acquire) {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("service starts");
-    send_json(
-        &mut client_write,
-        serde_json::json!({
-            "jsonrpc": "2.0",
-            "method": "notifications/cancelled",
-            "params": {"requestId": 2, "reason": "test cancellation"}
-        }),
-    )
-    .await;
-    send_json(
-        &mut client_write,
-        serde_json::json!({"jsonrpc": "2.0", "id": 3, "method": "ping"}),
-    )
-    .await;
-
-    let response = read_json(&mut client_read).await;
-    assert_eq!(response["id"], serde_json::json!(3));
-    tokio::time::timeout(Duration::from_secs(1), async {
-        while !service.observed.load(Ordering::Acquire) {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("blocking service observes cancellation");
-    assert!(
-        tokio::time::timeout(Duration::from_millis(50), read_json(&mut client_read))
-            .await
-            .is_err(),
-        "cancelled request must not produce a response"
-    );
-    drop(client_write);
-    drop(client_read);
-    server_task.await.expect("server task");
-}
-
-async fn send_json<W: tokio::io::AsyncWrite + Unpin>(writer: &mut W, value: serde_json::Value) {
-    let encoded = serde_json::to_vec(&value).expect("JSON encodes");
-    writer.write_all(&encoded).await.expect("message writes");
-    writer.write_all(b"\n").await.expect("delimiter writes");
-    writer.flush().await.expect("message flushes");
-}
-
-async fn read_json<R: tokio::io::AsyncRead + Unpin>(
-    reader: &mut BufReader<R>,
-) -> serde_json::Value {
-    let mut line = String::new();
-    let bytes = reader.read_line(&mut line).await.expect("response reads");
-    assert!(bytes > 0, "server closed before responding");
-    serde_json::from_str(&line).expect("response is JSON")
 }

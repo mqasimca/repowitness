@@ -1,0 +1,649 @@
+#!/usr/bin/env perl
+
+use strict;
+use warnings;
+
+use JSON::PP qw(decode_json);
+
+my $manifest_path = 'benchmarks/phase1/manifest.json';
+
+sub read_json {
+    my ($path) = @_;
+    open my $handle, '<:raw', $path or die "cannot read benchmark manifest\n";
+    local $/;
+    my $value = decode_json(<$handle>);
+    close $handle or die "cannot close benchmark manifest\n";
+    return $value;
+}
+
+sub required_keys {
+    return qw(
+      observed_at_utc
+      repowitness_revision
+      repowitness_worktree_dirty
+      corpus_revision
+      rust_toolchain
+      operating_system
+      cpu_model
+      logical_cpu_count
+      memory_mib
+      filesystem_type
+      git_version
+      selector_profile
+      package_scope_digest_sha256
+      compatibility_profile
+      peak_rss_kib
+      benchmark_id
+      probe_kind
+      resolved_configuration_digest_sha256
+      sqlite_version
+      cold_index_wall_us
+      warm_query_runs
+      warm_query_p95_us
+      cold_and_warm_runs_required
+      quiet_poll_session_ms
+      quiet_poll_runs
+      quiet_poll_p95_us
+      quiet_poll_unchanged
+      quiet_poll_publications
+      unchanged_generation_delta
+      native_graph_read_runs
+      native_graph_read_p95_us
+      native_graph_operations_per_run
+      native_graph_material_result_bound_bytes
+      false_confirmed_claims
+      silent_truncations
+      mixed_generation_reads
+      false_automatic_relinks
+      retention_runs
+      retention_plan_p95_us
+      retention_apply_p95_us
+      retained_generations_per_source_slot
+      retention_deleted_generations
+      retention_final_candidates
+      database_bytes
+      wal_bytes
+      budget_max_full_index_wall_ms
+      budget_max_warm_query_p95_ms
+      budget_max_material_result_bytes
+      budget_max_database_bytes
+      budget_max_wal_bytes_after_completion
+      correctness_failures
+      repowitness_final_revision_verified
+      repowitness_final_status_unchanged
+      corpus_final_revision_verified
+      corpus_final_status_clean
+      disposable_worktrees_final_revision_verified
+      disposable_worktrees_final_status_clean
+    );
+}
+
+sub integer {
+    my ($values, $key, $errors) = @_;
+    my $value = $values->{$key};
+    if (!defined($value)
+        || $value !~ /\A(?:0|[1-9][0-9]*)\z/
+        || length($value) > 15)
+    {
+        push @$errors, "$key must be a canonical nonnegative integer";
+        return;
+    }
+    return 0 + $value;
+}
+
+sub exact {
+    my ($values, $key, $expected, $errors) = @_;
+    push @$errors, "$key does not match the benchmark contract"
+      if !defined($values->{$key}) || $values->{$key} ne "$expected";
+}
+
+sub at_most {
+    my ($values, $key, $maximum, $errors) = @_;
+    my $value = integer($values, $key, $errors);
+    push @$errors, "$key exceeded its benchmark budget"
+      if defined($value) && $value > $maximum;
+}
+
+sub workload_profile {
+    my ($manifest) = @_;
+    return map { $_->{id} => $_->{iterations} } @{$manifest->{phase1_workloads}};
+}
+
+sub validate_receipt {
+    my ($content, $manifest, $expected_repowitness_revision) = @_;
+    my @errors;
+    my %allowed = map { $_ => 1 } required_keys();
+    my (%values, %workloads);
+    my $status_count = 0;
+    my $workload_line = qr{
+        \Aworkload=([a-z0-9-]+)
+        [ ]runs=([1-9][0-9]{0,14})
+        [ ]measurement=(operation|test-harness)
+        [ ]wall_p95_ms=(0|[1-9][0-9]{0,14})
+        [ ]status=passed\z
+    }x;
+
+    my @lines = split /\n/, $content, -1;
+    pop @lines if @lines && $lines[-1] eq '';
+    for my $line (@lines) {
+        if ($line =~ /\r/ || length($line) > 4096) {
+            push @errors, 'receipt contains an invalid line';
+            next;
+        }
+        if ($line =~ $workload_line) {
+            my ($id, $runs, $measurement, $wall) = ($1, $2, $3, $4);
+            if (exists $workloads{$id}) {
+                push @errors, "duplicate workload receipt for $id";
+            } else {
+                $workloads{$id} = {
+                    runs        => 0 + $runs,
+                    measurement => $measurement,
+                    wall        => 0 + $wall,
+                };
+            }
+            next;
+        }
+        if ($line eq 'status=passed phase=phase1 workloads=8') {
+            $status_count++;
+            next;
+        }
+        if ($line =~ /\A([a-z][a-z0-9_]*)=(.{1,512})\z/) {
+            my ($key, $value) = ($1, $2);
+            if (!$allowed{$key}) {
+                push @errors, "receipt contains unexpected key $key";
+            } elsif (exists $values{$key}) {
+                push @errors, "receipt repeats key $key";
+            } elsif ($value eq 'unavailable' || $value =~ /[[:cntrl:]]/) {
+                push @errors, "$key is incomplete";
+            } else {
+                $values{$key} = $value;
+            }
+            next;
+        }
+        push @errors, 'receipt contains unexpected output';
+    }
+
+    for my $key (required_keys()) {
+        push @errors, "receipt omits key $key" if !exists $values{$key};
+    }
+    my %capture_receipt_key = (
+        resolved_configuration_digest =>
+          'resolved_configuration_digest_sha256',
+        package_scope_digest => 'package_scope_digest_sha256',
+    );
+    for my $field (@{$manifest->{run_environment}->{capture}}) {
+        my $receipt_key = $capture_receipt_key{$field} // $field;
+        push @errors, "receipt omits declared environment field $field"
+          if !exists $values{$receipt_key};
+    }
+    push @errors, 'receipt must contain one final status line'
+      if $status_count != 1;
+
+    my $corpus = $manifest->{corpora}->[0];
+    my $correctness = $manifest->{budgets}->{correctness};
+    my $resources = $manifest->{budgets}->{resources};
+    my $phase1 = $manifest->{budgets}->{phase1_resources};
+    my $environment = $manifest->{run_environment};
+    my %iterations = workload_profile($manifest);
+    exact(
+        \%values,
+        'repowitness_revision',
+        $expected_repowitness_revision,
+        \@errors
+    );
+    exact(\%values, 'repowitness_worktree_dirty', 'false', \@errors);
+    exact(\%values, 'corpus_revision', $corpus->{revision}, \@errors);
+    exact(
+        \%values,
+        'benchmark_id',
+        'phase1-trustworthy-local-core-v1',
+        \@errors
+    );
+    exact(\%values, 'probe_kind', 'operation-level', \@errors);
+    exact(
+        \%values,
+        'selector_profile',
+        'source-selector-v1/worktree-head',
+        \@errors
+    );
+    exact(
+        \%values,
+        'compatibility_profile',
+        'native-v1-plus-incumbent-subset-v1',
+        \@errors
+    );
+    exact(\%values, 'native_graph_operations_per_run', 6, \@errors);
+    exact(
+        \%values,
+        'warm_query_runs',
+        $environment->{warm_query_runs},
+        \@errors
+    );
+    exact(
+        \%values,
+        'cold_and_warm_runs_required',
+        'true',
+        \@errors
+    );
+    exact(
+        \%values,
+        'quiet_poll_session_ms',
+        $phase1->{quiet_poll_session_ms},
+        \@errors
+    );
+
+    if (defined $values{observed_at_utc}
+        && $values{observed_at_utc}
+        !~ /\A[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\z/)
+    {
+        push @errors, 'observed_at_utc is not a UTC second timestamp';
+    }
+    for my $key (
+        qw(
+        repowitness_revision
+        corpus_revision
+        resolved_configuration_digest_sha256
+        package_scope_digest_sha256
+        )
+      )
+    {
+        my $expected_length = $key =~ /revision\z/ ? 40 : 64;
+        push @errors, "$key is not a lowercase fixed-width digest"
+          if defined($values{$key})
+          && $values{$key} !~ /\A[0-9a-f]{$expected_length}\z/;
+    }
+    push @errors, 'sqlite_version is invalid'
+      if defined($values{sqlite_version})
+      && $values{sqlite_version} !~ /\A[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?\z/;
+    push @errors, 'rust_toolchain is invalid'
+      if defined($values{rust_toolchain})
+      && $values{rust_toolchain} !~ /\Arustc [0-9]+\.[0-9]+\.[0-9]+(?:[-+][^ ]+)?(?: .+)?\z/;
+    push @errors, 'git_version is invalid'
+      if defined($values{git_version})
+      && $values{git_version} !~ /\Agit version [0-9]+\.[0-9]+(?:\.[0-9]+)?(?: .+)?\z/;
+    push @errors, 'filesystem_type is invalid'
+      if defined($values{filesystem_type})
+      && $values{filesystem_type} !~ /\A[-+.A-Za-z0-9_]+\z/;
+    for my $key (qw(logical_cpu_count memory_mib peak_rss_kib)) {
+        my $value = integer(\%values, $key, \@errors);
+        push @errors, "$key must be positive"
+          if defined($value) && $value == 0;
+    }
+
+    exact(
+        \%values,
+        'quiet_poll_runs',
+        $iterations{'quiet-polling-no-publication'},
+        \@errors
+    );
+    exact(
+        \%values,
+        'quiet_poll_unchanged',
+        $iterations{'quiet-polling-no-publication'},
+        \@errors
+    );
+    exact(
+        \%values,
+        'native_graph_read_runs',
+        $iterations{'native-graph-read-suite'},
+        \@errors
+    );
+    if (defined($values{warm_query_runs})
+        && defined($values{native_graph_read_runs})
+        && $values{warm_query_runs} ne $values{native_graph_read_runs})
+    {
+        push @errors, 'warm-query and native-graph run counts differ';
+    }
+    if (defined($values{warm_query_p95_us})
+        && defined($values{native_graph_read_p95_us})
+        && $values{warm_query_p95_us} ne $values{native_graph_read_p95_us})
+    {
+        push @errors, 'warm-query and native-graph latency receipts differ';
+    }
+    exact(
+        \%values,
+        'retention_runs',
+        $iterations{'retention-plan-apply-restart'},
+        \@errors
+    );
+    exact(
+        \%values,
+        'retention_deleted_generations',
+        $iterations{'retention-plan-apply-restart'},
+        \@errors
+    );
+    exact(
+        \%values,
+        'native_graph_material_result_bound_bytes',
+        $resources->{max_material_result_bytes},
+        \@errors
+    );
+    exact(
+        \%values,
+        'budget_max_full_index_wall_ms',
+        $resources->{max_full_index_wall_ms},
+        \@errors
+    );
+    exact(
+        \%values,
+        'budget_max_warm_query_p95_ms',
+        $resources->{max_warm_query_p95_ms},
+        \@errors
+    );
+    exact(
+        \%values,
+        'budget_max_material_result_bytes',
+        $resources->{max_material_result_bytes},
+        \@errors
+    );
+    exact(
+        \%values,
+        'budget_max_database_bytes',
+        $resources->{max_database_bytes},
+        \@errors
+    );
+    exact(
+        \%values,
+        'budget_max_wal_bytes_after_completion',
+        $resources->{max_wal_bytes_after_completion},
+        \@errors
+    );
+
+    at_most(
+        \%values,
+        'cold_index_wall_us',
+        $resources->{max_full_index_wall_ms} * 1000,
+        \@errors
+    );
+    at_most(
+        \%values,
+        'peak_rss_kib',
+        $resources->{max_peak_rss_mib} * 1024,
+        \@errors
+    );
+    at_most(
+        \%values,
+        'warm_query_p95_us',
+        $resources->{max_warm_query_p95_ms} * 1000,
+        \@errors
+    );
+    at_most(
+        \%values,
+        'quiet_poll_p95_us',
+        $phase1->{max_quiet_poll_p95_ms} * 1000,
+        \@errors
+    );
+    at_most(
+        \%values,
+        'native_graph_read_p95_us',
+        $phase1->{max_native_graph_read_p95_ms} * 1000,
+        \@errors
+    );
+    at_most(
+        \%values,
+        'retention_plan_p95_us',
+        $phase1->{max_retention_plan_wall_ms} * 1000,
+        \@errors
+    );
+    at_most(
+        \%values,
+        'retention_apply_p95_us',
+        $phase1->{max_retention_apply_wall_ms} * 1000,
+        \@errors
+    );
+    at_most(
+        \%values,
+        'retained_generations_per_source_slot',
+        $phase1->{max_retained_generations_per_source_slot_after_collection},
+        \@errors
+    );
+    at_most(
+        \%values,
+        'database_bytes',
+        $resources->{max_database_bytes},
+        \@errors
+    );
+    at_most(
+        \%values,
+        'wal_bytes',
+        $resources->{max_wal_bytes_after_completion},
+        \@errors
+    );
+    my %correctness_receipt = (
+        false_confirmed_claims => 'max_false_confirmed_claims',
+        silent_truncations => 'max_silent_truncations',
+        mixed_generation_reads => 'max_mixed_generation_reads',
+        false_automatic_relinks => 'max_false_automatic_relinks',
+    );
+    for my $key (sort keys %correctness_receipt) {
+        exact(
+            \%values,
+            $key,
+            $correctness->{$correctness_receipt{$key}},
+            \@errors
+        );
+    }
+    for my $key (
+        qw(
+        quiet_poll_publications
+        unchanged_generation_delta
+        retention_final_candidates
+        correctness_failures
+        )
+      )
+    {
+        exact(\%values, $key, 0, \@errors);
+    }
+    for my $key (
+        qw(
+        repowitness_final_revision_verified
+        repowitness_final_status_unchanged
+        corpus_final_revision_verified
+        corpus_final_status_clean
+        disposable_worktrees_final_revision_verified
+        disposable_worktrees_final_status_clean
+        )
+      )
+    {
+        exact(\%values, $key, 'true', \@errors);
+    }
+
+    my %operation_workload = map { $_ => 1 } qw(
+      atomic-two-source-publication
+      same-repository-two-worktrees
+    );
+    for my $id (sort keys %iterations) {
+        my $receipt = $workloads{$id};
+        if (!defined $receipt) {
+            push @errors, "receipt omits workload $id";
+            next;
+        }
+        push @errors, "workload $id run count differs from the manifest"
+          if $receipt->{runs} != $iterations{$id};
+        my $measurement =
+          $operation_workload{$id} ? 'operation' : 'test-harness';
+        push @errors, "workload $id measurement kind is invalid"
+          if $receipt->{measurement} ne $measurement;
+        push @errors, "workload $id wall time exceeds the capture bound"
+          if $receipt->{wall} > 900_000;
+        push @errors, "workload $id exceeded its publication budget"
+          if $operation_workload{$id}
+          && $receipt->{wall} > $phase1->{max_two_source_publication_wall_ms};
+    }
+    for my $id (keys %workloads) {
+        push @errors, "receipt contains unexpected workload $id"
+          if !exists $iterations{$id};
+    }
+
+    return @errors;
+}
+
+sub self_test_receipt {
+    my ($manifest, $revision) = @_;
+    my $correctness = $manifest->{budgets}->{correctness};
+    my $resources = $manifest->{budgets}->{resources};
+    my $environment = $manifest->{run_environment};
+    my %iterations = workload_profile($manifest);
+    my %values = map { $_ => 'value' } required_keys();
+    @values{qw(
+      repowitness_revision corpus_revision benchmark_id probe_kind
+      selector_profile compatibility_profile
+    )} = (
+        $revision,
+        $manifest->{corpora}->[0]->{revision},
+        'phase1-trustworthy-local-core-v1',
+        'operation-level',
+        'source-selector-v1/worktree-head',
+        'native-v1-plus-incumbent-subset-v1',
+    );
+    $values{observed_at_utc} = '2026-07-29T00:00:00Z';
+    $values{repowitness_worktree_dirty} = 'false';
+    $values{rust_toolchain} = 'rustc 1.89.0 (example 2026-01-01)';
+    $values{git_version} = 'git version 2.50.1';
+    $values{filesystem_type} = 'ext4';
+    $values{resolved_configuration_digest_sha256} = 'a' x 64;
+    $values{package_scope_digest_sha256} = 'b' x 64;
+    $values{sqlite_version} = '3.51.3';
+    @values{qw(logical_cpu_count memory_mib peak_rss_kib)} = (1, 1, 1);
+    $values{quiet_poll_runs} = $iterations{'quiet-polling-no-publication'};
+    $values{quiet_poll_unchanged} = $iterations{'quiet-polling-no-publication'};
+    $values{warm_query_runs} = $environment->{warm_query_runs};
+    $values{cold_and_warm_runs_required} = 'true';
+    $values{quiet_poll_session_ms} = $manifest->{budgets}->{phase1_resources}
+      ->{quiet_poll_session_ms};
+    $values{native_graph_read_runs} = $iterations{'native-graph-read-suite'};
+    $values{retention_runs} = $iterations{'retention-plan-apply-restart'};
+    $values{retention_deleted_generations} =
+      $iterations{'retention-plan-apply-restart'};
+    $values{native_graph_operations_per_run} = 6;
+    $values{native_graph_material_result_bound_bytes} =
+      $resources->{max_material_result_bytes};
+    $values{budget_max_full_index_wall_ms} =
+      $resources->{max_full_index_wall_ms};
+    $values{budget_max_warm_query_p95_ms} =
+      $resources->{max_warm_query_p95_ms};
+    $values{budget_max_material_result_bytes} =
+      $resources->{max_material_result_bytes};
+    $values{budget_max_database_bytes} = $resources->{max_database_bytes};
+    $values{budget_max_wal_bytes_after_completion} =
+      $resources->{max_wal_bytes_after_completion};
+    for my $key (
+        qw(
+        cold_index_wall_us quiet_poll_p95_us warm_query_p95_us
+        native_graph_read_p95_us
+        retention_plan_p95_us retention_apply_p95_us
+        retained_generations_per_source_slot database_bytes
+        )
+      )
+    {
+        $values{$key} = 1;
+    }
+    $values{warm_query_p95_us} = $values{native_graph_read_p95_us};
+    my %correctness_receipt = (
+        false_confirmed_claims => 'max_false_confirmed_claims',
+        silent_truncations => 'max_silent_truncations',
+        mixed_generation_reads => 'max_mixed_generation_reads',
+        false_automatic_relinks => 'max_false_automatic_relinks',
+    );
+    for my $key (keys %correctness_receipt) {
+        $values{$key} = $correctness->{$correctness_receipt{$key}};
+    }
+    for my $key (
+        qw(
+        quiet_poll_publications unchanged_generation_delta
+        retention_final_candidates wal_bytes correctness_failures
+        )
+      )
+    {
+        $values{$key} = 0;
+    }
+    for my $key (
+        qw(
+        repowitness_final_revision_verified
+        repowitness_final_status_unchanged
+        corpus_final_revision_verified
+        corpus_final_status_clean
+        disposable_worktrees_final_revision_verified
+        disposable_worktrees_final_status_clean
+        )
+      )
+    {
+        $values{$key} = 'true';
+    }
+
+    my @lines = map { "$_=$values{$_}" } required_keys();
+    my %operation = map { $_ => 1 } qw(
+      atomic-two-source-publication
+      same-repository-two-worktrees
+    );
+    for my $id (sort keys %iterations) {
+        my $measurement = $operation{$id} ? 'operation' : 'test-harness';
+        push @lines,
+          "workload=$id runs=$iterations{$id} measurement=$measurement "
+          . 'wall_p95_ms=1 status=passed';
+    }
+    push @lines, 'status=passed phase=phase1 workloads=8';
+    return join("\n", @lines) . "\n";
+}
+
+sub run_self_test {
+    my $manifest = read_json($manifest_path);
+    my $revision = 'c' x 40;
+    my $valid = self_test_receipt($manifest, $revision);
+    my @valid_errors = validate_receipt($valid, $manifest, $revision);
+    die "valid receipt fixture was rejected: " . join('; ', @valid_errors) . "\n"
+      if @valid_errors;
+
+    my $warm_query_runs = $manifest->{run_environment}->{warm_query_runs};
+    my $different_warm_query_runs =
+      $warm_query_runs == 2 ? 3 : $warm_query_runs - 1;
+    my @invalid = (
+        $valid . "sqlite_version=3.51.3\n",
+        ($valid =~ s/^cpu_model=.*\n//mr),
+        ($valid =~ s/^memory_mib=.*$/memory_mib=unavailable/mr),
+        ($valid =~ s/^cold_index_wall_us=.*$/
+          'cold_index_wall_us='
+          . ($manifest->{budgets}->{resources}->{max_full_index_wall_ms} * 1000 + 1)
+        /emr),
+        ($valid =~
+          s/^warm_query_runs=.*$/"warm_query_runs=$different_warm_query_runs"/emr),
+        ($valid =~ s/^false_automatic_relinks=.*$/false_automatic_relinks=1/mr),
+        ($valid =~
+          s/^logical_cpu_count=.*$/'logical_cpu_count=' . ('9' x 100)/emr),
+        ($valid =~
+          s/wall_p95_ms=[0-9]+ status=passed/
+            'wall_p95_ms=' . ('9' x 100) . ' status=passed'/emr),
+        $valid . "unexpected output\n",
+    );
+    for my $fixture (@invalid) {
+        die "invalid receipt fixture was accepted\n"
+          if !validate_receipt($fixture, $manifest, $revision);
+    }
+    print "Phase 1 benchmark receipt self-tests passed\n";
+}
+
+if (@ARGV == 1 && $ARGV[0] eq '--self-test') {
+    run_self_test();
+    exit 0;
+}
+die "usage: perl scripts/check-phase1-benchmark-receipt <output> <revision>\n"
+  if @ARGV != 2;
+my ($output_path, $expected_revision) = @ARGV;
+die "expected revision is invalid\n"
+  if $expected_revision !~ /\A[0-9a-f]{40}\z/;
+die "benchmark output is too large\n"
+  if !-f $output_path || -s $output_path > 1_100_000;
+open my $output, '<:raw', $output_path or die "cannot read benchmark output\n";
+local $/;
+my $content = <$output>;
+close $output or die "cannot close benchmark output\n";
+my @errors = validate_receipt(
+    $content,
+    read_json($manifest_path),
+    $expected_revision
+);
+if (@errors) {
+    print STDERR join("\n", map { "benchmark receipt: $_" } @errors), "\n";
+    exit 1;
+}
+print "Phase 1 benchmark receipt is exact and complete\n";

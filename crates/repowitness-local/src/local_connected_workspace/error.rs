@@ -125,6 +125,13 @@ pub enum LocalConnectedWorkspaceIndexError {
     Cancelled,
     /// An explicit operation deadline elapsed before publication.
     DeadlineExceeded,
+    /// A queued SQLite mutation may have committed without a definitive receipt.
+    MutationOutcomeUnknown {
+        /// Exact coordinator phase containing the uncertain mutation.
+        phase: LocalConnectedWorkspacePhase,
+        /// One-based canonical source-slot ordinal, when applicable.
+        source_ordinal: Option<u64>,
+    },
     /// A redacted coordinator phase failed before publication.
     Phase {
         /// Stable failure phase.
@@ -143,6 +150,9 @@ impl fmt::Display for LocalConnectedWorkspaceIndexError {
             Self::DeadlineNotRepresentable => "connected-workspace deadline is not representable",
             Self::Cancelled => "connected-workspace indexing was cancelled",
             Self::DeadlineExceeded => "connected-workspace indexing exceeded its deadline",
+            Self::MutationOutcomeUnknown { .. } => {
+                "connected-workspace mutation outcome could not be determined"
+            }
             Self::Phase { .. } => "connected-workspace indexing failed before publication",
         })
     }
@@ -151,6 +161,40 @@ impl fmt::Display for LocalConnectedWorkspaceIndexError {
 impl std::error::Error for LocalConnectedWorkspaceIndexError {}
 
 impl LocalConnectedWorkspaceIndexError {
+    /// Returns non-sensitive authoritative guidance for an unknown mutation.
+    #[must_use]
+    pub const fn reconciliation_guidance(&self) -> Option<&'static str> {
+        let Self::MutationOutcomeUnknown { phase, .. } = self else {
+            return None;
+        };
+        Some(match phase {
+            LocalConnectedWorkspacePhase::StoreStartup => {
+                "reopen the store and run read-only database diagnostics before retrying startup"
+            }
+            LocalConnectedWorkspacePhase::WorkspaceRegistration => {
+                "reopen the store and read durable workspace membership and source-slot epochs before retrying"
+            }
+            LocalConnectedWorkspacePhase::PublicationStaging => {
+                "reopen the store, allow startup recovery, and inspect the source-slot candidate before retrying"
+            }
+            LocalConnectedWorkspacePhase::GraphPublicationStaging => {
+                "reopen the store and inspect the candidate generation graph receipt before retrying"
+            }
+            LocalConnectedWorkspacePhase::Completion => {
+                "reopen the store and read the durable source-slot completion before retrying"
+            }
+            LocalConnectedWorkspacePhase::ViewPublication => {
+                "reopen the store and read the active immutable workspace view before retrying"
+            }
+            LocalConnectedWorkspacePhase::DatabaseIsolation
+            | LocalConnectedWorkspacePhase::SelectorResolution
+            | LocalConnectedWorkspacePhase::Preparation
+            | LocalConnectedWorkspacePhase::FinalSourceFence => {
+                "reopen the store and inspect authoritative workspace state before retrying"
+            }
+        })
+    }
+
     pub(super) const fn from_manifest(source: ConnectedWorkspaceManifestError) -> Self {
         let (kind, source_ordinal) = match source {
             ConnectedWorkspaceManifestError::InputTooLarge { .. } => (
@@ -239,68 +283,107 @@ impl LocalConnectedWorkspaceIndexError {
             InternalIndexError::SelectorResolution {
                 slot_ordinal,
                 source,
-            } => selector_control(source).unwrap_or(Self::Phase {
-                phase: LocalConnectedWorkspacePhase::SelectorResolution,
-                source_ordinal: Some(slot_ordinal),
-            }),
-            InternalIndexError::DatabaseIsolation { source } => local_index_control(source)
-                .unwrap_or(Self::Phase {
-                    phase: LocalConnectedWorkspacePhase::DatabaseIsolation,
-                    source_ordinal: None,
-                }),
+            } => Self::controlled_or_phase(
+                selector_control(source),
+                LocalConnectedWorkspacePhase::SelectorResolution,
+                Some(slot_ordinal),
+            ),
+            InternalIndexError::DatabaseIsolation { source } => Self::controlled_or_phase(
+                local_index_control(
+                    source,
+                    LocalConnectedWorkspacePhase::DatabaseIsolation,
+                    None,
+                ),
+                LocalConnectedWorkspacePhase::DatabaseIsolation,
+                None,
+            ),
             InternalIndexError::Preparation {
                 slot_ordinal,
                 source,
-            } => local_index_control(source).unwrap_or(Self::Phase {
-                phase: LocalConnectedWorkspacePhase::Preparation,
-                source_ordinal: Some(slot_ordinal),
-            }),
-            InternalIndexError::StoreStartup { source } => {
-                store_control(source).unwrap_or(Self::Phase {
-                    phase: LocalConnectedWorkspacePhase::StoreStartup,
-                    source_ordinal: None,
-                })
-            }
-            InternalIndexError::WorkspaceRegistration { source } => store_control(source)
-                .unwrap_or(Self::Phase {
-                    phase: LocalConnectedWorkspacePhase::WorkspaceRegistration,
-                    source_ordinal: None,
-                }),
+            } => Self::controlled_or_phase(
+                local_index_control(
+                    source,
+                    LocalConnectedWorkspacePhase::Preparation,
+                    Some(slot_ordinal),
+                ),
+                LocalConnectedWorkspacePhase::Preparation,
+                Some(slot_ordinal),
+            ),
+            InternalIndexError::StoreStartup { source } => Self::controlled_or_phase(
+                store_control(source, LocalConnectedWorkspacePhase::StoreStartup, None),
+                LocalConnectedWorkspacePhase::StoreStartup,
+                None,
+            ),
+            InternalIndexError::WorkspaceRegistration { source } => Self::controlled_or_phase(
+                store_control(
+                    source,
+                    LocalConnectedWorkspacePhase::WorkspaceRegistration,
+                    None,
+                ),
+                LocalConnectedWorkspacePhase::WorkspaceRegistration,
+                None,
+            ),
             InternalIndexError::PublicationStaging {
                 slot_ordinal,
                 source,
-            } => store_control(source).unwrap_or(Self::Phase {
-                phase: LocalConnectedWorkspacePhase::PublicationStaging,
-                source_ordinal: Some(slot_ordinal),
-            }),
+            } => Self::controlled_or_phase(
+                store_control(
+                    source,
+                    LocalConnectedWorkspacePhase::PublicationStaging,
+                    Some(slot_ordinal),
+                ),
+                LocalConnectedWorkspacePhase::PublicationStaging,
+                Some(slot_ordinal),
+            ),
             InternalIndexError::GraphPublicationStaging {
                 slot_ordinal,
                 source,
-            } => store_control(source).unwrap_or(Self::Phase {
-                phase: LocalConnectedWorkspacePhase::GraphPublicationStaging,
-                source_ordinal: Some(slot_ordinal),
-            }),
+            } => Self::controlled_or_phase(
+                store_control(
+                    source,
+                    LocalConnectedWorkspacePhase::GraphPublicationStaging,
+                    Some(slot_ordinal),
+                ),
+                LocalConnectedWorkspacePhase::GraphPublicationStaging,
+                Some(slot_ordinal),
+            ),
             InternalIndexError::FinalSourceFence {
                 slot_ordinal,
                 source,
-            } => final_fence_control(source).unwrap_or(Self::Phase {
-                phase: LocalConnectedWorkspacePhase::FinalSourceFence,
-                source_ordinal: Some(slot_ordinal),
-            }),
+            } => Self::controlled_or_phase(
+                final_fence_control(source),
+                LocalConnectedWorkspacePhase::FinalSourceFence,
+                Some(slot_ordinal),
+            ),
             InternalIndexError::Completion {
                 slot_ordinal,
                 source,
-            } => store_control(source).unwrap_or(Self::Phase {
-                phase: LocalConnectedWorkspacePhase::Completion,
-                source_ordinal: Some(slot_ordinal),
-            }),
-            InternalIndexError::ViewPublication { source } => {
-                store_control(source).unwrap_or(Self::Phase {
-                    phase: LocalConnectedWorkspacePhase::ViewPublication,
-                    source_ordinal: None,
-                })
-            }
+            } => Self::controlled_or_phase(
+                store_control(
+                    source,
+                    LocalConnectedWorkspacePhase::Completion,
+                    Some(slot_ordinal),
+                ),
+                LocalConnectedWorkspacePhase::Completion,
+                Some(slot_ordinal),
+            ),
+            InternalIndexError::ViewPublication { source } => Self::controlled_or_phase(
+                store_control(source, LocalConnectedWorkspacePhase::ViewPublication, None),
+                LocalConnectedWorkspacePhase::ViewPublication,
+                None,
+            ),
         }
+    }
+
+    fn controlled_or_phase(
+        control: Option<Self>,
+        phase: LocalConnectedWorkspacePhase,
+        source_ordinal: Option<u64>,
+    ) -> Self {
+        control.unwrap_or(Self::Phase {
+            phase,
+            source_ordinal,
+        })
     }
 }
 
@@ -347,12 +430,18 @@ fn selector_control(
     }
 }
 
-fn local_index_control(source: LocalIndexError) -> Option<LocalConnectedWorkspaceIndexError> {
+fn local_index_control(
+    source: LocalIndexError,
+    phase: LocalConnectedWorkspacePhase,
+    source_ordinal: Option<u64>,
+) -> Option<LocalConnectedWorkspaceIndexError> {
     match source {
         LocalIndexError::DeadlineNotRepresentable => {
             Some(LocalConnectedWorkspaceIndexError::DeadlineNotRepresentable)
         }
-        LocalIndexError::Preparation { source } => local_rust_control(source),
+        LocalIndexError::Preparation { source } => {
+            local_rust_control(source, phase, source_ordinal)
+        }
         LocalIndexError::StoreStartup { source }
         | LocalIndexError::ArtifactReuse { source }
         | LocalIndexError::WorkspaceRegistration { source }
@@ -360,12 +449,22 @@ fn local_index_control(source: LocalIndexError) -> Option<LocalConnectedWorkspac
         | LocalIndexError::GraphPublicationStaging { source }
         | LocalIndexError::PublicationActivation { source }
         | LocalIndexError::Checkpoint { source }
-        | LocalIndexError::Shutdown { source } => store_control(source),
+        | LocalIndexError::Shutdown { source } => store_control(source, phase, source_ordinal),
+        LocalIndexError::MutationOutcomeUnknown { .. } => {
+            Some(LocalConnectedWorkspaceIndexError::MutationOutcomeUnknown {
+                phase,
+                source_ordinal,
+            })
+        }
         _ => None,
     }
 }
 
-fn local_rust_control(source: LocalRustIndexError) -> Option<LocalConnectedWorkspaceIndexError> {
+fn local_rust_control(
+    source: LocalRustIndexError,
+    phase: LocalConnectedWorkspacePhase,
+    source_ordinal: Option<u64>,
+) -> Option<LocalConnectedWorkspaceIndexError> {
     match source {
         LocalRustIndexError::DeadlineNotRepresentable => {
             Some(LocalConnectedWorkspaceIndexError::DeadlineNotRepresentable)
@@ -379,7 +478,9 @@ fn local_rust_control(source: LocalRustIndexError) -> Option<LocalConnectedWorks
         LocalRustIndexError::RootOpen { source }
         | LocalRustIndexError::SourceRead { source, .. }
         | LocalRustIndexError::RevalidationRead { source, .. } => contained_control(source),
-        LocalRustIndexError::ArtifactReuse { source } => store_control(source),
+        LocalRustIndexError::ArtifactReuse { source } => {
+            store_control(source, phase, source_ordinal)
+        }
         _ => None,
     }
 }
@@ -420,11 +521,21 @@ fn contained_control(source: ContainedSourceError) -> Option<LocalConnectedWorks
     }
 }
 
-const fn store_control(source: SqliteStoreError) -> Option<LocalConnectedWorkspaceIndexError> {
+const fn store_control(
+    source: SqliteStoreError,
+    phase: LocalConnectedWorkspacePhase,
+    source_ordinal: Option<u64>,
+) -> Option<LocalConnectedWorkspaceIndexError> {
     match source {
         SqliteStoreError::Cancelled => Some(LocalConnectedWorkspaceIndexError::Cancelled),
         SqliteStoreError::DeadlineExceeded | SqliteStoreError::ReplyTimeout => {
             Some(LocalConnectedWorkspaceIndexError::DeadlineExceeded)
+        }
+        SqliteStoreError::MutationOutcomeUnknown => {
+            Some(LocalConnectedWorkspaceIndexError::MutationOutcomeUnknown {
+                phase,
+                source_ordinal,
+            })
         }
         _ => None,
     }

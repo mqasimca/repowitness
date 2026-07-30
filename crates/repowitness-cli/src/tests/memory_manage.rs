@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "memory_manage_outcome.rs"]
+mod outcome_unknown;
+
 #[derive(Debug, PartialEq, Eq)]
 enum CapturedManageInvocation {
     Write {
@@ -36,7 +39,7 @@ enum CapturedManageInvocation {
 }
 
 struct RecordingManager {
-    result: RefCell<Option<Result<CliMemoryManageReport, &'static str>>>,
+    result: RefCell<Option<Result<CliMemoryManageReport, CliMemoryError>>>,
     captured: RefCell<Option<CapturedManageInvocation>>,
     calls: Cell<u64>,
 }
@@ -51,8 +54,23 @@ impl RecordingManager {
     }
 
     fn failure(message: &'static str) -> Self {
+        let _ = message;
         Self {
-            result: RefCell::new(Some(Err(message))),
+            result: RefCell::new(Some(Err(CliMemoryError::Failed))),
+            captured: RefCell::new(None),
+            calls: Cell::new(0),
+        }
+    }
+
+    fn outcome_unknown(
+        request_scope: MemoryMutationRequestScope,
+        operation: MemoryMutationOperation,
+    ) -> Self {
+        Self {
+            result: RefCell::new(Some(Err(CliMemoryError::MutationOutcomeUnknown {
+                request_scope,
+                operation,
+            }))),
             captured: RefCell::new(None),
             calls: Cell::new(0),
         }
@@ -63,19 +81,22 @@ impl RepositoryMemory for RecordingManager {
     fn revalidate(
         &self,
         _invocation: &MemoryRevalidationInvocation,
-    ) -> Result<CliMemoryRevalidationReport, String> {
-        Err("must not be called".to_owned())
+    ) -> Result<CliMemoryRevalidationReport, CliMemoryError> {
+        Err(CliMemoryError::Failed)
     }
 
     fn recall(
         &self,
         _invocation: &MemoryRecallInvocation,
         _configuration: &ResolvedConfiguration,
-    ) -> Result<MemoryRecallOutput, String> {
-        Err("must not be called".to_owned())
+    ) -> Result<MemoryRecallOutput, CliMemoryError> {
+        Err(CliMemoryError::Failed)
     }
 
-    fn manage(&self, invocation: &MemoryManageInvocation) -> Result<CliMemoryManageReport, String> {
+    fn manage(
+        &self,
+        invocation: &MemoryManageInvocation,
+    ) -> Result<CliMemoryManageReport, CliMemoryError> {
         self.calls.set(self.calls.get() + 1);
         let captured = match invocation {
             MemoryManageInvocation::Write {
@@ -142,7 +163,6 @@ impl RepositoryMemory for RecordingManager {
             .borrow_mut()
             .take()
             .expect("management fake is called at most once")
-            .map_err(str::to_owned)
     }
 }
 
@@ -179,7 +199,7 @@ fn memory_manage_write_passes_explicit_paths_and_emits_safe_json() {
         revision: "11".repeat(32),
         created: true,
         canonical_bytes: 619,
-        publication: CliMemoryPublicationStatus::complete(),
+        publication: CliMemoryPublicationStatus::confirmed_for_test(),
     });
     let identity = identity();
     let (code, stdout, stderr) = invoke_manage(
@@ -201,7 +221,7 @@ fn memory_manage_write_passes_explicit_paths_and_emits_safe_json() {
     assert_eq!(
         stdout,
         format!(
-            "{{\"schema_version\":1,\"operation\":\"write\",\"revision_sha256\":\"{}\",\"created\":true,\"canonical_bytes\":619,\"publication\":{{\"complete\":true,\"warning_count\":0,\"temporary_cleanup\":\"complete\",\"target_identity\":\"confirmed_at_final_fence\",\"records_directory_identity\":\"confirmed_at_final_fence\",\"directory_sync\":\"complete\"}}}}\n",
+            "{{\"schema_version\":2,\"operation\":\"write\",\"revision_sha256\":\"{}\",\"created\":true,\"canonical_bytes\":619,\"publication\":{{\"complete\":true,\"warning_count\":0,\"temporary_cleanup\":\"complete\",\"target_identity\":\"confirmed_at_final_fence\",\"records_directory_identity\":\"confirmed_at_final_fence\",\"directory_sync\":\"complete\"}}}}\n",
             "11".repeat(32)
         )
     );
@@ -225,6 +245,7 @@ fn memory_manage_approval_and_history_keep_trust_inputs_explicit() {
         version_inserted: false,
         observation_inserted: true,
         approval_inserted: true,
+        maintenance: CliMemoryMaintenanceStatus::confirmed_for_test(),
     });
     let (code, stdout, stderr) = invoke_manage(
         &[
@@ -244,8 +265,12 @@ fn memory_manage_approval_and_history_keep_trust_inputs_explicit() {
     );
     assert_eq!(code, EXIT_SUCCESS);
     assert!(stderr.is_empty());
+    assert!(stdout.contains("\"schema_version\":2"));
     assert!(stdout.contains("\"operation\":\"approve\""));
     assert!(stdout.contains("\"approval_inserted\":true"));
+    assert!(stdout.contains(
+        "\"maintenance\":{\"complete\":true,\"warning_count\":0,\"checkpoint\":\"complete\",\"shutdown\":\"complete\",\"database_identity\":\"confirmed_at_final_fence\"}"
+    ));
     assert_eq!(
         approval.captured.borrow().as_ref(),
         Some(&CapturedManageInvocation::Approve {
@@ -265,6 +290,7 @@ fn memory_manage_approval_and_history_keep_trust_inputs_explicit() {
         total_record_bytes: 4096,
         git_processes: 11,
         history_complete: true,
+        maintenance: CliMemoryMaintenanceStatus::confirmed_for_test(),
     });
     let (code, stdout, stderr) = invoke_manage(
         &[
@@ -282,8 +308,12 @@ fn memory_manage_approval_and_history_keep_trust_inputs_explicit() {
     );
     assert_eq!(code, EXIT_SUCCESS);
     assert!(stderr.is_empty());
+    assert!(stdout.contains("\"schema_version\":2"));
     assert!(stdout.contains("\"operation\":\"import_history\""));
     assert!(stdout.contains("\"records_inspected\":5"));
+    assert!(stdout.contains(
+        "\"maintenance\":{\"complete\":true,\"warning_count\":0,\"checkpoint\":\"complete\",\"shutdown\":\"complete\",\"database_identity\":\"confirmed_at_final_fence\"}"
+    ));
     assert_eq!(
         history.captured.borrow().as_ref(),
         Some(&CapturedManageInvocation::ImportHistory {
@@ -297,7 +327,10 @@ fn memory_manage_approval_and_history_keep_trust_inputs_explicit() {
 
 #[test]
 fn memory_manage_review_parses_exact_selector_and_emits_safe_json() {
-    let manager = RecordingManager::success(CliMemoryManageReport::Review { inserted: true });
+    let manager = RecordingManager::success(CliMemoryManageReport::Review {
+        inserted: true,
+        maintenance: CliMemoryMaintenanceStatus::checkpoint_deferred_for_test(),
+    });
     let identity = identity();
     let revision = "44".repeat(32);
     let artifact = "55".repeat(32);
@@ -334,7 +367,7 @@ fn memory_manage_review_parses_exact_selector_and_emits_safe_json() {
     assert!(stderr.is_empty());
     assert_eq!(
         stdout,
-        "{\"schema_version\":1,\"operation\":\"review\",\"inserted\":true}\n"
+        "{\"schema_version\":2,\"operation\":\"review\",\"inserted\":true,\"maintenance\":{\"complete\":false,\"warning_count\":1,\"checkpoint\":\"deferred\",\"shutdown\":\"complete\",\"database_identity\":\"confirmed_at_final_fence\"}}\n"
     );
     assert_eq!(
         manager.captured.borrow().as_ref(),
@@ -354,6 +387,30 @@ fn memory_manage_review_parses_exact_selector_and_emits_safe_json() {
     );
     assert!(!stdout.contains("private"));
     assert!(!stdout.contains("trusted-reviewer"));
+}
+
+#[test]
+fn changed_database_identity_is_a_warning_not_complete_maintenance() {
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let report = CliMemoryManageReport::Review {
+        inserted: true,
+        maintenance: CliMemoryMaintenanceStatus::changed_database_for_test(),
+    };
+
+    assert_eq!(
+        emit_memory_manage_report(&mut stdout, &mut stderr, report),
+        EXIT_SUCCESS
+    );
+    assert!(stderr.is_empty());
+    let value: serde_json::Value =
+        serde_json::from_slice(&stdout).expect("receipt should be valid JSON");
+    let maintenance = &value["maintenance"];
+    assert_eq!(maintenance["complete"], false);
+    assert_eq!(maintenance["warning_count"], 1);
+    assert_eq!(maintenance["checkpoint"], "complete");
+    assert_eq!(maintenance["shutdown"], "complete");
+    assert_eq!(maintenance["database_identity"], "changed_after_commit");
 }
 
 const INVALID_MEMORY_MANAGE_ARGUMENTS: &[&[&str]] = &[
@@ -538,7 +595,7 @@ fn memory_manage_rejects_invalid_receipt_revisions_without_json_injection() {
                 revision: "\"}\n{\"injected\":true".to_owned(),
                 created: true,
                 canonical_bytes: 1,
-                publication: CliMemoryPublicationStatus::complete(),
+                publication: CliMemoryPublicationStatus::confirmed_for_test(),
             },
             vec![
                 "memory-manage",
@@ -556,6 +613,7 @@ fn memory_manage_rejects_invalid_receipt_revisions_without_json_injection() {
                 version_inserted: true,
                 observation_inserted: true,
                 approval_inserted: true,
+                maintenance: CliMemoryMaintenanceStatus::confirmed_for_test(),
             },
             vec![
                 "memory-manage",
@@ -592,23 +650,4 @@ impl Write for FailingWriter {
     fn flush(&mut self) -> io::Result<()> {
         Ok(())
     }
-}
-
-#[test]
-fn memory_manage_output_failure_returns_io_exit_code() {
-    let mut stderr = Vec::new();
-    assert_eq!(
-        emit_memory_manage_report(
-            &mut FailingWriter,
-            &mut stderr,
-            CliMemoryManageReport::Write {
-                revision: "33".repeat(32),
-                created: false,
-                canonical_bytes: 1,
-                publication: CliMemoryPublicationStatus::complete(),
-            },
-        ),
-        EXIT_IO
-    );
-    assert!(stderr.is_empty());
 }

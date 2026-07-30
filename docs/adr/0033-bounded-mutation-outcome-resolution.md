@@ -195,17 +195,18 @@ outcomes through existing concrete receipts.
   publication and validate the destination independently.
 - For owner-thread SQLite mutations, pause after transaction commit but before
   reply delivery; cover receipt inside grace, no receipt beyond grace,
-  disconnect, queue-full before admission, and read-only reply timeout.
+  disconnect, queue-full before admission, read-only reply timeout, and
+  immediate client drop after outcome-unknown.
 - Run the publication, backup/restore, cancellation, crash/recovery, Unix
   hard-link/symlink, Windows reparse/link, and redacted-diagnostic matrices.
 
 ## Follow-up
 
-- Surface every new receipt status in CLI and MCP mutation outputs.
-- Apply the same deadline/grace and committed-warning envelope to all
-  owner-thread SQLite mutation commands and startup recovery.
-- Add authoritative reconciliation guidance for
-  `MutationOutcomeUnknown` to each mutating command.
+- Keep CLI and MCP receipt schemas, committed warnings, and operation-specific
+  reconciliation guidance aligned with every local mutation facade.
+- Preserve the shared owner fence that rejects later and already-queued
+  mutations after an unresolved receipt until the store is reopened and
+  authoritative state is reconciled.
 - Measure the resolution grace on supported release platforms before
   accepting this ADR.
 - Revisit durable operation IDs before remote mutation or multiple concurrent
@@ -222,10 +223,47 @@ Owner-thread SQLite startup and mutating commands now use the same bounded
 receipt-resolution transport: known replies during the 250-millisecond grace
 are preserved, while a missing or disconnected reply after queue admission is
 `MutationOutcomeUnknown`. Read-only commands retain ordinary reply-timeout
-semantics.
+semantics. A test-only owner-thread seam pauses successful mutations after the
+transaction returns but before reply delivery. Real SQLite integration tests
+cover a receipt released inside grace, a durable commit whose receipt is
+withheld beyond grace, queue-full rejection before admission, and an admitted
+read-only command that retains reply-timeout behavior. Bounded transport tests
+separately cover reply-channel disconnect.
 
-The remaining owner-thread work is transaction-level pause instrumentation and
-per-operation reconciliation guidance at every public mutation facade.
+The local indexing, connected-workspace, memory-management, memory-revalidation,
+and retention facades preserve an explicit outcome-unknown category. They
+expose operation-specific, path- and content-redacted guidance for reconciling
+authoritative state before retry. Automatic local-index polling does not retry
+an unknown mutation.
+
+The explicitly authorized MCP `memory_manage` request remains version 1, while
+its receipt schema is version 2. Approval, correspondence-review, and
+history-import receipts carry categorical checkpoint and shutdown maintenance
+state plus final database-path identity evidence: `ConfirmedAtFinalFence`,
+`ChangedAfterCommit`, or `Unconfirmed`. The aggregate `complete` field is true
+only when both maintenance steps and the identity fence are confirmed; changed
+or unconfirmed identity remains a warning on the known durable receipt. The
+alpha boundary does not retain constructors that silently label unknown
+maintenance as complete.
+
+The SQLite writer client and owner share a sticky unresolved-mutation state
+after outcome-unknown or failed mutation-reply delivery. Later mutations fail
+before queue admission, and a mutation already queued behind the unresolved
+operation is rejected before execution. Read-only reconciliation and orderly
+shutdown remain available; reopening after authoritative reconciliation starts
+a new owner-local outcome state. Drop does not treat successful
+shutdown-command admission as proof that an unresolved owner reached shutdown:
+it joins only an already-finished owner and otherwise detaches. A real SQLite
+regression pauses after checkpoint completion, returns outcome-unknown, invokes
+consuming shutdown with an expired deadline, and proves the resulting drop is
+bounded while the owner remains paused. The concurrency regression queues a
+second mutation before the first receipt becomes unknown and proves that only
+the first transaction can be durable. Reopen then permits a reconciled retry.
+The unknown diagnostic remains generic and path-redacted.
+
+Acceptance still requires measuring the 250-millisecond resolution grace on
+each supported release platform and completing the full release validation
+matrix above.
 
 ## Supersession
 

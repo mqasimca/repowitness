@@ -23,7 +23,10 @@ use repowitness_domain::{
 };
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
-use super::{GenerationId, SqliteStoreError, writer::WriteControl};
+use super::{
+    GenerationId, SqliteStoreError,
+    writer::{WriteControl, WriterMutationResult, commit_mutation},
+};
 use crate::memory_format::{MemoryFormatControl, parse_persisted_canonical_memory_record};
 
 const MAX_PROJECTION_CANONICAL_BYTES: u64 = 256 * 1024 * 1024;
@@ -673,10 +676,14 @@ pub(super) fn publish_memory_projection(
     connection: &mut Connection,
     prepared: &PreparedMemoryProjection,
     control: WriteControl<'_>,
-) -> Result<MemoryProjectionPublication, SqliteStoreError> {
-    with_progress_handler(connection, control, |connection| {
-        publish_memory_projection_inner(connection, prepared, control)
-    })
+    force_progress_handler_clear_failure: bool,
+) -> WriterMutationResult<MemoryProjectionPublication> {
+    with_mutation_progress_handler(
+        connection,
+        control,
+        force_progress_handler_clear_failure,
+        |connection| publish_memory_projection_inner(connection, prepared, control),
+    )
 }
 
 include!("memory_projection/limits.rs");

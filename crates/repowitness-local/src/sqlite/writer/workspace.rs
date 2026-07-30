@@ -119,9 +119,7 @@ impl WriterState {
             }
         }
         check_control(control)?;
-        transaction
-            .commit()
-            .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
+        commit_mutation(transaction)?;
         Ok(next)
     }
 
@@ -151,9 +149,7 @@ impl WriterState {
             generation,
         )?;
         check_control(control)?;
-        transaction
-            .commit()
-            .map_err(|_| SqliteStoreError::DatabaseOperationFailed)
+        commit_mutation(transaction)
     }
 
     pub(super) fn publish_workspace_view(
@@ -245,9 +241,7 @@ impl WriterState {
             )
             .map_err(|_| SqliteStoreError::InvalidWorkspaceView)?;
         check_control(control)?;
-        transaction
-            .commit()
-            .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
+        commit_mutation(transaction)?;
         Ok(view)
     }
 

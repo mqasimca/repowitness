@@ -78,9 +78,7 @@ impl WriterState {
                     )
                     .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
             }
-            transaction
-                .commit()
-                .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
+            commit_mutation(transaction)?;
         }
         check_control(control)?;
         let changed = self
@@ -244,9 +242,7 @@ impl WriterState {
                         .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
                 }
             }
-            transaction
-                .commit()
-                .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
+            commit_mutation(transaction)?;
         }
         Ok(())
     }
@@ -305,9 +301,7 @@ impl WriterState {
                     )
                     .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
             }
-            transaction
-                .commit()
-                .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
+            commit_mutation(transaction)?;
         }
         self.transition(generation, "extracting", "resolving")?;
         for file in prepared.files() {
@@ -340,9 +334,7 @@ impl WriterState {
                         )
                         .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
                 }
-                transaction
-                    .commit()
-                    .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
+                commit_mutation(transaction)?;
             }
         }
         self.transition(generation, "resolving", "validating")?;

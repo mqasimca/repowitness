@@ -87,8 +87,8 @@ pub use local_identity::{
     generate_local_identity,
 };
 pub use local_index::{
-    LocalIndexError, LocalIndexReport, LocalIndexRequest, index_local_repository,
-    index_local_rust_repository,
+    LocalIndexError, LocalIndexMutation, LocalIndexReport, LocalIndexRequest,
+    index_local_repository, index_local_rust_repository,
 };
 pub use local_memory_recall::{
     DEFAULT_LOCAL_MEMORY_RECALL_DEADLINE, LocalMemoryRecallError, LocalMemoryRecallRequest,
@@ -124,8 +124,9 @@ pub use memory_import::{LoadedMemoryRecord, MemoryFileImportError, MemoryRecordF
 pub use memory_management::{
     DEFAULT_LOCAL_MEMORY_MANAGE_DEADLINE, LocalMemoryApprovalReceipt, LocalMemoryApprovalRequest,
     LocalMemoryCorrespondenceReviewReceipt, LocalMemoryCorrespondenceReviewRequest,
-    LocalMemoryFilePublicationStatus, LocalMemoryHistoryImportLimits,
-    LocalMemoryHistoryImportReport, LocalMemoryHistoryImportRequest, LocalMemoryManageError,
+    LocalMemoryDatabaseIdentity, LocalMemoryFilePublicationStatus, LocalMemoryHistoryImportLimits,
+    LocalMemoryHistoryImportReport, LocalMemoryHistoryImportRequest, LocalMemoryMaintenance,
+    LocalMemoryMaintenanceStep, LocalMemoryManageError, LocalMemoryMutation,
     LocalMemoryWriteReceipt, LocalMemoryWriteRequest, MemoryFileIdentityStatus,
     MemoryFilePublicationStepStatus, approve_local_memory, import_local_memory_history,
     review_local_memory_correspondence, validate_local_memory_actor, write_local_memory,
@@ -133,8 +134,9 @@ pub use memory_management::{
 pub use memory_revalidation::{
     DEFAULT_LOCAL_MEMORY_CANONICAL_BYTES, DEFAULT_LOCAL_MEMORY_GIT_QUERIES,
     DEFAULT_LOCAL_MEMORY_RESULT_CANDIDATES, DEFAULT_LOCAL_MEMORY_REVALIDATION_DEADLINE,
-    LocalMemoryRevalidationError, LocalMemoryRevalidationLimits, LocalMemoryRevalidationReport,
-    LocalMemoryRevalidationRequest, MAX_LOCAL_MEMORY_GIT_QUERIES, revalidate_local_memory,
+    LocalMemoryRevalidationError, LocalMemoryRevalidationLimits, LocalMemoryRevalidationMutation,
+    LocalMemoryRevalidationReport, LocalMemoryRevalidationRequest, MAX_LOCAL_MEMORY_GIT_QUERIES,
+    revalidate_local_memory,
 };
 pub use repowitness_application::{
     CODE_SEARCH_PROFILE_VERSION, CONFIGURATION_DIGEST_VERSION, CONFIGURATION_RESOLVER_VERSION,
