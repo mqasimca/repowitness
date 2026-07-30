@@ -4,7 +4,9 @@ use std::{
     env,
     error::Error,
     ffi::OsString,
-    path::PathBuf,
+    fs::{self, File, OpenOptions},
+    io::{Seek, SeekFrom, Write},
+    path::{Path, PathBuf},
     sync::{Arc, atomic::AtomicBool},
     time::{Duration, Instant},
 };
@@ -33,6 +35,7 @@ const MAX_RUNS: usize = 1_000;
 const MAX_BUDGET_MS: u64 = 3_600_000;
 const MAX_RESULT_BYTES: u64 = 24 * 1024 * 1024;
 const MAX_STORAGE_BYTES: u64 = 16 * 1024 * 1024 * 1024;
+const RETENTION_SOURCE_FILE: &str = "repowitness_phase1_retention_probe.rs";
 
 fn main() {
     if let Err(error) = run() {
@@ -42,28 +45,49 @@ fn main() {
 }
 
 fn run() -> ProbeResult<()> {
-    let arguments = Arguments::parse()?;
-    validate_inputs(&arguments)?;
-    let configuration = benchmark_configuration(arguments.watch_session_ms())?;
+    let arguments = redact_stage_failure(Arguments::parse(), "argument parsing failed")?;
+    redact_stage_failure(validate_inputs(&arguments), "input validation failed")?;
+    let configuration = redact_stage_failure(
+        benchmark_configuration(arguments.watch_session_ms()),
+        "benchmark configuration failed",
+    )?;
     let full_index_started = Instant::now();
-    let initial = index(&arguments, &configuration)?;
+    let initial = redact_stage_failure(
+        index(&arguments, &configuration),
+        "initial indexing operation failed",
+    )?;
     let full_index_wall = full_index_started.elapsed();
     if full_index_wall > Duration::from_millis(arguments.max_full_index_wall_ms) {
         return Err("cold full-index wall time exceeded the resource budget".into());
     }
 
-    let quiet = measure_quiet_reconciliation(&arguments, &configuration, initial)?;
-    let graph = graph::measure(
-        &arguments.database,
-        &arguments.repository_identity,
-        &configuration,
-        arguments.graph_runs,
-        arguments.max_graph_read_ms,
-        arguments.max_material_result_bytes,
+    let quiet = redact_stage_failure(
+        measure_quiet_reconciliation(&arguments, &configuration, initial),
+        "quiet reconciliation measurement failed",
     )?;
-    let retention = measure_retention(&arguments, &configuration)?;
-    let database_bytes = metrics::required_file_size(&arguments.database)?;
-    let wal_bytes = metrics::wal_file_size(&arguments.database)?;
+    let graph = redact_stage_failure(
+        graph::measure(
+            &arguments.database,
+            &arguments.repository_identity,
+            &configuration,
+            arguments.graph_runs,
+            arguments.max_graph_read_ms,
+            arguments.max_material_result_bytes,
+        ),
+        "native graph measurement failed",
+    )?;
+    let retention = redact_stage_failure(
+        measure_retention(&arguments, &configuration),
+        "retention measurement failed",
+    )?;
+    let database_bytes = redact_stage_failure(
+        metrics::required_file_size(&arguments.database),
+        "database size measurement failed",
+    )?;
+    let wal_bytes = redact_stage_failure(
+        metrics::wal_file_size(&arguments.database),
+        "WAL size measurement failed",
+    )?;
     validate_storage_budgets(&arguments, database_bytes, wal_bytes)?;
 
     emit_report(
@@ -79,6 +103,10 @@ fn run() -> ProbeResult<()> {
         },
     );
     Ok(())
+}
+
+fn redact_stage_failure<T, E>(result: Result<T, E>, message: &'static str) -> ProbeResult<T> {
+    result.map_err(|_| message.into())
 }
 
 fn benchmark_configuration(watcher_poll_interval_ms: u64) -> ProbeResult<ResolvedConfiguration> {
@@ -133,24 +161,35 @@ fn measure_quiet_reconciliation(
             )
             .with_configuration(configuration),
         )
-        .with_max_runtime(session)?;
+        .with_max_runtime(session);
+        let request = redact_stage_failure(request, "quiet request construction failed")?;
         let started = Instant::now();
-        let report = watch_local_repository(request, Arc::new(AtomicBool::new(false)))?;
+        let report = redact_stage_failure(
+            watch_local_repository(request, Arc::new(AtomicBool::new(false))),
+            "quiet watch operation failed",
+        )?;
         let elapsed = started.elapsed();
-        if report.exit() != LocalWatchExit::DeadlineExceeded
-            || report.last_reconciliation() != Some(LocalWatchReconciliation::Unchanged)
-            || report
-                .last_index()
-                .is_none_or(|last| last.generation() != initial.generation())
-        {
-            return Err("quiet reconciliation changed or lost the active generation".into());
+        if report.exit() != LocalWatchExit::DeadlineExceeded {
+            return Err("quiet reconciliation returned an unexpected exit".into());
+        }
+        if report.last_reconciliation() != Some(LocalWatchReconciliation::Unchanged) {
+            return Err("quiet reconciliation did not complete an unchanged pass".into());
+        }
+        let Some(last_index) = report.last_index() else {
+            return Err("quiet reconciliation omitted its last index receipt".into());
+        };
+        if last_index.generation() != initial.generation() {
+            return Err("quiet reconciliation changed the active generation".into());
         }
         unchanged = unchanged
             .checked_add(1)
             .ok_or("quiet reconciliation count overflowed")?;
         samples.push(elapsed);
     }
-    let p95 = metrics::nearest_rank_p95(&mut samples)?;
+    let p95 = redact_stage_failure(
+        metrics::nearest_rank_p95(&mut samples),
+        "quiet percentile measurement failed",
+    )?;
     if p95 > Duration::from_millis(arguments.max_quiet_poll_ms) {
         return Err("quiet reconciliation p95 exceeded the resource budget".into());
     }
@@ -165,27 +204,113 @@ fn measure_retention(
     arguments: &Arguments,
     configuration: &ResolvedConfiguration,
 ) -> ProbeResult<RetentionMetrics> {
-    let _second_generation = index(arguments, configuration)?;
+    let mut source = RetentionSourceMutation::create(&arguments.repository)?;
+    let _second_generation = redact_stage_failure(
+        index(arguments, configuration),
+        "first retention seed indexing failed",
+    )?;
+    source.advance(1)?;
+    let _third_generation = redact_stage_failure(
+        index(arguments, configuration),
+        "second retention seed indexing failed",
+    )?;
     let mut plan_samples = Vec::with_capacity(arguments.retention_runs);
     let mut apply_samples = Vec::with_capacity(arguments.retention_runs);
     let mut deleted_generations = 0_u64;
 
-    for _ in 0..arguments.retention_runs {
-        let _new_generation = index(arguments, configuration)?;
-        let plan_started = Instant::now();
-        let plan = plan_local_retention(plan_request(arguments, configuration)?)?;
-        let plan_elapsed = plan_started.elapsed();
-        if plan_elapsed > Duration::from_millis(arguments.max_retention_plan_ms)
-            || plan.candidate_count() != 1
-            || plan.more_work()
-            || u64::from(plan.policy().retained_generations_per_source_slot())
-                > arguments.max_retained_generations
-        {
-            return Err("retention planning violated the exact bounded workload".into());
-        }
+    for sequence in 2..arguments
+        .retention_runs
+        .checked_add(2)
+        .ok_or("retention mutation sequence overflowed")?
+    {
+        let sample = run_retention_iteration(arguments, configuration, &mut source, sequence)?;
+        deleted_generations = deleted_generations
+            .checked_add(sample.deleted_generations)
+            .ok_or("retention deletion count overflowed")?;
+        plan_samples.push(sample.plan_elapsed);
+        apply_samples.push(sample.apply_elapsed);
+    }
 
-        let apply_started = Instant::now();
-        let applied = apply_local_retention(LocalRetentionApplyRequest::try_new(
+    let request = plan_request(arguments, configuration)?;
+    let final_plan = redact_stage_failure(
+        plan_local_retention(request),
+        "retention final planning operation failed",
+    )?;
+    if final_plan.candidate_count() != 0 || final_plan.more_work() {
+        return Err("retention did not converge to an exact no-op plan".into());
+    }
+    let published_generations = u64::try_from(arguments.retention_runs)?
+        .checked_add(3)
+        .ok_or("retention publication count overflowed")?;
+    let retained_generations = published_generations
+        .checked_sub(deleted_generations)
+        .and_then(|value| value.checked_sub(1))
+        .ok_or("retention deleted the active or unpublished generation")?;
+    if retained_generations > arguments.max_retained_generations {
+        return Err("retained generations exceeded the resource budget".into());
+    }
+    source.finish()?;
+
+    Ok(RetentionMetrics {
+        plan_p95: redact_stage_failure(
+            metrics::nearest_rank_p95(&mut plan_samples),
+            "retention plan percentile measurement failed",
+        )?,
+        apply_p95: redact_stage_failure(
+            metrics::nearest_rank_p95(&mut apply_samples),
+            "retention apply percentile measurement failed",
+        )?,
+        retained_generations,
+        deleted_generations,
+        final_candidates: final_plan.candidate_count(),
+    })
+}
+
+struct RetentionIterationMetrics {
+    plan_elapsed: Duration,
+    apply_elapsed: Duration,
+    deleted_generations: u64,
+}
+
+fn run_retention_iteration(
+    arguments: &Arguments,
+    configuration: &ResolvedConfiguration,
+    source: &mut RetentionSourceMutation,
+    sequence: usize,
+) -> ProbeResult<RetentionIterationMetrics> {
+    source.advance(sequence)?;
+    let _new_generation = redact_stage_failure(
+        index(arguments, configuration),
+        "retention iteration indexing failed",
+    )?;
+    let plan_started = Instant::now();
+    let request = plan_request(arguments, configuration)?;
+    let plan = redact_stage_failure(
+        plan_local_retention(request),
+        "retention planning operation failed",
+    )?;
+    let plan_elapsed = plan_started.elapsed();
+    if plan_elapsed > Duration::from_millis(arguments.max_retention_plan_ms) {
+        return Err("retention planning exceeded the resource budget".into());
+    }
+    if plan.candidate_count() == 0 {
+        return Err("retention planning returned no candidate".into());
+    }
+    if plan.candidate_count() != 1 {
+        return Err("retention planning returned multiple candidates".into());
+    }
+    if plan.more_work() {
+        return Err("retention planning unexpectedly reported more work".into());
+    }
+    if u64::from(plan.policy().retained_generations_per_source_slot())
+        > arguments.max_retained_generations
+    {
+        return Err("retention policy exceeded the retained-generation budget".into());
+    }
+
+    let apply_started = Instant::now();
+    let request = redact_stage_failure(
+        LocalRetentionApplyRequest::try_new(
             &arguments.database,
             MIGRATION_TIMESTAMP,
             configuration,
@@ -193,42 +318,30 @@ fn measure_retention(
             plan.plan_digest(),
             Arc::new(AtomicBool::new(false)),
             Duration::from_millis(arguments.max_retention_apply_ms),
-        )?)?;
-        let apply_elapsed = apply_started.elapsed();
-        if apply_elapsed > Duration::from_millis(arguments.max_retention_apply_ms)
-            || applied.generation_count() != 1
-            || !applied.database_identity_confirmed()
-            || !applied.shutdown_complete()
-        {
-            return Err("retention apply violated the exact bounded workload".into());
-        }
-        deleted_generations = deleted_generations
-            .checked_add(applied.generation_count())
-            .ok_or("retention deletion count overflowed")?;
-        plan_samples.push(plan_elapsed);
-        apply_samples.push(apply_elapsed);
+        ),
+        "retention apply request setup failed",
+    )?;
+    let applied = redact_stage_failure(
+        apply_local_retention(request),
+        "retention apply operation failed",
+    )?;
+    let apply_elapsed = apply_started.elapsed();
+    if apply_elapsed > Duration::from_millis(arguments.max_retention_apply_ms) {
+        return Err("retention apply exceeded the resource budget".into());
     }
-
-    let final_plan = plan_local_retention(plan_request(arguments, configuration)?)?;
-    if final_plan.candidate_count() != 0 || final_plan.more_work() {
-        return Err("retention did not converge to an exact no-op plan".into());
+    if applied.generation_count() != 1 {
+        return Err("retention apply returned an unexpected generation count".into());
     }
-    let published_generations = u64::try_from(arguments.retention_runs)?
-        .checked_add(2)
-        .ok_or("retention publication count overflowed")?;
-    let retained_generations = published_generations
-        .checked_sub(deleted_generations)
-        .ok_or("retention deleted more generations than were published")?;
-    if retained_generations > arguments.max_retained_generations {
-        return Err("retained generations exceeded the resource budget".into());
+    if !applied.database_identity_confirmed() {
+        return Err("retention apply did not confirm database identity".into());
     }
-
-    Ok(RetentionMetrics {
-        plan_p95: metrics::nearest_rank_p95(&mut plan_samples)?,
-        apply_p95: metrics::nearest_rank_p95(&mut apply_samples)?,
-        retained_generations,
-        deleted_generations,
-        final_candidates: final_plan.candidate_count(),
+    if !applied.shutdown_complete() {
+        return Err("retention apply did not complete shutdown".into());
+    }
+    Ok(RetentionIterationMetrics {
+        plan_elapsed,
+        apply_elapsed,
+        deleted_generations: applied.generation_count(),
     })
 }
 
@@ -236,14 +349,71 @@ fn plan_request<'a>(
     arguments: &Arguments,
     configuration: &'a ResolvedConfiguration,
 ) -> ProbeResult<LocalRetentionPlanRequest<'a>> {
-    Ok(LocalRetentionPlanRequest::try_new(
-        &arguments.database,
-        MIGRATION_TIMESTAMP,
-        configuration,
-        LocalRetentionPins::default(),
-        Arc::new(AtomicBool::new(false)),
-        Duration::from_millis(arguments.max_retention_plan_ms),
-    )?)
+    redact_stage_failure(
+        LocalRetentionPlanRequest::try_new(
+            &arguments.database,
+            MIGRATION_TIMESTAMP,
+            configuration,
+            LocalRetentionPins::default(),
+            Arc::new(AtomicBool::new(false)),
+            Duration::from_millis(arguments.max_retention_plan_ms),
+        ),
+        "retention plan request setup failed",
+    )
+}
+
+struct RetentionSourceMutation {
+    path: PathBuf,
+    file: Option<File>,
+}
+
+impl RetentionSourceMutation {
+    fn create(repository: &Path) -> ProbeResult<Self> {
+        let path = repository.join(RETENTION_SOURCE_FILE);
+        let file = redact_stage_failure(
+            OpenOptions::new().write(true).create_new(true).open(&path),
+            "retention benchmark source setup failed",
+        )?;
+        let mut mutation = Self {
+            path,
+            file: Some(file),
+        };
+        mutation.advance(0)?;
+        Ok(mutation)
+    }
+
+    fn advance(&mut self, sequence: usize) -> ProbeResult<()> {
+        let file = self
+            .file
+            .as_mut()
+            .ok_or("retention benchmark source is unavailable")?;
+        redact_stage_failure(
+            file.seek(SeekFrom::Start(0)),
+            "retention benchmark source update failed",
+        )?;
+        redact_stage_failure(file.set_len(0), "retention benchmark source update failed")?;
+        let content = format!("pub const REPOWITNESS_RETENTION_SEQUENCE: usize = {sequence};\n");
+        redact_stage_failure(
+            file.write_all(content.as_bytes()),
+            "retention benchmark source update failed",
+        )?;
+        redact_stage_failure(file.sync_all(), "retention benchmark source update failed")
+    }
+
+    fn finish(mut self) -> ProbeResult<()> {
+        drop(self.file.take());
+        redact_stage_failure(
+            fs::remove_file(&self.path),
+            "retention benchmark source cleanup failed",
+        )
+    }
+}
+
+impl Drop for RetentionSourceMutation {
+    fn drop(&mut self) {
+        drop(self.file.take());
+        let _ = fs::remove_file(&self.path);
+    }
 }
 
 fn validate_inputs(arguments: &Arguments) -> ProbeResult<()> {
@@ -528,11 +698,46 @@ fn parse_budget(
 
 #[cfg(test)]
 mod tests {
-    use std::{ffi::OsString, time::Duration};
+    use std::{
+        env,
+        ffi::OsString,
+        fs,
+        path::{Path, PathBuf},
+        process,
+        sync::atomic::{AtomicU64, Ordering},
+        time::Duration,
+    };
 
     use super::{
-        MAX_RUNS, parse_budget, parse_required_true, parse_runs, validate_warm_query_contract,
+        MAX_RUNS, RETENTION_SOURCE_FILE, RetentionSourceMutation, parse_budget,
+        parse_required_true, parse_runs, redact_stage_failure, validate_warm_query_contract,
     };
+
+    static TEST_DIRECTORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+    struct TestDirectory(PathBuf);
+
+    impl TestDirectory {
+        fn new() -> Self {
+            let sequence = TEST_DIRECTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+            let path = env::temp_dir().join(format!(
+                "repowitness-phase1-retention-test-{}-{sequence}",
+                process::id()
+            ));
+            fs::create_dir(&path).expect("temporary directory should be created");
+            Self(path)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
 
     #[test]
     fn run_counts_are_bounded_before_sample_allocation() {
@@ -572,5 +777,44 @@ mod tests {
         assert!(validate_warm_query_contract(50, 50, 250, 250, false).is_err());
         assert!(parse_required_true(Some(OsString::from("true")), "required").unwrap());
         assert!(parse_required_true(Some(OsString::from("false")), "required").is_err());
+    }
+
+    #[test]
+    fn stage_failures_do_not_expose_the_underlying_error() {
+        let sensitive = "private-path-and-source-canary";
+        for message in [
+            "fixed stage failed",
+            "quiet reconciliation measurement failed",
+            "native graph measurement failed",
+            "retention measurement failed",
+        ] {
+            let error = redact_stage_failure(Err::<(), _>(sensitive), message)
+                .expect_err("the stage failure must be preserved");
+
+            assert_eq!(error.to_string(), message);
+            assert!(!error.to_string().contains(sensitive));
+        }
+    }
+
+    #[test]
+    fn retention_source_changes_are_bounded_and_cleaned_up() {
+        let directory = TestDirectory::new();
+        let path = directory.path().join(RETENTION_SOURCE_FILE);
+        let first = {
+            let mut mutation =
+                RetentionSourceMutation::create(directory.path()).expect("create source");
+            let first = fs::read(&path).expect("read first source");
+            mutation.advance(1).expect("advance source");
+            assert_ne!(fs::read(&path).expect("read changed source"), first);
+            first
+        };
+        assert!(!first.is_empty());
+        assert!(!path.exists(), "drop must clean the temporary source");
+
+        RetentionSourceMutation::create(directory.path())
+            .expect("recreate source")
+            .finish()
+            .expect("finish source");
+        assert!(!path.exists(), "finish must clean the temporary source");
     }
 }

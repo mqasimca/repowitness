@@ -189,16 +189,19 @@ paths. The profile does not run repository code, load Python environments,
 resolve imports or types, evaluate decorators, infer dynamic dispatch, or
 extract references and calls.
 
-### Remaining product gates
+### Phase 0 completion and remaining product gates
 
-The local product loop and clean release benchmark pass. The budgets are
-ratified. ADR-0017, ADR-0019, and ADR-0023 are accepted. One Phase 0 product
-gate remains: a real design-partner task must improve an engineering decision
-when compared with the declared baselines. Maintainers need this result before
-they decide proposed ADR-0018 and ADR-0021. The rewritten-history,
-obsolete-snapshot, competing-review, split/merge, and publication-fault matrix
-passes. A stable public API is still deferred. This design-partner alpha does
-not support a public-beta or production-readiness claim.
+The local product loop and clean release benchmark pass, and the budgets are
+ratified. The first
+[privacy-reviewed real design-partner outcome](research/phase0-design-partner-evaluation-2026-07-30.md)
+was correct and useful but did not change the decision. The
+[second outcome](research/phase0-design-partner-evaluation-2026-07-30-task-02.md)
+changed the useful decision relative to both declared baselines and completed
+the Phase 0 product gate. ADR-0017, ADR-0018, ADR-0019, ADR-0021, and ADR-0023
+are accepted. The rewritten-history, obsolete-snapshot, competing-review,
+split/merge, and publication-fault matrix passes. A stable public API is still
+deferred. This design-partner alpha does not support a public-beta or
+production-readiness claim.
 
 ## Non-goals for the first public beta
 

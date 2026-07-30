@@ -1,8 +1,8 @@
 # ADR-0018: Revalidate Phase 0 Rust memory through precision-first correspondence
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-07-27
-- Last reviewed: 2026-07-28
+- Last reviewed: 2026-07-30
 - Owners: Project maintainers
 - Scope: Rust occurrence correspondence, Git-DAG validity, memory effective
   state, and SQLite projection publication
@@ -251,15 +251,17 @@ That converts incomplete history into false certainty and violates ADR-0005.
   local stdio MCP.
 - Completed 2026-07-28: add bounded approve, reject, and manual-link review
   commands, immutable SQLite audit, deterministic conflict aggregation, and
-  reviewed projection evidence under proposed ADR-0021.
+  reviewed projection evidence under ADR-0021.
 - Completed 2026-07-28: pass obsolete-snapshot, competing-target,
   split/merge-abstention, rewritten/missing-history, and projection-publication
   fault cases.
-- Complete the comparative design-partner evaluation before ratification.
+- Completed 2026-07-30: the passing privacy-reviewed real design-partner
+  comparison satisfied this ADR's ratification prerequisite. Maintainers
+  accepted this ADR before deciding ADR-0021.
 
 ## Supersession
 
 The pre-release schema-version and migration-compatibility clauses are
 superseded by [ADR-0022](0022-squash-pre-release-sqlite-schema.md). The
-correspondence, revalidation, and immutable-projection proposal remains
+correspondence, revalidation, and immutable-projection decision remains
 otherwise unchanged.

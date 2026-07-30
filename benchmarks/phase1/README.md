@@ -57,9 +57,14 @@ the manifest's warm-query contract, and its receipt must match the native
 graph receipt exactly. Each workspace publication must also report complete
 post-commit maintenance and remain within the database and zero-WAL budgets.
 Its fresh database directory is removed immediately after those checks. Quiet
-polling uses a fixed manifest session duration that is independent of its p95
-budget; quiet and graph latency gates compare their calculated p95 rather than
-mistaking the budget for a per-sample maximum.
+polling uses a fixed 750-millisecond manifest session, leaving a separate
+1000-millisecond p95 ceiling. The session must admit one complete startup
+reconciliation; quiet and graph latency gates compare their calculated p95
+rather than mistaking the budget for a per-sample maximum.
+The retention workload adds one bounded RepoWitness-authored Rust source to
+the disposable checkout and changes it once per generation so collection has
+real unreachable work. It removes that source on success and failure, and the
+runner's final clean-worktree fence rejects incomplete cleanup.
 The runner executes same-revision regressions that prove missing history stays
 indeterminate, ambiguous correspondence does not auto-link, and truncation is
 reported before it emits the corresponding zero-tolerance counters. It fails

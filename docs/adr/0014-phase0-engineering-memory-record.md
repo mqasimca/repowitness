@@ -408,10 +408,10 @@ sanitizer when run with a supported nightly toolchain.
   CLI/MCP adapters under ADR-0018 and ADR-0019.
 - Completed 2026-07-28: add bounded observation-only Git-tree history
   admission, bounded manual correspondence review, and deterministic
-  conflict-preserving aggregation under proposed ADR-0021.
+  conflict-preserving aggregation under ADR-0021.
 - Completed 2026-07-28: add the fixed high-confidence secret/promotion policy,
   contained canonical writes, explicit local approval, and default-deny
-  write-capable MCP under proposed ADR-0021.
+  write-capable MCP under ADR-0021.
 - Completed 2026-07-28: pass the rewritten/missing-history, obsolete-review,
   competing-target, split/merge, and canonical-file/SQLite publication-fault
   release matrix.

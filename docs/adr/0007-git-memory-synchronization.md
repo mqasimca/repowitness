@@ -111,7 +111,7 @@ The accepted ADR-0014 domain model, hostile byte parser, canonical semantic
 digest, and deterministic writer are implemented, with the earlier spike kept
 as an independent regression oracle. Capability-contained worktree admission,
 trusted local import, immutable versions including tombstones, and append-only
-audit history are implemented under accepted ADR-0017. Proposed ADR-0018 and
+audit history are implemented under accepted ADR-0017. Accepted ADR-0018 and
 ADR-0021 now implement conflict-preserving current projection, deterministic
 projection rebuild, observation-only bounded Git-tree history import,
 separately trusted local approval, canonical writes, and manual correspondence

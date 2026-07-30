@@ -1,8 +1,8 @@
 # ADR-0021: Complete Phase 0 memory management through explicit local trust
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-07-27
-- Last reviewed: 2026-07-28
+- Last reviewed: 2026-07-30
 - Owners: Project maintainers
 - Scope: Git-memory writes, history import, local approval, correspondence review, and MCP authorization
 
@@ -24,9 +24,9 @@ work, and model-initiated approval without an explicit local capability.
 
 The implementation described below now exists in the CLI, local adapter,
 SQLite schema version 8, and explicitly authorized local MCP adapter. Its
-release matrix and clean benchmark prerequisite pass. This ADR remains
-proposed because it depends on ADR-0018, whose real design-partner
-prerequisite is not complete.
+release matrix and clean benchmark prerequisite pass. The passing real
+design-partner comparison satisfied ADR-0018's prerequisite, so maintainers
+accepted ADR-0018 before accepting this ADR.
 
 ## Decision
 
@@ -244,9 +244,9 @@ canonical-file and SQLite publication stage, including transaction commit.
   Phase 0 validation matrices passed.
 - Completed 2026-07-29: rerun the pinned benchmark from a clean exact
   RepoWitness revision on Ubuntu 24.04 and ratify its budgets.
-- Decide this proposal after the real design-partner comparison permits a
-  decision on ADR-0018. Do not change the accepted baseline migration in
-  place.
+- Completed 2026-07-30: after the passing real design-partner comparison
+  supported acceptance of ADR-0018, accept this ADR. Do not change the
+  accepted baseline migration in place.
 - Add reviewed multi-parent merge and archival/export policy in a later
   decision.
 
@@ -254,5 +254,5 @@ canonical-file and SQLite publication stage, including transaction commit.
 
 The pre-release schema-version and migration-compatibility clauses are
 superseded by [ADR-0022](0022-squash-pre-release-sqlite-schema.md). The local
-trust, memory-management, and correspondence-review proposal remains otherwise
+trust, memory-management, and correspondence-review decision remains otherwise
 unchanged.

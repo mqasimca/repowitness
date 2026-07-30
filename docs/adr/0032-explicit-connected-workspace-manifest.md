@@ -182,8 +182,8 @@ opaque identities and concrete receipts cross the storage boundary.
 
 ## Follow-up
 
-- Add an explicit ID-generation command backed by operating-system secure
-  randomness before recommending the manifest to new users.
+- Completed: the explicit `identity generate repository` command uses
+  operating-system secure randomness without inspecting a repository.
 - Add per-slot configuration only through a new manifest version with
   monotonic authority tests.
 - Revisit a portable host-path encoding only after Windows and Unix

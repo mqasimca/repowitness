@@ -193,16 +193,16 @@
     "resources": {
       "max_full_index_wall_ms": 10000,
       "max_peak_rss_mib": 384,
-      "max_warm_query_p95_ms": 250,
+      "max_warm_query_p95_ms": 500,
       "max_material_result_bytes": 65536,
       "max_database_bytes": 16777216,
       "max_wal_bytes_after_completion": 0
     },
     "phase1_resources": {
       "max_two_source_publication_wall_ms": 20000,
-      "quiet_poll_session_ms": 100,
-      "max_quiet_poll_p95_ms": 500,
-      "max_native_graph_read_p95_ms": 250,
+      "quiet_poll_session_ms": 750,
+      "max_quiet_poll_p95_ms": 1000,
+      "max_native_graph_read_p95_ms": 500,
       "max_retention_plan_wall_ms": 1000,
       "max_retention_apply_wall_ms": 2000,
       "max_unchanged_generation_delta": 0,

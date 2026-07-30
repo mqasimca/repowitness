@@ -11,16 +11,16 @@ Its textual-boundary follow-up is recorded in the
 Phase 0 source-state identity findings are recorded in the
 [source-identity research](../research/source-identity-2026-07-25.md).
 
-ADRs 0010 through 0017, ADR-0019, ADR-0020, and ADRs 0022 through 0024 are
+ADRs 0010 through 0021 and ADRs 0022 through 0024 are
 implemented by the current indexing, generation-publication,
 evidence-retrieval, memory-journal, context, and parser slice. ADR-0014's
 domain model, strict parser, canonicalizer, and deterministic writer are also
 implemented.
 
-Proposed ADR-0018 has implemented projection, Rust correspondence, memory
-revalidation, and recall paths. Proposed ADR-0021 has implemented canonical
-writes, observation-only Git-history import, separate local approval,
-correspondence review, CLI management, and opt-in MCP mutation. Their
+ADR-0018 implements projection, Rust correspondence, memory revalidation, and
+recall paths. ADR-0021 implements canonical writes, observation-only Git-history
+import, separate local approval, correspondence review, CLI management, and
+opt-in MCP mutation. Their
 persistence tables are rooted in the immutable SQLite baseline accepted by
 ADR-0022 and upgraded through the compatible parser-diagnostic migration
 accepted by ADR-0024.
@@ -29,9 +29,11 @@ The
 [Phase 0 ratification review](../research/phase0-ratification-review-2026-07-28.md)
 recommended accepting ADR-0017, ADR-0019, and ADR-0023. Maintainers adopted
 those recommendations after the clean release-platform benchmark passed and
-ratified its budgets. ADR-0018 remains proposed until the real design-partner
-comparison passes. ADR-0021 remains proposed because it depends on ADR-0018;
-its clean-benchmark prerequisite is complete.
+ratified its budgets. The first
+[privacy-reviewed real-task outcome](../research/phase0-design-partner-evaluation-2026-07-30.md)
+was correct and useful but did not meet the material-decision-change gate. The
+[second outcome](../research/phase0-design-partner-evaluation-2026-07-30-task-02.md)
+passed, so maintainers accepted ADR-0018 and then ADR-0021.
 
 ## Index
 
@@ -54,10 +56,10 @@ its clean-benchmark prerequisite is complete.
 | [0015](0015-phase0-go-and-rust-indexing.md) | Index Go and Rust in one Phase 0 generation | Accepted |
 | [0016](0016-phase0-typescript-and-tsx-indexing.md) | Add TypeScript and TSX to the Phase 0 generation | Accepted |
 | [0017](0017-phase0-memory-journal.md) | Persist an append-only Phase 0 memory journal in SQLite | Accepted |
-| [0018](0018-phase0-memory-revalidation.md) | Revalidate Phase 0 Rust memory through precision-first correspondence | Proposed |
+| [0018](0018-phase0-memory-revalidation.md) | Revalidate Phase 0 Rust memory through precision-first correspondence | Accepted |
 | [0019](0019-phase0-context-compilation-and-diagnostics.md) | Compile bounded Phase 0 context from exact source and current memory | Accepted |
 | [0020](0020-phase0-python-indexing.md) | Add Python to the Phase 0 generation | Accepted |
-| [0021](0021-phase0-memory-management-and-review.md) | Complete Phase 0 memory management through explicit local trust | Proposed |
+| [0021](0021-phase0-memory-management-and-review.md) | Complete Phase 0 memory management through explicit local trust | Accepted |
 | [0022](0022-squash-pre-release-sqlite-schema.md) | Squash the pre-release SQLite chain into one baseline | Accepted |
 | [0023](0023-vendor-typescript-grammar-fix.md) | Vendor a reviewed TypeScript grammar fix | Accepted |
 | [0024](0024-persist-parser-diagnostics-migration.md) | Persist recognized parser diagnostics through migration 2 | Accepted |

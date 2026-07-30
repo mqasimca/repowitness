@@ -27,7 +27,7 @@ afterward. The commit remains real even when the final path fence fails.
 
 [ADR-0012](0012-phase0-sqlite-schema-and-ownership.md) already requires owned
 connections, bounded one-shot replies, and online backup.
-[ADR-0021](0021-phase0-memory-management-and-review.md) proposes atomic
+[ADR-0021](0021-phase0-memory-management-and-review.md) establishes atomic
 canonical memory publication with directory synchronization. Neither decision
 defines how callers distinguish a pre-commit failure from a committed result
 whose maintenance or receipt was not confirmed.
@@ -268,4 +268,4 @@ matrix above.
 ## Supersession
 
 None. This proposal clarifies the outcome semantics of accepted ADR-0012 and
-proposed ADR-0021 without changing their storage, trust, or ownership choices.
+ADR-0021 without changing their storage, trust, or ownership choices.

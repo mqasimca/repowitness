@@ -8,7 +8,7 @@
 - Status: Implemented
 - Date: 2026-07-28
 - Governing decision:
-  [ADR-0021](../adr/0021-phase0-memory-management-and-review.md) (proposed)
+  [ADR-0021](../adr/0021-phase0-memory-management-and-review.md) (accepted)
 - Previous version: [Phase 0 SQLite schema version 7](phase0-sqlite-v7.md)
 - Implementation:
   [`crates/repowitness-local/src/sqlite/`](../../crates/repowitness-local/src/sqlite/)
