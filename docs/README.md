@@ -1,6 +1,7 @@
 # RepoWitness documentation
 
-This directory turns the detailed research in [`plan.md`](../plan.md) into smaller documents that can evolve with implementation.
+This directory divides the detailed research in [`plan.md`](../plan.md) into
+smaller documents. These documents can change with the implementation.
 
 ## Documentation map
 
@@ -34,61 +35,67 @@ This directory turns the detailed research in [`plan.md`](../plan.md) into small
 
 ## Implementation snapshot
 
-As of 2026-07-29 UTC, RepoWitness implements and tests the local five-language
-source-to-revalidated-context path: bounded Git discovery and contained reads,
-canonical source and artifact identity, deterministic extraction and reuse,
-immutable SQLite generations, native Rust graph publication and reads,
-retrieval, canonical memory management,
-observation-only Git history, manual correspondence review, context
-compilation, CLI commands, and default-read-only or explicitly authorized
-local stdio MCP tools. The
-[product](product.md), [architecture](architecture.md), and
-[roadmap](roadmap.md) distinguish that implemented design-partner-alpha loop
-and passing adversarial release matrix from the remaining ADR and real
-design-partner gate. The benchmark manifest and budgets have a checksummed
-clean Ubuntu 24.04 attestation. A controlled public baseline comparison and an
-isolated Codex utility evaluation are implemented and reproducible.
-The complete command surface and local Codex setup are in the
-[repository README](../README.md).
+As of 2026-07-30 UTC, RepoWitness implements and tests the local path from
+source change to revalidated context for five languages. It includes bounded Git
+discovery, contained file reads, canonical source and artifact IDs, deterministic
+extraction and reuse, immutable SQLite generations, Rust graph publication and
+reads, retrieval, canonical memory management, observation-only Git history,
+manual correspondence review, context compilation, CLI commands, and local
+stdio MCP tools. MCP is read-only by default. An operator can authorize memory
+writes explicitly.
+
+The [product](product.md), [architecture](architecture.md), and
+[roadmap](roadmap.md) identify the implemented design-partner alpha and the
+remaining ADR and design-partner gate. The adversarial release matrix passes.
+The benchmark manifest and budgets have a checksummed clean Ubuntu 24.04
+attestation. The controlled public baseline comparison and isolated Codex
+utility evaluation are reproducible. See the [repository README](../README.md)
+for all commands and local Codex setup steps.
 
 ## Authority and precedence
 
 When documents disagree, use this order:
 
-1. an accepted ADR controls the specific decision it covers;
-2. the focused product, architecture, engineering, and roadmap documents control their respective areas;
-3. dated research reports provide evidence and rationale for proposed decisions;
-4. `plan.md` provides broader product research context and historical rationale.
+1. An accepted ADR controls the decision that it covers.
+2. The product, architecture, engineering, and roadmap documents control their
+   own areas.
+3. Dated research reports give evidence and rationale for proposed decisions.
+4. `plan.md` gives broader product research and historical rationale.
 
-Code and executable tests are the strongest statement of implemented behavior. A mismatch between code and documentation is a defect; it does not silently amend an accepted decision.
+Code and executable tests define implemented behavior. A difference between code
+and documentation is a defect. It does not change an accepted decision.
 
 ## Status vocabulary
 
-- **Draft:** useful working direction that is expected to change.
-- **Active:** an enforced living standard or review that evolves with the
+- **Draft:** Working direction that can change.
+- **Active:** An enforced standard or review that changes with the
   implementation.
-- **Proposed:** complete enough for focused review but not yet an accepted commitment.
-- **Accepted:** the current decision; changes require a superseding ADR.
-- **Ratified:** a benchmark profile or budget set accepted after its required
-  review and evidence; material changes require a new review.
-- **Implemented:** accepted and enforced by shipped code or automated tests.
-- **Implemented and promoted:** a research recommendation adopted by a
-  controlling ADR or focused implementation contract.
-- **Completed:** a bounded spike or research task finished and retained as an
-  evidence record.
-- **Provisional measurement:** reproducible observed data whose budgets have
-  not been ratified.
-- **Superseded:** retained for history and linked to its replacement.
-- **Recommendation:** dated research advice that remains non-binding until adopted by a focused document or ADR.
-- **Reference:** background or historical rationale that is not the controlling contract.
-- **Mixed:** an index or collection containing entries with more than one status; not a decision status itself.
+- **Proposed:** Ready for focused review, but not an accepted commitment.
+- **Accepted:** The current decision. A change requires a superseding ADR.
+- **Ratified:** A benchmark profile or budget set accepted after review and
+  evidence. A material change requires a new review.
+- **Implemented:** Accepted and enforced by released code or automated tests.
+- **Implemented and promoted:** A research recommendation adopted by a
+  controlling ADR or implementation contract.
+- **Completed:** A bounded spike or research task that is complete and kept as
+  evidence.
+- **Provisional measurement:** Reproducible data with budgets that are not
+  ratified.
+- **Superseded:** Kept for history and linked to its replacement.
+- **Recommendation:** Dated research advice. It is not binding until a focused
+  document or ADR adopts it.
+- **Reference:** Background or historical rationale. It is not the controlling
+  contract.
+- **Mixed:** An index or collection with entries that have different statuses.
+  It is not a decision status.
 
-An accepted ADR may still define validation gates and explicit revisit conditions. Those conditions belong in the ADR body; they do not create an additional status value.
+An accepted ADR can define validation gates and review conditions. Put these
+conditions in the ADR body. They do not create another status.
 
 ## Updating documentation
 
-- Keep documents scoped. Put decision rationale in an ADR rather than growing every guide indefinitely.
-- Link to a concept instead of copying its definition into several files.
-- Include revision-sensitive examples and state assumptions explicitly.
-- Update roadmap and success gates in the same change that materially changes scope.
-- Prefer diagrams only when they clarify relationships that prose would obscure.
+- Keep each document within its scope. Put decision rationale in an ADR.
+- Link to a concept. Do not copy the same definition into several files.
+- Include examples that identify their revision. State assumptions explicitly.
+- Update the roadmap and success gates when a change modifies scope.
+- Use a diagram only when prose cannot clearly show the relationship.

@@ -1,21 +1,25 @@
 # Product
 
 - Status: Draft
-- Last reviewed: 2026-07-29
+- Last reviewed: 2026-07-30
 
 ## Definition
 
-RepoWitness is a local-first code-intelligence and engineering-memory engine for coding agents and developers.
+RepoWitness is a local code-intelligence and engineering-memory engine for
+coding agents and developers.
 
-> RepoWitness gives coding agents verified, revision-aware knowledge of how a project works, what has already been tried, and whether that knowledge is still valid.
+> RepoWitness gives coding agents verified knowledge about a project. The
+> knowledge identifies its source revision and whether it is still valid.
 
 Its trust promise is:
 
-> Every retrieved fact explains where it came from, how precise it is, when it was true, and what could invalidate it.
+> Each retrieved fact identifies its source, precision, valid time, and possible
+> invalidation.
 
 ## Problem
 
-Coding agents repeatedly spend time and tokens rebuilding context. Across tasks, sessions, branches, and developers, they may:
+Coding agents repeatedly rebuild context. Across tasks, sessions, branches, and
+developers, they can:
 
 - rediscover architecture and conventions;
 - repeat approaches that already failed;
@@ -25,7 +29,8 @@ Coding agents repeatedly spend time and tokens rebuilding context. Across tasks,
 - lose hypotheses, commands, diagnostics, and verification outcomes;
 - treat generated summaries as truth without supporting evidence.
 
-The central problem is not storage. It is deciding whether engineering knowledge is supported, applicable to the current code, and safe to use.
+The main problem is not storage. The main problem is whether engineering
+knowledge has evidence, applies to the current code, and is safe to use.
 
 ## Users and jobs
 
@@ -41,18 +46,19 @@ The central problem is not storage. It is deciding whether engineering knowledge
 - Inspect why a result was returned and which source supports it.
 - Record decisions, failures, and procedures with explicit scope and evidence.
 - Review shared memory through normal Git workflows.
-- Diagnose indexing and memory validity instead of debugging an opaque retrieval system.
+- Check indexing and memory validity. Do not debug an opaque retrieval system.
 
 ### Team or platform owner
 
 - Keep source and personal memory local by default.
 - Define approval, sharing, retention, secret, and resource policies.
 - Measure correctness, retrieval quality, latency, resource use, and scope isolation.
-- Add centralized operation only when team demand justifies it.
+- Add a central service only when the team needs it.
 
 ## Differentiating loop
 
-No single ingredient is unique by itself. The product is the integration of source intelligence, engineering experience, time, and validation:
+No one part is unique. The product combines source intelligence, engineering
+experience, time, and validation:
 
 ```text
 source change
@@ -65,49 +71,57 @@ source change
 
 This enables:
 
-- proof-carrying retrieval with explicit coverage and limitations;
-- memory that can follow supported refactors without guessing through ambiguity;
-- bitemporal queries separating project validity from when knowledge was recorded;
-- verified procedures and failures rather than unreviewed chat summaries;
-- deterministic context compilation under a token budget;
-- Git-reviewable team knowledge and local personal knowledge;
-- progressive precision from syntax, SCIP/compiler evidence, human decisions, and optional runtime observations.
+- Retrieval with evidence, coverage, and limits.
+- Memory that follows supported refactors without guessing when a match is
+  unclear.
+- Queries that separate project validity from the time when the system recorded
+  the knowledge.
+- Verified procedures and failures instead of unreviewed chat summaries.
+- Deterministic context compilation within a token budget.
+- Team knowledge that Git can review, and local personal knowledge.
+- More precision from syntax, SCIP or compiler evidence, human decisions, and
+  optional runtime observations.
 
 ## Product principles
 
 1. Current source is authoritative for source-derived facts.
-2. Abstention is a feature; unresolved and skipped work must remain visible.
+2. Abstention is a feature. Unresolved and skipped work must stay visible.
 3. Evidence and coverage are part of every material result.
-4. Stored memories are claims, not truth, until evidence and policy support them.
-5. Time and scope are first-class: repository, revision, branch, worktree, path, symbol, user, and team.
-6. Determinism comes before opaque relevance tuning.
-7. Local operation requires no LLM, embedding service, hosted account, or network connection.
-8. Customization cannot bypass provenance, audit, scope isolation, query limits, or atomic index generations.
-9. Optional compiler and runtime evidence strengthens syntax coverage; it does not silently replace or hide it.
-10. Measure downstream engineering outcomes, not MCP tool count or supported-language count.
+4. Stored memories are claims. Evidence and policy must support them.
+5. Time and scope are primary data: repository, revision, branch, worktree,
+   path, symbol, user, and team.
+6. Use deterministic results before opaque relevance tuning.
+7. Local operation needs no LLM, embedding service, hosted account, or network
+   connection.
+8. Customization cannot bypass provenance, audit, scope isolation, query limits,
+   or atomic index generations.
+9. Optional compiler and runtime evidence adds to syntax coverage. It does not
+   replace or hide syntax coverage.
+10. Measure engineering results. Do not measure MCP tool count or supported
+    language count.
 
 ## Phase 0 product slice
 
-The first design-partner alpha proves one complete loop with one atomic Rust,
-Go, TypeScript, TSX, and Python source profile:
+The first design-partner alpha proves one complete loop for Rust, Go,
+TypeScript, TSX, and Python:
 
 1. Index any mixture of the five supported languages into SQLite.
 2. Retrieve evidence and build a compact context pack.
 3. Attach a manually approved decision or failure to a logical symbol.
 4. Rename or meaningfully change the symbol.
-5. Relink only when evidence is strong; otherwise request review or mark the memory stale.
+5. Relink only when evidence is strong. Otherwise, request review or mark the
+   memory stale.
 6. Rebuild the context pack and expose the changed validity.
 7. Compare a real task with lexical/source-only retrieval and with RepoWitness.
 
-The alpha deliberately excludes languages beyond Rust, Go, TypeScript, TSX,
-and Python, PostgreSQL, remote MCP, automatic memory extraction, persisted
-tasks, runtime telemetry, UI, plugin execution, vector retrieval, raw ranking
-weights, and general graph-query compatibility.
+The alpha does not include other languages, PostgreSQL, remote MCP, automatic
+memory extraction, stored tasks, runtime telemetry, a UI, plugin execution,
+vector retrieval, raw ranking weights, or general graph-query compatibility.
 
 ### Implemented and verified
 
-As of 2026-07-28, the Phase 0 source-to-revalidated-context path and its local
-memory-management foundation are implemented:
+As of 2026-07-30, the Phase 0 path from source to revalidated context is
+implemented. Its local memory-management base is also implemented:
 
 - bounded sanitized-Git discovery and canonical Git/worktree receipts;
 - capability-contained, no-follow supported-language source reads with final
@@ -157,37 +171,34 @@ memory-management foundation are implemented:
   database alias/replacement races, recovery overflow, migration, backup, and
   clean-versus-incremental equivalence.
 
-The slice has been exercised on the pinned mini-redis product benchmark, this
+The team tested this slice on the pinned mini-redis product benchmark, this
 workspace, temporary adversarial and mixed-language repositories, and
 confidential external smoke inputs. The clean Ubuntu 24.04 benchmark passes
-every numeric ceiling and supplied the release-platform evidence used for
-maintainer ratification. One isolated public Codex before/after task also
-passes three paired runs: it makes both correct decisions, uses current
-memory, ignores stale memory, and rates every MCP pack useful. These runs do
-not establish the real design-partner outcome required by the Phase 0 exit
-criteria.
+every numeric limit. It gave the evidence for maintainer ratification. One
+isolated public Codex task also passes three paired runs. It makes both correct
+decisions, uses current memory, ignores stale memory, and rates each MCP packet
+as useful. These runs do not meet the Phase 0 real design-partner exit criteria.
 
-TypeScript and TSX are distinct syntax-only dialects. The implemented profile
-does not evaluate TypeScript types, `tsconfig.json`, package/module resolution,
-references, call sites, or active build targets, and it does not select
-JavaScript or MJS files.
+TypeScript and TSX are separate syntax-only dialects. The profile does not
+evaluate TypeScript types, `tsconfig.json`, package or module resolution,
+references, call sites, or active build targets. It does not select JavaScript
+or MJS files.
 
 Python is a separate syntax-only language for case-sensitive `.py` and `.pyi`
-paths. The implemented profile does not execute repository code, load Python
-environments, resolve imports or types, evaluate decorators, infer dynamic
-dispatch, or extract references and calls.
+paths. The profile does not run repository code, load Python environments,
+resolve imports or types, evaluate decorators, infer dynamic dispatch, or
+extract references and calls.
 
 ### Remaining product gates
 
-The local product loop and clean release benchmark pass, the budgets are
-ratified, and ADR-0017, ADR-0019, and ADR-0023 are accepted. The remaining
-Phase 0 product gate is one real
-design-partner task whose engineering decision improves relative to the
-declared baselines. That result is required to decide proposed ADR-0018 and
-then ADR-0021. The rewritten-history, obsolete-snapshot, competing-review,
-split/merge, and publication-fault matrix passes. A stable public API also
-remains deferred. No public-beta or production-readiness claim follows from
-the implemented design-partner-alpha loop.
+The local product loop and clean release benchmark pass. The budgets are
+ratified. ADR-0017, ADR-0019, and ADR-0023 are accepted. One Phase 0 product
+gate remains: a real design-partner task must improve an engineering decision
+when compared with the declared baselines. Maintainers need this result before
+they decide proposed ADR-0018 and ADR-0021. The rewritten-history,
+obsolete-snapshot, competing-review, split/merge, and publication-fault matrix
+passes. A stable public API is still deferred. This design-partner alpha does
+not support a public-beta or production-readiness claim.
 
 ## Non-goals for the first public beta
 

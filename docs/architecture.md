@@ -1,7 +1,7 @@
 # Architecture
 
 - Status: Proposed
-- Last reviewed: 2026-07-28
+- Last reviewed: 2026-07-30
 
 ## Architectural objective
 
@@ -452,10 +452,12 @@ RepoWitness does not promise a stable Rust dynamic-library ABI. External extensi
   opens through `cap-std`, and the accepted lossless path encoding.
 - Maintained strict YAML parser and exact canonical semantic digest implementation.
 - Whether source snapshots retain complete content-addressed blobs, selected searchable fragments, or digest-only content for excluded classes.
-- Ratified SQLite checkpoint, read-worker, retention, and garbage-collection
-  budgets. Phase 0 currently uses `synchronous=FULL` and at most 256 fact rows
-  per transaction.
-- The second language and build system selected from actual user demand.
+- Final retention and garbage-collection defaults and budgets under proposed
+  [ADR-0029](adr/0029-bounded-generation-retention-and-garbage-collection.md).
+  Phase 0 currently uses `synchronous=FULL` and at most 256 fact rows per
+  transaction.
+- The next additional source language and build-system integration selected
+  from actual user demand.
 - Whether LSP querying adds enough precision after SCIP import.
 - The safe bounded contract, if any, for general graph queries.
 - Exact release targets that support static or nearly static packaging.

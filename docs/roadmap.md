@@ -1,7 +1,7 @@
 # Roadmap
 
 - Status: Proposed
-- Last reviewed: 2026-07-29
+- Last reviewed: 2026-07-30
 
 ## Sequencing rule
 
@@ -55,7 +55,7 @@ UI, extension execution, raw ranking weights, vectors, and general
 
 The output is a design-partner alpha, not a general public beta.
 
-### Progress through 2026-07-28
+### Progress through 2026-07-30
 
 | Phase 0 area | State | Verified result |
 |---|---|---|
