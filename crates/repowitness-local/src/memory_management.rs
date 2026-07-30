@@ -525,7 +525,7 @@ pub fn review_local_memory_correspondence(
     review::review(request, cancelled)
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(crate) fn review_local_memory_correspondence_with_hook(
     request: LocalMemoryCorrespondenceReviewRequest<'_>,
     cancelled: Arc<AtomicBool>,

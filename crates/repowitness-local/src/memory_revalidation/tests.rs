@@ -34,10 +34,11 @@ use super::{
     revalidate_local_memory,
 };
 use crate::{
-    LocalIndexRequest, LocalMemoryDatabaseIdentity, LocalMemoryMaintenanceStep,
-    MemoryFormatControl, OwnedSqliteIndex, OwnedSqliteReader, SqliteStoreError,
+    LocalIndexRequest, MemoryFormatControl, OwnedSqliteIndex, OwnedSqliteReader, SqliteStoreError,
     index_local_repository, parse_memory_record,
 };
+#[cfg(unix)]
+use crate::{LocalMemoryDatabaseIdentity, LocalMemoryMaintenanceStep};
 
 const COMMIT_MEMORY_YAML: &[u8] = include_bytes!("../../tests/fixtures/memory-v1/commit.yaml");
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);

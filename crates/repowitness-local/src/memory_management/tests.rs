@@ -16,12 +16,13 @@ use rusqlite::Connection;
 
 use super::{
     LocalMemoryApprovalRequest, LocalMemoryCorrespondenceReviewRequest,
-    LocalMemoryDatabaseIdentity, LocalMemoryHistoryImportLimits, LocalMemoryHistoryImportRequest,
-    LocalMemoryMaintenance, LocalMemoryMaintenanceStep, LocalMemoryManageError,
-    LocalMemoryMutation, LocalMemoryWriteRequest, approve_local_memory,
+    LocalMemoryHistoryImportLimits, LocalMemoryHistoryImportRequest, LocalMemoryMaintenance,
+    LocalMemoryManageError, LocalMemoryMutation, LocalMemoryWriteRequest, approve_local_memory,
     import_local_memory_history, map_store_error, review_local_memory_correspondence,
     validate_local_memory_actor, write_local_memory,
 };
+#[cfg(unix)]
+use super::{LocalMemoryDatabaseIdentity, LocalMemoryMaintenanceStep};
 use crate::{
     ConfigurationFileLayer, LocalIndexRequest, MemoryFormatControl, index_local_repository,
     parse_configuration_file, parse_memory_record,
