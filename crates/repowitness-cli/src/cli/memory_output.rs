@@ -1,29 +1,126 @@
+fn emit_memory_error(
+    writer: &mut impl Write,
+    generic_message: &'static str,
+    error: CliMemoryError,
+) -> u8 {
+    let CliMemoryError::MutationOutcomeUnknown {
+        request_scope,
+        operation,
+    } = error
+    else {
+        return emit_error(writer, EXIT_SOFTWARE, generic_message);
+    };
+    let guidance = if operation == MemoryMutationOperation::UnknownPhase {
+        request_scope.reconciliation_guidance()
+    } else {
+        operation.reconciliation_guidance()
+    };
+    let result = writeln!(
+        writer,
+        "error: memory mutation outcome could not be determined"
+    )
+    .and_then(|()| writeln!(writer, "request_scope={}", request_scope.as_str()))
+    .and_then(|()| writeln!(writer, "operation={}", operation.as_str()))
+    .and_then(|()| writeln!(writer, "reconciliation_required_before_retry={}", guidance))
+    .and_then(|()| writeln!(writer, "automatic_retry=false"));
+    if result.is_ok() {
+        EXIT_SOFTWARE
+    } else {
+        EXIT_IO
+    }
+}
+
+fn emit_memory_receipt_delivery_failure(
+    writer: &mut impl Write,
+    request_scope: MemoryMutationRequestScope,
+    operation: MemoryMutationOperation,
+) -> u8 {
+    let guidance = operation.reconciliation_guidance();
+    let _ = writeln!(
+        writer,
+        "error: committed memory receipt could not be written"
+    )
+    .and_then(|()| writeln!(writer, "request_scope={}", request_scope.as_str()))
+    .and_then(|()| writeln!(writer, "operation={}", operation.as_str()))
+    .and_then(|()| writeln!(writer, "reconciliation_required_before_retry={}", guidance))
+    .and_then(|()| writeln!(writer, "automatic_retry=false"));
+    EXIT_IO
+}
+
 fn emit_memory_revalidation_report(
     writer: &mut impl Write,
+    stderr: &mut impl Write,
     report: CliMemoryRevalidationReport,
 ) -> u8 {
-    let result = writeln!(writer, "status=ok")
-        .and_then(|()| writeln!(writer, "operation=memory-revalidate"))
-        .and_then(|()| writeln!(writer, "projection_activated=true"))
-        .and_then(|()| writeln!(writer, "projection={}", report.projection_id))
-        .and_then(|()| writeln!(writer, "generation={}", report.generation))
-        .and_then(|()| writeln!(writer, "source_epoch={}", report.source_epoch))
-        .and_then(|()| {
-            writeln!(
-                writer,
-                "recovered_generations={}",
-                report.recovered_generations
-            )
-        })
-        .and_then(|()| writeln!(writer, "projected_records={}", report.projected_records))
-        .and_then(|()| writeln!(writer, "skipped_records={}", report.skipped_records))
-        .and_then(|()| writeln!(writer, "unresolved_records={}", report.unresolved_records))
-        .and_then(|()| writeln!(writer, "git_queries={}", report.git_queries))
-        .and_then(|()| writeln!(writer, "head_available={}", report.head_available));
+    let result = writeln!(
+        writer,
+        "status={}",
+        if report.maintenance.complete {
+            "ok"
+        } else {
+            "warning"
+        }
+    )
+    .and_then(|()| writeln!(writer, "operation=memory-revalidate"))
+    .and_then(|()| writeln!(writer, "projection_activated=true"))
+    .and_then(|()| writeln!(writer, "projection={}", report.projection_id))
+    .and_then(|()| writeln!(writer, "generation={}", report.generation))
+    .and_then(|()| writeln!(writer, "source_epoch={}", report.source_epoch))
+    .and_then(|()| {
+        writeln!(
+            writer,
+            "recovered_generations={}",
+            report.recovered_generations
+        )
+    })
+    .and_then(|()| writeln!(writer, "projected_records={}", report.projected_records))
+    .and_then(|()| writeln!(writer, "skipped_records={}", report.skipped_records))
+    .and_then(|()| writeln!(writer, "unresolved_records={}", report.unresolved_records))
+    .and_then(|()| writeln!(writer, "git_queries={}", report.git_queries))
+    .and_then(|()| writeln!(writer, "head_available={}", report.head_available))
+    .and_then(|()| {
+        writeln!(
+            writer,
+            "maintenance_complete={}",
+            report.maintenance.complete
+        )
+    })
+    .and_then(|()| {
+        writeln!(
+            writer,
+            "maintenance_warning_count={}",
+            report.maintenance.warning_count
+        )
+    })
+    .and_then(|()| {
+        writeln!(
+            writer,
+            "maintenance_checkpoint={}",
+            report.maintenance.checkpoint
+        )
+    })
+    .and_then(|()| {
+        writeln!(
+            writer,
+            "maintenance_shutdown={}",
+            report.maintenance.shutdown
+        )
+    })
+    .and_then(|()| {
+        writeln!(
+            writer,
+            "database_identity_fence={}",
+            report.maintenance.database_identity
+        )
+    });
     if result.is_ok() {
         EXIT_SUCCESS
     } else {
-        EXIT_IO
+        emit_memory_receipt_delivery_failure(
+            stderr,
+            MemoryMutationRequestScope::Revalidation,
+            MemoryMutationOperation::ProjectionPublication,
+        )
     }
 }
 
@@ -76,10 +173,7 @@ fn write_memory_recall_report(
     Ok(())
 }
 
-fn write_memory_target(
-    writer: &mut impl Write,
-    target: &McpMemoryTarget,
-) -> std::io::Result<()> {
+fn write_memory_target(writer: &mut impl Write, target: &McpMemoryTarget) -> std::io::Result<()> {
     writeln!(writer, "target_kind={}", target.kind)?;
     writeln!(
         writer,
@@ -108,11 +202,7 @@ fn write_memory_coverage(
     writeln!(writer, "coverage_truncated={}", coverage.truncated)?;
     writeln!(writer, "coverage_total={}", coverage.total)?;
     writeln!(writer, "state_current={}", coverage.current)?;
-    writeln!(
-        writer,
-        "state_not_applicable={}",
-        coverage.not_applicable
-    )?;
+    writeln!(writer, "state_not_applicable={}", coverage.not_applicable)?;
     writeln!(writer, "state_stale={}", coverage.stale)?;
     writeln!(writer, "state_needs_review={}", coverage.needs_review)?;
     writeln!(writer, "state_indeterminate={}", coverage.indeterminate)?;
@@ -135,7 +225,11 @@ fn write_memory_record(
         "{prefix}_revision_sha256={}",
         record.revision_sha256.as_deref().unwrap_or("none")
     )?;
-    writeln!(writer, "{prefix}_effective_state={}", record.effective_state)?;
+    writeln!(
+        writer,
+        "{prefix}_effective_state={}",
+        record.effective_state
+    )?;
     writeln!(writer, "{prefix}_validity_state={}", record.validity_state)?;
     writeln!(writer, "{prefix}_evidence_state={}", record.evidence_state)?;
     writeln!(writer, "{prefix}_reason={}", record.reason)?;
@@ -179,10 +273,7 @@ fn write_selected_memory(
         selected.display_revision
     )?;
     writeln!(writer, "{prefix}_selected_kind={}", selected.kind)?;
-    writeln!(
-        writer,
-        "{prefix}_selected_title_encoding=lowercase_hex"
-    )?;
+    writeln!(writer, "{prefix}_selected_title_encoding=lowercase_hex")?;
     writeln!(
         writer,
         "{prefix}_selected_title_hex={}",
@@ -194,21 +285,9 @@ fn write_selected_memory(
         "{prefix}_selected_body_hex={}",
         hex(selected.body.as_bytes())
     )?;
-    writeln!(
-        writer,
-        "{prefix}_selected_assurance={}",
-        selected.assurance
-    )?;
-    writeln!(
-        writer,
-        "{prefix}_selected_lifecycle={}",
-        selected.lifecycle
-    )?;
-    writeln!(
-        writer,
-        "{prefix}_selected_tombstone={}",
-        selected.tombstone
-    )
+    writeln!(writer, "{prefix}_selected_assurance={}", selected.assurance)?;
+    writeln!(writer, "{prefix}_selected_lifecycle={}", selected.lifecycle)?;
+    writeln!(writer, "{prefix}_selected_tombstone={}", selected.tombstone)
 }
 
 fn write_memory_evidence(
@@ -236,11 +315,7 @@ fn write_memory_evidence(
     }
     for (candidate_index, candidate) in evidence.candidates.iter().enumerate() {
         let candidate_prefix = format!("{prefix}_candidate_{candidate_index}");
-        writeln!(
-            writer,
-            "{candidate_prefix}_relation={}",
-            candidate.relation
-        )?;
+        writeln!(writer, "{candidate_prefix}_relation={}", candidate.relation)?;
         write_memory_occurrence(writer, &candidate_prefix, &candidate.occurrence)?;
     }
     Ok(())
@@ -262,11 +337,7 @@ fn write_memory_occurrence(
         "{prefix}_artifact_sha256={}",
         occurrence.artifact_sha256
     )?;
-    writeln!(
-        writer,
-        "{prefix}_fact_ordinal={}",
-        occurrence.fact_ordinal
-    )?;
+    writeln!(writer, "{prefix}_fact_ordinal={}", occurrence.fact_ordinal)?;
     writeln!(
         writer,
         "{prefix}_declaration_sha256={}",

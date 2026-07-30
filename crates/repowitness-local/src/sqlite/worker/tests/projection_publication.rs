@@ -2,6 +2,7 @@ struct MemoryProjectionFailureCase {
     name: &'static str,
     publish_baseline: bool,
     trigger: &'static str,
+    expected_error: SqliteStoreError,
 }
 
 const MEMORY_PROJECTION_FAILURE_CASES: [MemoryProjectionFailureCase; 8] = [
@@ -12,6 +13,7 @@ const MEMORY_PROJECTION_FAILURE_CASES: [MemoryProjectionFailureCase; 8] = [
             BEFORE INSERT ON memory_projection_generations BEGIN
                 SELECT RAISE(ABORT, 'fixture generation failure');
             END;",
+        expected_error: SqliteStoreError::DatabaseOperationFailed,
     },
     MemoryProjectionFailureCase {
         name: "record insertion",
@@ -20,6 +22,7 @@ const MEMORY_PROJECTION_FAILURE_CASES: [MemoryProjectionFailureCase; 8] = [
             BEFORE INSERT ON memory_projection_records BEGIN
                 SELECT RAISE(ABORT, 'fixture record failure');
             END;",
+        expected_error: SqliteStoreError::DatabaseOperationFailed,
     },
     MemoryProjectionFailureCase {
         name: "evidence insertion",
@@ -28,6 +31,7 @@ const MEMORY_PROJECTION_FAILURE_CASES: [MemoryProjectionFailureCase; 8] = [
             BEFORE INSERT ON memory_projection_evidence BEGIN
                 SELECT RAISE(ABORT, 'fixture evidence failure');
             END;",
+        expected_error: SqliteStoreError::DatabaseOperationFailed,
     },
     MemoryProjectionFailureCase {
         name: "candidate insertion",
@@ -36,6 +40,7 @@ const MEMORY_PROJECTION_FAILURE_CASES: [MemoryProjectionFailureCase; 8] = [
             BEFORE INSERT ON memory_projection_candidates BEGIN
                 SELECT RAISE(ABORT, 'fixture candidate failure');
             END;",
+        expected_error: SqliteStoreError::DatabaseOperationFailed,
     },
     MemoryProjectionFailureCase {
         name: "generation completion",
@@ -46,6 +51,7 @@ const MEMORY_PROJECTION_FAILURE_CASES: [MemoryProjectionFailureCase; 8] = [
              AND NEW.lifecycle_state = 'complete' BEGIN
                 SELECT RAISE(ABORT, 'fixture completion failure');
             END;",
+        expected_error: SqliteStoreError::DatabaseOperationFailed,
     },
     MemoryProjectionFailureCase {
         name: "first activation",
@@ -54,6 +60,7 @@ const MEMORY_PROJECTION_FAILURE_CASES: [MemoryProjectionFailureCase; 8] = [
             BEFORE INSERT ON active_memory_projections BEGIN
                 SELECT RAISE(ABORT, 'fixture activation insert failure');
             END;",
+        expected_error: SqliteStoreError::DatabaseOperationFailed,
     },
     MemoryProjectionFailureCase {
         name: "replacement activation",
@@ -62,6 +69,7 @@ const MEMORY_PROJECTION_FAILURE_CASES: [MemoryProjectionFailureCase; 8] = [
             BEFORE UPDATE OF projection_id ON active_memory_projections BEGIN
                 SELECT RAISE(ABORT, 'fixture activation update failure');
             END;",
+        expected_error: SqliteStoreError::DatabaseOperationFailed,
     },
     MemoryProjectionFailureCase {
         name: "transaction commit",
@@ -77,6 +85,7 @@ const MEMORY_PROJECTION_FAILURE_CASES: [MemoryProjectionFailureCase; 8] = [
                 INSERT INTO fixture_projection_commit_failure(marker, workspace_id)
                 VALUES (1, -1);
             END;",
+        expected_error: SqliteStoreError::MutationOutcomeUnknown,
     },
 ];
 
@@ -216,7 +225,7 @@ fn every_memory_projection_stage_failure_preserves_the_previous_active_projectio
             .expect_err("injected stage failure should fail publication");
         assert_eq!(
             error,
-            SqliteStoreError::DatabaseOperationFailed,
+            case.expected_error,
             "{} stage returned an unexpected error",
             case.name
         );

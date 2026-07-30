@@ -75,6 +75,32 @@ pub(super) fn with_progress_handler<T>(
     }
 }
 
+pub(super) fn with_mutation_progress_handler<T>(
+    connection: &mut Connection,
+    control: WriteControl<'_>,
+    force_clear_failure: bool,
+    operation: impl FnOnce(&mut Connection) -> Result<T, SqliteStoreError>,
+) -> WriterMutationResult<T> {
+    if let Err(error) = check_control(control) {
+        return WriterMutationResult::new(Err(error), true);
+    }
+    let cancelled = Arc::clone(control.cancelled);
+    let deadline = control.deadline;
+    if connection
+        .progress_handler(
+            PROGRESS_INSTRUCTIONS,
+            Some(move || cancelled.load(Ordering::Acquire) || Instant::now() >= deadline),
+        )
+        .is_err()
+    {
+        return WriterMutationResult::new(Err(SqliteStoreError::DatabaseOperationFailed), false);
+    }
+    let result = operation(connection);
+    let handler_cleared =
+        connection.progress_handler(0, None::<fn() -> bool>).is_ok() && !force_clear_failure;
+    WriterMutationResult::new(result, handler_cleared)
+}
+
 pub(super) fn control_database_error(control: WriteControl<'_>) -> SqliteStoreError {
     match check_control(control) {
         Ok(()) => SqliteStoreError::DatabaseOperationFailed,

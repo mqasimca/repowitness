@@ -1,7 +1,18 @@
 /// Rebuilds and atomically activates one complete local memory projection.
+///
+/// On [`LocalMemoryRevalidationError::MutationOutcomeUnknown`], follow the
+/// operation-specific reconciliation guidance before retrying.
 pub fn revalidate_local_memory(
     request: LocalMemoryRevalidationRequest<'_>,
     cancelled: Arc<AtomicBool>,
+) -> Result<LocalMemoryRevalidationReport, LocalMemoryRevalidationError> {
+    revalidate_local_memory_with_hook(request, cancelled, || {})
+}
+
+fn revalidate_local_memory_with_hook(
+    request: LocalMemoryRevalidationRequest<'_>,
+    cancelled: Arc<AtomicBool>,
+    after_commit: impl FnOnce(),
 ) -> Result<LocalMemoryRevalidationReport, LocalMemoryRevalidationError> {
     let (load_limits, result_limits) = validated_limits(request.limits)?;
     let repository = RepositoryIdentityTextV1::decode(request.repository_identity)
@@ -14,8 +25,8 @@ pub fn revalidate_local_memory(
         .map_err(|source| LocalMemoryRevalidationError::Discovery { source })?;
     let database = validated_database_outside_worktree(&worktree, request.database)
         .map_err(map_database_path_error)?;
-    let mutation_lease = SqliteMutationLease::acquire(&database, deadline)
-        .map_err(|source| LocalMemoryRevalidationError::StoreStartup { source })?;
+    let mutation_lease =
+        SqliteMutationLease::acquire(&database, deadline).map_err(map_store_startup_error)?;
     let database_identity = database_alias_identity(&database).map_err(map_database_path_error)?;
     let (writer, startup) = OwnedSqliteIndex::start_with_lease(
         mutation_lease,
@@ -25,6 +36,9 @@ pub fn revalidate_local_memory(
         deadline,
     )
     .map_err(map_store_startup_error)?;
+    let writer =
+        crate::memory_management::OpenedMemoryStore::from_started(database, writer, deadline)
+            .map_err(map_store_startup_error)?;
 
     let operation = rebuild_projection(
         &writer,
@@ -43,13 +57,12 @@ pub fn revalidate_local_memory(
             return Err(error);
         }
     };
-    if let Err(source) = writer.checkpoint(deadline) {
-        let _ = writer.shutdown(deadline);
-        return Err(LocalMemoryRevalidationError::Checkpoint { source });
-    }
-    writer
-        .shutdown(deadline)
-        .map_err(|source| LocalMemoryRevalidationError::Shutdown { source })?;
+    let ((), maintenance) = crate::memory_management::finish_known_memory_mutation_with_hook(
+        writer,
+        (),
+        deadline,
+        after_commit,
+    );
 
     Ok(LocalMemoryRevalidationReport {
         projection_id: publication.projection_id(),
@@ -61,6 +74,7 @@ pub fn revalidate_local_memory(
         unresolved_records: publication.unresolved_records(),
         git_queries,
         head_available,
+        maintenance,
     })
 }
 
@@ -125,7 +139,13 @@ fn rebuild_projection(
             .map_err(|source| LocalMemoryRevalidationError::ProjectionPreparation { source })?;
     let publication = writer
         .publish_memory_projection(prepared, Arc::clone(cancelled), deadline)
-        .map_err(|source| LocalMemoryRevalidationError::Publication { source })?;
+        .map_err(|source| {
+            map_revalidation_mutation_error(
+                LocalMemoryRevalidationMutation::ProjectionPublication,
+                source,
+                |source| LocalMemoryRevalidationError::Publication { source },
+            )
+        })?;
     Ok((publication, source, query_budget.used(), head.is_some()))
 }
 
@@ -490,10 +510,28 @@ fn map_database_path_error(error: LocalIndexError) -> LocalMemoryRevalidationErr
 }
 
 fn map_store_startup_error(source: SqliteStoreError) -> LocalMemoryRevalidationError {
-    if source == SqliteStoreError::DatabaseIdentityChanged {
-        LocalMemoryRevalidationError::DatabaseChangedDuringRevalidation
+    match source {
+        SqliteStoreError::MutationOutcomeUnknown => {
+            LocalMemoryRevalidationError::MutationOutcomeUnknown {
+                operation: LocalMemoryRevalidationMutation::StoreStartup,
+            }
+        }
+        SqliteStoreError::DatabaseIdentityChanged => {
+            LocalMemoryRevalidationError::DatabaseChangedDuringRevalidation
+        }
+        source => LocalMemoryRevalidationError::StoreStartup { source },
+    }
+}
+
+fn map_revalidation_mutation_error(
+    operation: LocalMemoryRevalidationMutation,
+    source: SqliteStoreError,
+    otherwise: impl FnOnce(SqliteStoreError) -> LocalMemoryRevalidationError,
+) -> LocalMemoryRevalidationError {
+    if source == SqliteStoreError::MutationOutcomeUnknown {
+        LocalMemoryRevalidationError::MutationOutcomeUnknown { operation }
     } else {
-        LocalMemoryRevalidationError::StoreStartup { source }
+        otherwise(source)
     }
 }
 

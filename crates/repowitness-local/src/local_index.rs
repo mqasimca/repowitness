@@ -25,7 +25,7 @@ use sha2::{Digest, Sha256};
 use crate::{
     GenerationId, LocalRustIndexError, LocalRustIndexLimits, OwnedSqliteIndex, OwnedSqliteReader,
     SourceSlotEpoch, SqliteStoreError,
-    contained_source::FileIdentity,
+    contained_source::{FileIdentity, file_has_single_link},
     git_paths::discovered_worktree_root,
     local_graph_index::{
         LocalRustGraphProjectionError, PreparedLocalRustGraphProjection,
@@ -58,256 +58,49 @@ const CONNECTED_SCOPE_ARTIFACT_CONFIGURATION_DOMAIN: &[u8] =
 const CONNECTED_SCOPE_CONFIGURATION_VERSION: u32 = 1;
 const LOCAL_PRODUCER_VERSION: u32 = 4;
 
-/// Complete explicit input for one bounded local Phase 0 indexing operation.
-#[derive(Clone, Copy)]
-pub struct LocalIndexRequest<'a> {
-    repository_root: &'a Path,
-    database: &'a Path,
-    repository_identity: &'a str,
-    migration_applied_at_unix_ms: u64,
-    limits: LocalRustIndexLimits,
-    configuration: Option<&'a ResolvedConfiguration>,
-}
+include!("local_index/model.rs");
 
-impl fmt::Debug for LocalIndexRequest<'_> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("LocalIndexRequest")
-            .field("repository_root", &"<redacted-path>")
-            .field("database", &"<redacted-path>")
-            .field("repository_identity", &"<redacted-identity>")
-            .field(
-                "migration_applied_at_unix_ms",
-                &self.migration_applied_at_unix_ms,
-            )
-            .field("limits", &self.limits)
-            .field(
-                "configuration_digest",
-                &self.configuration.map(ResolvedConfiguration::digest),
-            )
-            .finish()
-    }
-}
-
-impl<'a> LocalIndexRequest<'a> {
-    /// Constructs a request using the conservative default indexing limits.
-    #[must_use]
-    pub fn new(
-        repository_root: &'a Path,
-        database: &'a Path,
-        repository_identity: &'a str,
-        migration_applied_at_unix_ms: u64,
-    ) -> Self {
-        Self {
-            repository_root,
-            database,
-            repository_identity,
-            migration_applied_at_unix_ms,
-            limits: LocalRustIndexLimits::default(),
-            configuration: None,
-        }
-    }
-
-    /// Replaces the complete end-to-end resource policy.
-    #[must_use]
-    pub const fn with_limits(mut self, limits: LocalRustIndexLimits) -> Self {
-        self.limits = limits;
-        self
-    }
-
-    /// Applies one fully resolved, path-free semantic configuration.
-    #[must_use]
-    pub const fn with_configuration(mut self, configuration: &'a ResolvedConfiguration) -> Self {
-        self.configuration = Some(configuration);
-        self
-    }
-}
-
-/// Non-sensitive aggregate outcome from one activated local generation.
+/// Durable operation that callers must reconcile after an unknown index outcome.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct LocalIndexReport {
-    generation: GenerationId,
-    source_epoch: u64,
-    recovered_generations: u64,
-    discovered_paths: u64,
-    indexed_rust_files: u64,
-    indexed_go_files: u64,
-    indexed_typescript_files: u64,
-    indexed_tsx_files: u64,
-    indexed_python_files: u64,
-    skipped_policy_paths: u64,
-    skipped_unsupported_paths: u64,
-    total_source_bytes: u64,
-    total_facts: u64,
-    syntax_error_nodes: u64,
-    known_parser_limitation_nodes: u64,
-    reused_rust_files: u64,
-    analyzed_rust_files: u64,
-    reused_go_files: u64,
-    analyzed_go_files: u64,
-    reused_typescript_files: u64,
-    analyzed_typescript_files: u64,
-    reused_tsx_files: u64,
-    analyzed_tsx_files: u64,
-    reused_python_files: u64,
-    analyzed_python_files: u64,
+pub enum LocalIndexMutation {
+    /// Writer startup recovery may have committed before its receipt was lost.
+    StoreStartup,
+    /// Workspace registration or source-epoch reservation may have committed.
+    WorkspaceRegistration,
+    /// Candidate generation staging may have committed.
+    GenerationStaging,
+    /// Required Rust graph staging may have committed.
+    GraphStaging,
+    /// Source-slot completion or active-generation publication may have committed.
+    GenerationPublication,
+    /// A terminal WAL checkpoint may have completed.
+    Checkpoint,
 }
 
-impl LocalIndexReport {
-    /// Returns the database-local active generation identity.
+impl LocalIndexMutation {
+    /// Returns non-sensitive authoritative reconciliation guidance.
     #[must_use]
-    pub const fn generation(self) -> GenerationId {
-        self.generation
-    }
-
-    /// Returns the source epoch compared during atomic activation.
-    #[must_use]
-    pub const fn source_epoch(self) -> u64 {
-        self.source_epoch
-    }
-
-    /// Returns incomplete generations recovered when the writer started.
-    #[must_use]
-    pub const fn recovered_generations(self) -> u64 {
-        self.recovered_generations
-    }
-
-    /// Returns all repository paths admitted by bounded Git discovery.
-    #[must_use]
-    pub const fn discovered_paths(self) -> u64 {
-        self.discovered_paths
-    }
-
-    /// Returns case-sensitive `.rs` files included in this generation.
-    #[must_use]
-    pub const fn indexed_rust_files(self) -> u64 {
-        self.indexed_rust_files
-    }
-
-    /// Returns case-sensitive `.go` files included in this generation.
-    #[must_use]
-    pub const fn indexed_go_files(self) -> u64 {
-        self.indexed_go_files
-    }
-
-    /// Returns case-sensitive `.ts` files included in this generation.
-    #[must_use]
-    pub const fn indexed_typescript_files(self) -> u64 {
-        self.indexed_typescript_files
-    }
-
-    /// Returns case-sensitive `.tsx` files included in this generation.
-    #[must_use]
-    pub const fn indexed_tsx_files(self) -> u64 {
-        self.indexed_tsx_files
-    }
-
-    /// Returns case-sensitive `.py` and `.pyi` files included in this generation.
-    #[must_use]
-    pub const fn indexed_python_files(self) -> u64 {
-        self.indexed_python_files
-    }
-
-    /// Returns supported-language paths excluded by resolved policy.
-    #[must_use]
-    pub const fn skipped_policy_paths(self) -> u64 {
-        self.skipped_policy_paths
-    }
-
-    /// Returns discovered paths outside the supported language scope.
-    #[must_use]
-    pub const fn skipped_unsupported_paths(self) -> u64 {
-        self.skipped_unsupported_paths
-    }
-
-    /// Compatibility accessor for paths outside the indexed language scope.
-    #[must_use]
-    pub const fn skipped_non_rust_paths(self) -> u64 {
-        self.skipped_unsupported_paths
-    }
-
-    /// Returns exact analyzed supported-source bytes.
-    #[must_use]
-    pub const fn total_source_bytes(self) -> u64 {
-        self.total_source_bytes
-    }
-
-    /// Returns extracted symbol facts in the active generation.
-    #[must_use]
-    pub const fn total_facts(self) -> u64 {
-        self.total_facts
-    }
-
-    /// Returns explicit Tree-sitter error-node coverage.
-    #[must_use]
-    pub const fn syntax_error_nodes(self) -> u64 {
-        self.syntax_error_nodes
-    }
-
-    /// Returns the non-subtractive subset caused by known parser limitations.
-    #[must_use]
-    pub const fn known_parser_limitation_nodes(self) -> u64 {
-        self.known_parser_limitation_nodes
-    }
-
-    /// Returns files restored from exact persisted analysis artifacts.
-    #[must_use]
-    pub const fn reused_rust_files(self) -> u64 {
-        self.reused_rust_files
-    }
-
-    /// Returns files parsed by the current Rust analysis producer.
-    #[must_use]
-    pub const fn analyzed_rust_files(self) -> u64 {
-        self.analyzed_rust_files
-    }
-
-    /// Returns Go files restored from exact persisted analysis artifacts.
-    #[must_use]
-    pub const fn reused_go_files(self) -> u64 {
-        self.reused_go_files
-    }
-
-    /// Returns Go files parsed by the current analysis producer.
-    #[must_use]
-    pub const fn analyzed_go_files(self) -> u64 {
-        self.analyzed_go_files
-    }
-
-    /// Returns TypeScript files restored from exact persisted analysis artifacts.
-    #[must_use]
-    pub const fn reused_typescript_files(self) -> u64 {
-        self.reused_typescript_files
-    }
-
-    /// Returns TypeScript files parsed by the current analysis producer.
-    #[must_use]
-    pub const fn analyzed_typescript_files(self) -> u64 {
-        self.analyzed_typescript_files
-    }
-
-    /// Returns TSX files restored from exact persisted analysis artifacts.
-    #[must_use]
-    pub const fn reused_tsx_files(self) -> u64 {
-        self.reused_tsx_files
-    }
-
-    /// Returns TSX files parsed by the current analysis producer.
-    #[must_use]
-    pub const fn analyzed_tsx_files(self) -> u64 {
-        self.analyzed_tsx_files
-    }
-
-    /// Returns Python files restored from exact persisted analysis artifacts.
-    #[must_use]
-    pub const fn reused_python_files(self) -> u64 {
-        self.reused_python_files
-    }
-
-    /// Returns Python files parsed by the current analysis producer.
-    #[must_use]
-    pub const fn analyzed_python_files(self) -> u64 {
-        self.analyzed_python_files
+    pub const fn reconciliation_guidance(self) -> &'static str {
+        match self {
+            Self::StoreStartup => {
+                "reopen the store and run read-only database diagnostics before retrying startup"
+            }
+            Self::WorkspaceRegistration => {
+                "reopen the store and read the durable workspace or source-slot epoch before retrying"
+            }
+            Self::GenerationStaging => {
+                "reopen the store, allow startup recovery to classify incomplete generations, and compare the active generation before retrying"
+            }
+            Self::GraphStaging => {
+                "reopen the store and inspect the candidate generation graph receipt before retrying"
+            }
+            Self::GenerationPublication => {
+                "reopen the store and read the active generation and source-slot completion before retrying"
+            }
+            Self::Checkpoint => {
+                "reopen the store and inspect the already-published active generation before retrying maintenance"
+            }
+        }
     }
 }
 
@@ -391,6 +184,11 @@ pub enum LocalIndexError {
         /// Stable SQLite boundary failure.
         source: SqliteStoreError,
     },
+    /// A queued mutation may have committed but no receipt arrived in bounded grace.
+    MutationOutcomeUnknown {
+        /// Exact durable operation whose authoritative state must be read.
+        operation: LocalIndexMutation,
+    },
 }
 
 impl fmt::Display for LocalIndexError {
@@ -421,7 +219,21 @@ impl fmt::Display for LocalIndexError {
             Self::PublicationActivation { .. } => "local index generation activation failed",
             Self::Checkpoint { .. } => "local index checkpoint failed after activation",
             Self::Shutdown { .. } => "local index writer shutdown failed after activation",
+            Self::MutationOutcomeUnknown { .. } => {
+                "local index mutation outcome could not be determined"
+            }
         })
+    }
+}
+
+impl LocalIndexError {
+    /// Returns operation-specific guidance only for an outcome-unknown mutation.
+    #[must_use]
+    pub const fn reconciliation_guidance(&self) -> Option<&'static str> {
+        match self {
+            Self::MutationOutcomeUnknown { operation } => Some(operation.reconciliation_guidance()),
+            _ => None,
+        }
     }
 }
 
@@ -446,7 +258,8 @@ impl Error for LocalIndexError {
             | Self::DatabasePathUnavailable
             | Self::DatabaseInsideWorktree
             | Self::DatabaseHasMultipleLinks
-            | Self::DatabaseChangedDuringIndexing => None,
+            | Self::DatabaseChangedDuringIndexing
+            | Self::MutationOutcomeUnknown { .. } => None,
         }
     }
 }
@@ -457,6 +270,9 @@ impl Error for LocalIndexError {
 /// An existing database may be opened read-only after bounded source capture
 /// to load reusable artifacts. A new database is not created until repository
 /// identity and preparation have succeeded.
+///
+/// Do not retry [`LocalIndexError::MutationOutcomeUnknown`] until the caller
+/// follows its operation-specific [`LocalIndexError::reconciliation_guidance`].
 pub fn index_local_rust_repository(
     request: LocalIndexRequest<'_>,
     cancelled: Arc<AtomicBool>,
@@ -465,6 +281,9 @@ pub fn index_local_rust_repository(
 }
 
 /// Language-neutral entry point for the local supported-language index.
+///
+/// Unknown mutation outcomes have the same reconciliation requirement as
+/// [`index_local_rust_repository`].
 pub fn index_local_repository(
     request: LocalIndexRequest<'_>,
     cancelled: Arc<AtomicBool>,
@@ -554,7 +373,13 @@ fn publish_prepared_local_index(
 ) -> Result<(GenerationId, SourceSlotEpoch), LocalIndexError> {
     let persisted_epoch = writer
         .ensure_workspace(repository, INITIAL_SOURCE_EPOCH, deadline)
-        .map_err(|source| LocalIndexError::WorkspaceRegistration { source })?;
+        .map_err(|source| {
+            map_index_mutation_error(
+                LocalIndexMutation::WorkspaceRegistration,
+                source,
+                |source| LocalIndexError::WorkspaceRegistration { source },
+            )
+        })?;
     publish_prepared_local_index_at_epoch(
         writer,
         repository,
@@ -592,7 +417,13 @@ fn publish_prepared_local_index_at_epoch(
             Arc::clone(cancelled),
             deadline,
         )
-        .map_err(|source| LocalIndexError::WorkspaceRegistration { source })?;
+        .map_err(|source| {
+            map_index_mutation_error(
+                LocalIndexMutation::WorkspaceRegistration,
+                source,
+                |source| LocalIndexError::WorkspaceRegistration { source },
+            )
+        })?;
     let staged = stage_source_slot_index(
         writer,
         PublishSourceSlotIndexRequest::new(
@@ -606,7 +437,11 @@ fn publish_prepared_local_index_at_epoch(
             deadline,
         ),
     )
-    .map_err(|source| LocalIndexError::PublicationStaging { source })?;
+    .map_err(|source| {
+        map_index_mutation_error(LocalIndexMutation::GenerationStaging, source, |source| {
+            LocalIndexError::PublicationStaging { source }
+        })
+    })?;
     let generation = staged.generation();
     let graph = publication
         .graph
@@ -614,16 +449,22 @@ fn publish_prepared_local_index_at_epoch(
         .map_err(|source| LocalIndexError::GraphPreparation { source })?;
     writer
         .stage_rust_graph(generation, graph, Arc::clone(cancelled), deadline)
-        .map_err(|source| LocalIndexError::GraphPublicationStaging { source })?;
+        .map_err(|source| {
+            map_index_mutation_error(LocalIndexMutation::GraphStaging, source, |source| {
+                LocalIndexError::GraphPublicationStaging { source }
+            })
+        })?;
     after_graph_staging();
     let completed = complete_staged_source_slot_index(writer, final_fence, staged).map_err(
         |error| match error {
             CompleteStagedSourceSlotIndexError::FinalFence(source) => {
                 LocalIndexError::FinalSourceFence { source }
             }
-            CompleteStagedSourceSlotIndexError::Complete(source) => {
-                LocalIndexError::PublicationActivation { source }
-            }
+            CompleteStagedSourceSlotIndexError::Complete(source) => map_index_mutation_error(
+                LocalIndexMutation::GenerationPublication,
+                source,
+                |source| LocalIndexError::PublicationActivation { source },
+            ),
         },
     )?;
     writer
@@ -632,14 +473,37 @@ fn publish_prepared_local_index_at_epoch(
             completed.source_epoch().get(),
             deadline,
         )
-        .map_err(|source| LocalIndexError::PublicationActivation { source })?;
+        .map_err(|source| {
+            map_index_mutation_error(
+                LocalIndexMutation::GenerationPublication,
+                source,
+                |source| LocalIndexError::PublicationActivation { source },
+            )
+        })?;
     Ok((completed.generation(), completed.source_epoch()))
 }
 
 fn map_store_startup_error(source: SqliteStoreError) -> LocalIndexError {
+    if source == SqliteStoreError::MutationOutcomeUnknown {
+        return LocalIndexError::MutationOutcomeUnknown {
+            operation: LocalIndexMutation::StoreStartup,
+        };
+    }
     match source {
         SqliteStoreError::DatabaseIdentityChanged => LocalIndexError::DatabaseChangedDuringIndexing,
         source => LocalIndexError::StoreStartup { source },
+    }
+}
+
+fn map_index_mutation_error(
+    operation: LocalIndexMutation,
+    source: SqliteStoreError,
+    otherwise: impl FnOnce(SqliteStoreError) -> LocalIndexError,
+) -> LocalIndexError {
+    if source == SqliteStoreError::MutationOutcomeUnknown {
+        LocalIndexError::MutationOutcomeUnknown { operation }
+    } else {
+        otherwise(source)
     }
 }
 

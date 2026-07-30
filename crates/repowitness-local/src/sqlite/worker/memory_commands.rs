@@ -1,5 +1,31 @@
+const MAX_OBSERVED_MEMORY_HISTORY_ITEMS: usize = 65_536;
+
+pub(crate) struct ObservedMemoryHistoryItem {
+    record: MemoryRecord,
+    presentation: MemoryPresentationDigest,
+    commit: MemoryCommitId,
+}
+
+impl ObservedMemoryHistoryItem {
+    pub(crate) const fn new(
+        record: MemoryRecord,
+        presentation: MemoryPresentationDigest,
+        commit: MemoryCommitId,
+    ) -> Self {
+        Self {
+            record,
+            presentation,
+            commit,
+        }
+    }
+}
+
 impl OwnedSqliteIndex {
     /// Appends or verifies one exact semantic memory version and trusted audit receipt.
+    ///
+    /// On [`SqliteStoreError::MutationOutcomeUnknown`], reload the immutable
+    /// journal and compare the exact revision, observation, and approval before
+    /// retrying.
     #[allow(
         clippy::too_many_arguments,
         reason = "each semantic and audit identity remains explicit at the adapter boundary"
@@ -38,7 +64,12 @@ impl OwnedSqliteIndex {
             })),
             deadline,
         )?;
-        match receive_mutation_reply(&receiver, Some(cancelled.as_ref()), deadline) {
+        match receive_mutation_reply(
+            &receiver,
+            Some(cancelled.as_ref()),
+            deadline,
+            Some(&self.unresolved_mutation),
+        ) {
             Ok(receipt) => Ok(receipt),
             Err(error) => {
                 cancelled.store(true, Ordering::Release);
@@ -47,6 +78,67 @@ impl OwnedSqliteIndex {
         }
     }
 
+    /// Atomically imports one bounded set of observation-only Git history.
+    ///
+    /// Workspace creation and every immutable version and observation share
+    /// one transaction. On [`SqliteStoreError::MutationOutcomeUnknown`], reload
+    /// the journal and compare every intended exact Git observation.
+    pub(crate) fn import_observed_memory_history(
+        &self,
+        repository: RepositoryIdentityDigest,
+        items: Vec<ObservedMemoryHistoryItem>,
+        audit_actor: MemoryAuditActorId,
+        recorded_at: MemoryRecordedAtUnixMillis,
+        cancelled: Arc<AtomicBool>,
+        deadline: Instant,
+    ) -> Result<Box<[MemoryImportReceipt]>, SqliteStoreError> {
+        if items.len() > MAX_OBSERVED_MEMORY_HISTORY_ITEMS {
+            return Err(SqliteStoreError::InvalidMemoryImport);
+        }
+        let mut prepared = Vec::with_capacity(items.len());
+        for item in items {
+            prepared.push(prepare_memory_import(
+                repository,
+                item.record,
+                item.presentation,
+                MemoryObservationSource::Git(item.commit),
+                audit_actor.clone(),
+                recorded_at,
+                MemoryImportApproval::ObservedOnly,
+                cancelled.as_ref(),
+                deadline,
+            )?);
+        }
+        check_memory_control(cancelled.as_ref(), deadline)?;
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.send(
+            WriterCommand::ImportObservedMemoryHistory(Box::new(ObservedMemoryHistoryCommand {
+                repository,
+                prepared: prepared.into_boxed_slice(),
+                cancelled: Arc::clone(&cancelled),
+                deadline,
+                reply,
+            })),
+            deadline,
+        )?;
+        match receive_mutation_reply(
+            &receiver,
+            Some(cancelled.as_ref()),
+            deadline,
+            Some(&self.unresolved_mutation),
+        ) {
+            Ok(receipts) => Ok(receipts),
+            Err(error) => {
+                cancelled.store(true, Ordering::Release);
+                Err(error)
+            }
+        }
+    }
+
+    /// Appends one exact immutable correspondence-review event.
+    ///
+    /// On [`SqliteStoreError::MutationOutcomeUnknown`], reload the exact
+    /// revision and evidence-ordinal review history before retrying.
     pub(crate) fn append_memory_correspondence_review(
         &self,
         prepared: PreparedMemoryCorrespondenceReview,
@@ -66,7 +158,12 @@ impl OwnedSqliteIndex {
             )),
             deadline,
         )?;
-        receive_mutation_reply(&receiver, Some(cancelled.as_ref()), deadline)
+        receive_mutation_reply(
+            &receiver,
+            Some(cancelled.as_ref()),
+            deadline,
+            Some(&self.unresolved_mutation),
+        )
     }
 
     pub(crate) fn load_memory_journal(
@@ -161,6 +258,10 @@ impl OwnedSqliteIndex {
         receive_reply(&receiver, deadline)
     }
 
+    /// Publishes one immutable current-memory projection.
+    ///
+    /// On [`SqliteStoreError::MutationOutcomeUnknown`], read the active pinned
+    /// memory projection before retrying.
     pub(crate) fn publish_memory_projection(
         &self,
         prepared: PreparedMemoryProjection,
@@ -177,6 +278,11 @@ impl OwnedSqliteIndex {
             })),
             deadline,
         )?;
-        receive_mutation_reply(&receiver, Some(cancelled.as_ref()), deadline)
+        receive_mutation_reply(
+            &receiver,
+            Some(cancelled.as_ref()),
+            deadline,
+            Some(&self.unresolved_mutation),
+        )
     }
 }

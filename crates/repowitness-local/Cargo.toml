@@ -34,5 +34,9 @@ cap-primitives.workspace = true
 [dev-dependencies]
 gix.workspace = true
 
+[[example]]
+name = "phase1_operation_probe"
+test = true
+
 [lints]
 workspace = true

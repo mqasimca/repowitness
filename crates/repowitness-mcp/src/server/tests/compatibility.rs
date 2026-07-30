@@ -39,6 +39,165 @@ const ALIAS_NAMES: [&str; 7] = [
     TRACE_PATH_ALIAS_TOOL_NAME,
 ];
 
+const RECEIPT_CANARY: &str = "private_receipt_query_canary";
+const RECEIPT_PATH_CANARY: &str =
+    "rwp1:h:707269766174655F726563656970745F706174685F63616E6172792E7273";
+const ERROR_CANARY: &str = "private_error_boundary_canary";
+
+fn sorted_string_array(value: Option<&Value>) -> Vec<String> {
+    let mut values = value
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|value| {
+            value
+                .as_str()
+                .expect("schema name must be a string")
+                .to_owned()
+        })
+        .collect::<Vec<_>>();
+    values.sort();
+    values
+}
+
+fn sorted_property_names(value: Option<&Value>) -> Vec<String> {
+    let mut names = value
+        .and_then(Value::as_object)
+        .into_iter()
+        .flat_map(|properties| properties.keys().cloned())
+        .collect::<Vec<_>>();
+    names.sort();
+    names
+}
+
+fn name_only_tools_list_contract(server: &RepoWitnessMcpServer) -> Value {
+    let aliases = server
+        .tools
+        .iter()
+        .filter(|tool| ALIAS_NAMES.contains(&tool.name.as_ref()))
+        .map(|tool| {
+            let annotations = tool.annotations.as_ref().expect("alias annotations");
+            json!({
+                "name": tool.name.as_ref(),
+                "title": tool.title.as_deref(),
+                "description": tool.description.as_deref(),
+                "input_properties": sorted_property_names(
+                    tool.input_schema.get("properties"),
+                ),
+                "input_required": sorted_string_array(tool.input_schema.get("required")),
+                "input_additional_properties": tool
+                    .input_schema
+                    .get("additionalProperties"),
+                "output_schema_present": tool.output_schema.is_some(),
+                "annotations": {
+                    "title": annotations.title.as_deref(),
+                    "read_only": annotations.read_only_hint,
+                    "destructive": annotations.destructive_hint,
+                    "idempotent": annotations.idempotent_hint,
+                    "open_world": annotations.open_world_hint,
+                },
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "schema_version": 1,
+        "profile": server.surface.profile(),
+        "surface": server.surface.identifier(),
+        "surface_tool_count": server.tools.len(),
+        "aliases": aliases,
+    })
+}
+
+fn service_call_count(service: &FakeService) -> usize {
+    service.search_calls.load(Ordering::Relaxed)
+        + service.context_calls.load(Ordering::Relaxed)
+        + service.diagnostics_calls.load(Ordering::Relaxed)
+        + service.graph_calls.load(Ordering::Relaxed)
+        + service.manage_calls.load(Ordering::Relaxed)
+        + service.memory_calls.load(Ordering::Relaxed)
+        + service.symbol_calls.load(Ordering::Relaxed)
+}
+
+fn valid_alias_requests() -> [(&'static str, Value); 7] {
+    let mut trace_definition = graph_definition_json();
+    trace_definition["qualified_name"] = Value::String(format!("fixture::{RECEIPT_CANARY}"));
+    [
+        (
+            SEARCH_CODE_ALIAS_TOOL_NAME,
+            json!({"query": format!("  {RECEIPT_CANARY}  "), "max_results": 7}),
+        ),
+        (
+            GET_CODE_SNIPPET_ALIAS_TOOL_NAME,
+            json!({
+                "snapshot_sha256": "11".repeat(32),
+                "generation": 9,
+                "path": RECEIPT_PATH_CANARY,
+                "content_sha256": "22".repeat(32),
+                "artifact_sha256": "33".repeat(32),
+                "fact_ordinal": 7,
+            }),
+        ),
+        (
+            SEARCH_GRAPH_ALIAS_TOOL_NAME,
+            json!({"query": RECEIPT_CANARY}),
+        ),
+        (
+            TRACE_PATH_ALIAS_TOOL_NAME,
+            json!({
+                "start": {"type": "definition", "definition": trace_definition},
+                "direction": "outbound",
+                "edge_kinds": ["call"],
+            }),
+        ),
+        (GET_GRAPH_SCHEMA_ALIAS_TOOL_NAME, json!({})),
+        (GET_ARCHITECTURE_ALIAS_TOOL_NAME, json!({})),
+        (INDEX_STATUS_ALIAS_TOOL_NAME, json!({})),
+    ]
+}
+
+fn assert_name_only_receipt(name: &str, content: &Value) {
+    assert_eq!(
+        content["repowitness"]["receipt"]["alias"],
+        Value::String(name.to_owned())
+    );
+    assert_eq!(
+        content["repowitness"]["receipt"]["profile"],
+        Value::String(INCUMBENT_COMPATIBLE_PROFILE.to_owned())
+    );
+    assert_eq!(
+        content["repowitness"]["receipt"]["surface"],
+        Value::String(INCUMBENT_COMPATIBLE_SURFACE.to_owned())
+    );
+    assert_eq!(
+        content["repowitness"]["receipt"]["compatibility"]["name"],
+        Value::String("compatible".to_owned())
+    );
+    assert_eq!(
+        content["repowitness"]["receipt"]["compatibility"]["request"],
+        Value::String("incompatible".to_owned())
+    );
+    assert_eq!(
+        content["repowitness"]["receipt"]["compatibility"]["response"],
+        Value::String("not_assessed".to_owned())
+    );
+    assert_eq!(
+        content["repowitness"]["receipt"]["compatibility"]["behavior"],
+        Value::String("not_assessed".to_owned())
+    );
+    assert_eq!(
+        content["repowitness"]["receipt"]["observation"]["release"],
+        Value::String("v0.9.0".to_owned())
+    );
+    assert!(
+        content["repowitness"]["canonical"]["schema_version"].is_number()
+            || name == GET_GRAPH_SCHEMA_ALIAS_TOOL_NAME,
+        "{name} must preserve the canonical response"
+    );
+    let encoded = serde_json::to_string(content).expect("compatibility response serializes");
+    assert!(!encoded.contains(RECEIPT_CANARY), "{name}");
+    assert!(!encoded.contains(RECEIPT_PATH_CANARY), "{name}");
+}
+
 #[test]
 fn opt_in_surface_is_exact_sorted_read_only_and_excludes_unimplemented_names() {
     let default_server = RepoWitnessMcpServer::new(Arc::new(FakeService::new()));
@@ -101,6 +260,19 @@ fn opt_in_surface_is_exact_sorted_read_only_and_excludes_unimplemented_names() {
     assert!(instructions.contains(INCUMBENT_COMPATIBLE_PROFILE));
     assert!(instructions.contains(INCUMBENT_COMPATIBLE_SURFACE));
     assert!(!instructions.contains("private"));
+}
+
+#[test]
+fn opt_in_aliases_match_the_exact_name_only_tools_list_golden() {
+    let server = RepoWitnessMcpServer::with_surface(
+        Arc::new(FakeService::new()),
+        McpToolSurface::NativeV1PlusIncumbentSubsetV1,
+    );
+    let expected: Value =
+        serde_json::from_str(include_str!("fixtures/incumbent-subset-v1-tools-list.json"))
+            .expect("independently authored local tools/list golden");
+
+    assert_eq!(name_only_tools_list_contract(&server), expected);
 }
 
 #[test]
@@ -174,36 +346,7 @@ async fn compatibility_aliases_forward_to_canonical_use_cases_and_preserve_recei
     });
     let client = ().serve(client_transport).await.expect("client starts");
 
-    let requests = [
-        (
-            SEARCH_CODE_ALIAS_TOOL_NAME,
-            json!({"query": "  run  ", "max_results": 7}),
-        ),
-        (
-            GET_CODE_SNIPPET_ALIAS_TOOL_NAME,
-            json!({
-                "snapshot_sha256": "11".repeat(32),
-                "generation": 9,
-                "path": "rwp1:h:7372632F6C69622E7273",
-                "content_sha256": "22".repeat(32),
-                "artifact_sha256": "33".repeat(32),
-                "fact_ordinal": 7,
-            }),
-        ),
-        (SEARCH_GRAPH_ALIAS_TOOL_NAME, json!({"query": "run"})),
-        (
-            TRACE_PATH_ALIAS_TOOL_NAME,
-            json!({
-                "start": {"type": "definition", "definition": graph_definition_json()},
-                "direction": "outbound",
-                "edge_kinds": ["call"],
-            }),
-        ),
-        (GET_GRAPH_SCHEMA_ALIAS_TOOL_NAME, json!({})),
-        (GET_ARCHITECTURE_ALIAS_TOOL_NAME, json!({})),
-        (INDEX_STATUS_ALIAS_TOOL_NAME, json!({})),
-    ];
-    for (name, arguments) in requests {
+    for (name, arguments) in valid_alias_requests() {
         let response = client
             .call_tool(CallToolRequestParams::new(name).with_arguments(json_object(arguments)))
             .await
@@ -213,27 +356,7 @@ async fn compatibility_aliases_forward_to_canonical_use_cases_and_preserve_recei
             .structured_content
             .as_ref()
             .expect("structured compatibility result");
-        assert_eq!(
-            content["repowitness"]["receipt"]["alias"],
-            Value::String(name.to_owned())
-        );
-        assert_eq!(
-            content["repowitness"]["receipt"]["profile"],
-            Value::String(INCUMBENT_COMPATIBLE_PROFILE.to_owned())
-        );
-        assert_eq!(
-            content["repowitness"]["receipt"]["surface"],
-            Value::String(INCUMBENT_COMPATIBLE_SURFACE.to_owned())
-        );
-        assert_eq!(
-            content["repowitness"]["receipt"]["compatibility"]["behavior"],
-            Value::String("not_assessed".to_owned())
-        );
-        assert!(
-            content["repowitness"]["canonical"]["schema_version"].is_number()
-                || name == GET_GRAPH_SCHEMA_ALIAS_TOOL_NAME,
-            "{name} must preserve the canonical response"
-        );
+        assert_name_only_receipt(name, content);
     }
 
     assert_eq!(service.search_calls.load(Ordering::Relaxed), 1);
@@ -242,7 +365,7 @@ async fn compatibility_aliases_forward_to_canonical_use_cases_and_preserve_recei
     assert_eq!(service.diagnostics_calls.load(Ordering::Relaxed), 1);
     assert_eq!(
         service.search_request.lock().expect("lock").as_ref(),
-        Some(&("run".to_owned(), 7))
+        Some(&(RECEIPT_CANARY.to_owned(), 7))
     );
 
     client.cancel().await.expect("client closes");
@@ -250,7 +373,7 @@ async fn compatibility_aliases_forward_to_canonical_use_cases_and_preserve_recei
 }
 
 #[tokio::test]
-async fn malformed_alias_input_is_redacted_and_never_reaches_the_service() {
+async fn every_alias_rejects_invalid_input_without_service_access_or_canary_disclosure() {
     let service = Arc::new(FakeService::new());
     let (server_transport, client_transport) = tokio::io::duplex(16 * 1024);
     let server = RepoWitnessMcpServer::with_surface(
@@ -267,21 +390,63 @@ async fn malformed_alias_input_is_redacted_and_never_reaches_the_service() {
             .expect("server stops")
     });
     let client = ().serve(client_transport).await.expect("client starts");
-    let query_canary = "private_customer_query_canary";
-    let path_canary = "/private/customer/path/canary";
+    let mut trace_definition = graph_definition_json();
+    trace_definition["qualified_name"] = Value::String(format!("fixture::{ERROR_CANARY}"));
+    let cases = [
+        (
+            SEARCH_CODE_ALIAS_TOOL_NAME,
+            json!({"query": ERROR_CANARY, "max_results": 101}),
+        ),
+        (
+            GET_CODE_SNIPPET_ALIAS_TOOL_NAME,
+            json!({
+                "snapshot_sha256": ERROR_CANARY,
+                "generation": 9,
+                "path": "rwp1:h:7372632F6C69622E7273",
+                "content_sha256": "22".repeat(32),
+                "artifact_sha256": "33".repeat(32),
+                "fact_ordinal": 7,
+            }),
+        ),
+        (
+            SEARCH_GRAPH_ALIAS_TOOL_NAME,
+            json!({"query": ERROR_CANARY, "max_results": 0}),
+        ),
+        (
+            TRACE_PATH_ALIAS_TOOL_NAME,
+            json!({
+                "start": {"type": "definition", "definition": trace_definition},
+                "direction": "outbound",
+                "edge_kinds": ["call"],
+                "max_depth": 6,
+            }),
+        ),
+        (
+            GET_GRAPH_SCHEMA_ALIAS_TOOL_NAME,
+            json!({"timeout_ms": ERROR_CANARY}),
+        ),
+        (
+            GET_ARCHITECTURE_ALIAS_TOOL_NAME,
+            json!({"workspace_view": ERROR_CANARY}),
+        ),
+        (
+            INDEX_STATUS_ALIAS_TOOL_NAME,
+            json!({"timeout_ms": ERROR_CANARY}),
+        ),
+    ];
 
-    let error = client
-        .call_tool(
-            CallToolRequestParams::new(SEARCH_CODE_ALIAS_TOOL_NAME).with_arguments(json_object(
-                json!({"query": query_canary, "repository": path_canary}),
-            )),
-        )
-        .await
-        .expect_err("unknown fields fail closed");
-    let message = error.to_string();
-    assert!(!message.contains(query_canary));
-    assert!(!message.contains(path_canary));
-    assert_eq!(service.search_calls.load(Ordering::Relaxed), 0);
+    for (name, arguments) in cases {
+        let result = client
+            .call_tool(CallToolRequestParams::new(name).with_arguments(json_object(arguments)))
+            .await;
+        let error = match result {
+            Ok(_) => panic!("{name} accepted invalid input"),
+            Err(error) => error,
+        };
+        let message = error.to_string();
+        assert!(!message.contains(ERROR_CANARY), "{name}");
+        assert_eq!(service_call_count(&service), 0, "{name}");
+    }
 
     client.cancel().await.expect("client closes");
     server_task.await.expect("server task");

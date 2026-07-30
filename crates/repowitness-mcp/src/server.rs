@@ -36,9 +36,9 @@ use crate::{
     GraphSearchOutput, GraphStatusInput, GraphStatusOutput, GraphTraceInput, GraphTraceOutput,
     IMPACT_ANALYZE_TOOL_NAME, MAX_MCP_INPUT_LINE_BYTES, MEMORY_MANAGE_TOOL_NAME,
     MEMORY_RECALL_TOOL_NAME, MemoryManageInput, MemoryManageOutput, MemoryManageServiceRequest,
-    MemoryRecallInput, MemoryRecallOutput, MemoryRecallServiceRequest, RepositoryService,
-    RepositoryServiceError, SYMBOL_GET_TOOL_NAME, SymbolGetInput, SymbolGetOutput,
-    SymbolGetServiceRequest,
+    MemoryMutationRequestScope, MemoryRecallInput, MemoryRecallOutput, MemoryRecallServiceRequest,
+    RepositoryService, RepositoryServiceError, SYMBOL_GET_TOOL_NAME, SymbolGetInput,
+    SymbolGetOutput, SymbolGetServiceRequest,
     wire::{
         MAX_MCP_CONTEXT_OUTPUT_BYTES, MAX_MCP_DIAGNOSTICS_OUTPUT_BYTES, MAX_MCP_GRAPH_OUTPUT_BYTES,
         MAX_MCP_MEMORY_MANAGE_OUTPUT_BYTES, MAX_MCP_MEMORY_RECALL_OUTPUT_BYTES,
@@ -235,10 +235,16 @@ impl RepoWitnessMcpServer {
     ) -> Result<CallToolResult, McpError> {
         let service = Arc::clone(&self.service);
         let timeout = request.timeout();
+        let request_scope = request.mutation_request_scope();
         let output = self
-            .run_blocking(timeout, context, move |remaining, cancelled| {
-                service.memory_manage(request.with_timeout(remaining), cancelled)
-            })
+            .run_memory_mutation_blocking(
+                timeout,
+                context,
+                request_scope,
+                move |remaining, cancelled| {
+                    service.memory_manage(request.with_timeout(remaining), cancelled)
+                },
+            )
             .await?;
         operation_result(output, MAX_MCP_MEMORY_MANAGE_OUTPUT_BYTES)
     }
@@ -264,50 +270,9 @@ impl RepoWitnessMcpServer {
         });
         operation_result(output, MAX_MCP_DIAGNOSTICS_OUTPUT_BYTES)
     }
-
-    async fn run_blocking<T, F>(
-        &self,
-        timeout: Duration,
-        context: RequestContext<RoleServer>,
-        operation: F,
-    ) -> Result<Result<T, RepositoryServiceError>, McpError>
-    where
-        T: Send + 'static,
-        F: FnOnce(Duration, Arc<AtomicBool>) -> Result<T, RepositoryServiceError> + Send + 'static,
-    {
-        let deadline = Instant::now() + timeout;
-        let permit = acquire_permit(
-            Arc::clone(&self.operations),
-            deadline,
-            context.ct.cancelled(),
-        )
-        .await?;
-        let remaining = deadline
-            .checked_duration_since(Instant::now())
-            .ok_or_else(deadline_error)?;
-        let cancelled = Arc::new(AtomicBool::new(false));
-        let task_cancelled = Arc::clone(&cancelled);
-        let mut task = tokio::task::spawn_blocking(move || {
-            let _permit = permit;
-            operation(remaining, task_cancelled)
-        });
-
-        tokio::select! {
-            result = &mut task => join_result(result),
-            () = context.ct.cancelled() => {
-                cancelled.store(true, Ordering::Release);
-                await_cancelled_task(task).await;
-                Err(cancelled_error())
-            }
-            () = tokio::time::sleep_until(deadline) => {
-                cancelled.store(true, Ordering::Release);
-                await_cancelled_task(task).await;
-                Err(deadline_error())
-            }
-        }
-    }
 }
 
+include!("server/operation_supervisor.rs");
 include!("server/graph.rs");
 include!("server/compatibility.rs");
 
@@ -610,16 +575,6 @@ where
         () = &mut cancelled => Err(cancelled_error()),
         () = tokio::time::sleep_until(deadline) => Err(deadline_error()),
     }
-}
-
-fn join_result<T>(
-    result: Result<Result<T, RepositoryServiceError>, tokio::task::JoinError>,
-) -> Result<Result<T, RepositoryServiceError>, McpError> {
-    result.map_err(|_| McpError::internal_error("repository operation task failed", None))
-}
-
-async fn await_cancelled_task<T>(task: JoinHandle<Result<T, RepositoryServiceError>>) {
-    let _ = task.await;
 }
 
 fn tool_error(message: impl Into<String>) -> CallToolResult {

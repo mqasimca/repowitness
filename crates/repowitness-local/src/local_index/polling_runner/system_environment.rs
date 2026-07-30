@@ -188,7 +188,8 @@ fn retryable_local_index_error(error: &LocalIndexError) -> bool {
         | LocalIndexError::DatabasePathUnavailable
         | LocalIndexError::DatabaseInsideWorktree
         | LocalIndexError::DatabaseHasMultipleLinks
-        | LocalIndexError::GraphPreparation { .. } => false,
+        | LocalIndexError::GraphPreparation { .. }
+        | LocalIndexError::MutationOutcomeUnknown { .. } => false,
     }
 }
 

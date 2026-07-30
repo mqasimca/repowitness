@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
 use std::io::Cursor;
 
@@ -63,6 +63,55 @@ fn accepts_an_empty_repository() {
             most_components: 0,
         }
     );
+}
+
+#[test]
+fn stable_deleted_paths_are_removed_and_inconsistent_sets_fail_closed() {
+    let candidates = parse_git_paths(b"gone.rs\0kept.rs\0".to_vec(), TEST_LIMITS)
+        .expect("cached paths should parse");
+    let deleted =
+        parse_git_paths(b"gone.rs\0".to_vec(), TEST_LIMITS).expect("deleted paths should parse");
+    let mut cached_paths = candidates
+        .into_paths()
+        .into_vec()
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    remove_deleted_cached_paths(
+        &mut cached_paths,
+        deleted.into_paths(),
+        TEST_LIMITS,
+        Instant::now() + TEST_LIMITS.deadline(),
+        &mut || false,
+    )
+    .expect("a deleted subset should filter deterministically");
+
+    assert_eq!(
+        cached_paths
+            .iter()
+            .map(RepositoryPath::as_bytes)
+            .collect::<Vec<_>>(),
+        [b"kept.rs".as_slice()]
+    );
+
+    let candidates =
+        parse_git_paths(b"kept.rs\0".to_vec(), TEST_LIMITS).expect("candidate path should parse");
+    let inconsistent =
+        parse_git_paths(b"missing.rs\0".to_vec(), TEST_LIMITS).expect("deleted path should parse");
+    let mut cached_paths = candidates
+        .into_paths()
+        .into_vec()
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    assert!(matches!(
+        remove_deleted_cached_paths(
+            &mut cached_paths,
+            inconsistent.into_paths(),
+            TEST_LIMITS,
+            Instant::now() + TEST_LIMITS.deadline(),
+            &mut || false,
+        ),
+        Err(GitPathDiscoveryError::InconsistentRepositoryPathSet)
+    ));
 }
 
 #[test]
@@ -342,10 +391,7 @@ fn an_invalid_root_returns_a_redacted_resolution_failure() {
 
 #[test]
 fn git_command_disables_ambient_and_interactive_behavior() {
-    let command = sanitized_git_command(
-        Path::new("repository"),
-        GitPathDiscoveryScope::CachedAndUntracked,
-    );
+    let command = sanitized_git_command(Path::new("repository"), GitPathDiscoveryScope::Untracked);
     assert_eq!(command.get_program(), OsStr::new("git"));
 
     let args = command.get_args().map(OsStr::to_owned).collect::<Vec<_>>();
@@ -353,6 +399,7 @@ fn git_command_disables_ambient_and_interactive_behavior() {
         "--no-pager",
         "--literal-pathspecs",
         "core.fsmonitor=false",
+        "core.ignorecase=false",
         "core.untrackedCache=false",
         "diff.external=",
         "pager.ls-files=false",
@@ -361,7 +408,6 @@ fn git_command_disables_ambient_and_interactive_behavior() {
         "ls-files",
         "-z",
         "--full-name",
-        "--cached",
         "--deduplicate",
         "--others",
         "--exclude-standard",
@@ -441,6 +487,8 @@ fn git_command_disables_ambient_and_interactive_behavior() {
     }
 
     assert_cached_command_scope();
+    assert_untracked_command_scope();
+    assert_deleted_command_scope();
 }
 
 fn assert_cached_command_scope() {
@@ -450,6 +498,30 @@ fn assert_cached_command_scope() {
     assert!(cached_args.contains(&OsString::from("--deduplicate")));
     assert!(!cached_args.contains(&OsString::from("--others")));
     assert!(!cached_args.contains(&OsString::from("--exclude-standard")));
+}
+
+fn assert_untracked_command_scope() {
+    let untracked =
+        sanitized_git_command(Path::new("repository"), GitPathDiscoveryScope::Untracked);
+    let untracked_args = untracked
+        .get_args()
+        .map(OsStr::to_owned)
+        .collect::<Vec<_>>();
+    assert!(untracked_args.contains(&OsString::from("--others")));
+    assert!(untracked_args.contains(&OsString::from("--exclude-standard")));
+    assert!(untracked_args.contains(&OsString::from("--deduplicate")));
+    assert!(!untracked_args.contains(&OsString::from("--cached")));
+    assert!(!untracked_args.contains(&OsString::from("--deleted")));
+}
+
+fn assert_deleted_command_scope() {
+    let deleted = sanitized_git_command(Path::new("repository"), GitPathDiscoveryScope::Deleted);
+    let deleted_args = deleted.get_args().map(OsStr::to_owned).collect::<Vec<_>>();
+    assert!(deleted_args.contains(&OsString::from("--deleted")));
+    assert!(deleted_args.contains(&OsString::from("--deduplicate")));
+    assert!(!deleted_args.contains(&OsString::from("--cached")));
+    assert!(!deleted_args.contains(&OsString::from("--others")));
+    assert!(!deleted_args.contains(&OsString::from("--exclude-standard")));
 }
 
 #[test]
@@ -499,6 +571,10 @@ fn every_error_variant_has_a_stable_redacted_diagnostic() {
             source: RepositoryPathError::Empty,
         },
         GitPathDiscoveryError::DuplicateRepositoryPath,
+        GitPathDiscoveryError::RepositoryPathInspection {
+            source: ContainedSourceError::NotRegularFile,
+        },
+        GitPathDiscoveryError::InconsistentRepositoryPathSet,
         GitPathDiscoveryError::TotalPathBytesOverflowed,
     ];
     for error in errors {

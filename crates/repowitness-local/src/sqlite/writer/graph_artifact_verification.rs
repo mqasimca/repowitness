@@ -181,9 +181,7 @@ impl WriterState {
                 [artifact.as_bytes().as_slice()],
             )
             .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
-        transaction
-            .commit()
-            .map_err(|_| SqliteStoreError::DatabaseOperationFailed)
+        commit_mutation(transaction)
     }
 }
 

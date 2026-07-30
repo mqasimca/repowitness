@@ -311,21 +311,19 @@ separate trust and temporal semantics.
 
 ## Follow-up
 
-- Implemented with this proposal: the pure bounded Rust graph-site analyzer,
-  profile identity, exact site/descriptor model, aggregate owned-text budget,
-  and focused golden/adversarial tests.
-- Not implemented by this proposal: cross-file resolution, persistence,
-  generation publication, trace, impact, context profile 2, CLI, or MCP
-  behavior.
-- Accept the connected workspace/source-slot identity contract before
-  generation resolution.
-- Specify and implement the conservative Rust resolver with categorical
-  outcomes and coverage.
-- Propose migration 3 with exact responsibility fragments and upgrade tests.
-- Implement bounded graph trace and impact application use cases before adding
-  thin CLI or MCP adapters.
-- Propose and evaluate context profile 2 independently of profile 1.
-- Add compiler or SCIP evidence only through a separately versioned provider.
+- Implemented locally under this proposed contract: the bounded Rust graph-site
+  analyzer, conservative generation resolver, migration-3 persistence and
+  atomic publication, categorical evidence and coverage, architecture, trace,
+  and impact use cases, and thin CLI and MCP adapters.
+- Maintainer ratification of this ADR, the connected-workspace identity
+  contract, migration 3, and the associated resource budgets remains a Phase 1
+  gate. The implementation does not make a proposed decision accepted.
+- Context profile 2 remains separate from the existing context compiler and
+  requires its own proposal and evaluation without changing profile 1.
+- Package-aware resolution, macro expansion, compiler or SCIP evidence,
+  dynamic dispatch proof, and cross-language graph edges remain explicitly
+  deferred. Add any such evidence only through a separately versioned,
+  attributed provider.
 
 ## Supersession
 

@@ -27,7 +27,7 @@ use std::{
 use rusqlite::{Connection, OpenFlags, TransactionBehavior, params};
 use sha2::{Digest, Sha256};
 
-use crate::contained_source::FileIdentity;
+use crate::contained_source::{FileIdentity, file_has_single_link};
 
 pub use self::backup::{
     BackupIdentityStatus, BackupLimits, BackupMaintenanceStatus, BackupOutcome,
@@ -58,6 +58,7 @@ use self::schema::{
     APPLICATION_ID, MIGRATION_1, MIGRATION_1_NAME, MIGRATION_2, MIGRATION_2_NAME, MIGRATION_3,
     MIGRATION_3_NAME, SCHEMA_VERSION,
 };
+pub(crate) use self::worker::ObservedMemoryHistoryItem;
 pub(crate) use self::worker::{CompletedWorkspaceSource, SqliteMutationLease};
 pub use self::worker::{IndexStoreStartup, OwnedSqliteIndex};
 pub use self::workspace::{
@@ -104,14 +105,15 @@ fn open_index_writer_with_identity_until(
     applied_at_unix_ms: u64,
     cancelled: Arc<AtomicBool>,
     deadline: Instant,
-) -> Result<(Connection, FileIdentity), SqliteStoreError> {
-    open_index_writer_with_identity_and_identity_hook(
+) -> Result<(Connection, FileIdentity, bool), SqliteStoreError> {
+    open_index_writer_with_identity_and_identity_hooks(
         path,
         expected_identity,
         applied_at_unix_ms,
         Some(cancelled),
         Some(deadline),
         || {},
+        |_| {},
     )
 }
 
@@ -124,25 +126,48 @@ fn open_index_writer_with_identity_and_hook(
     deadline: Option<Instant>,
     after_sqlite_open: impl FnOnce(),
 ) -> Result<Connection, SqliteStoreError> {
-    open_index_writer_with_identity_and_identity_hook(
+    open_index_writer_with_identity_and_identity_hooks(
         path,
         expected_identity,
         applied_at_unix_ms,
         cancelled,
         deadline,
         after_sqlite_open,
+        |_| {},
     )
-    .map(|(connection, _identity)| connection)
+    .map(|(connection, _identity, _migrated)| connection)
 }
 
-fn open_index_writer_with_identity_and_identity_hook(
+#[cfg(test)]
+fn open_index_writer_with_identity_and_migration_hook(
+    path: &Path,
+    expected_identity: Option<FileIdentity>,
+    applied_at_unix_ms: u64,
+    cancelled: Option<Arc<AtomicBool>>,
+    deadline: Option<Instant>,
+    after_migration: impl FnOnce(bool),
+) -> Result<Connection, SqliteStoreError> {
+    open_index_writer_with_identity_and_identity_hooks(
+        path,
+        expected_identity,
+        applied_at_unix_ms,
+        cancelled,
+        deadline,
+        || {},
+        after_migration,
+    )
+    .map(|(connection, _identity, _migrated)| connection)
+}
+
+fn open_index_writer_with_identity_and_identity_hooks(
     path: &Path,
     expected_identity: Option<FileIdentity>,
     applied_at_unix_ms: u64,
     cancelled: Option<Arc<AtomicBool>>,
     deadline: Option<Instant>,
     after_sqlite_open: impl FnOnce(),
-) -> Result<(Connection, FileIdentity), SqliteStoreError> {
+    after_migration: impl FnOnce(bool),
+) -> Result<(Connection, FileIdentity, bool), SqliteStoreError> {
     check_startup_control(cancelled.as_deref(), deadline)?;
     validate_runtime()?;
     let path = canonical_database_path(path)?;
@@ -193,20 +218,40 @@ fn open_index_writer_with_identity_and_identity_hook(
             check_startup_control(cancelled.as_deref(), deadline)?;
             migrate_or_validate(&mut connection, database_created, applied_at_unix_ms)
         })
-        .and_then(|()| check_startup_control(cancelled.as_deref(), deadline))
+        .and_then(|migrated| {
+            after_migration(migrated);
+            check_startup_control(cancelled.as_deref(), deadline)
+                .map(|()| migrated)
+                .map_err(|error| {
+                    if migrated {
+                        SqliteStoreError::MutationOutcomeUnknown
+                    } else {
+                        error
+                    }
+                })
+        })
         .map_err(|error| startup_error_at_control(error, cancelled.as_deref(), deadline));
     let clear_result = connection
         .progress_handler(0, None::<fn() -> bool>)
         .map_err(|_| SqliteStoreError::ConfigurationFailed);
-    match (initialization, clear_result) {
-        (Err(error), _) | (Ok(()), Err(error)) => {
+    let migrated = match (initialization, clear_result) {
+        (Err(error), _) => {
             drop(connection);
-            database_file.cleanup_created_path(&path)?;
+            if database_file.cleanup_created_path(&path).is_err() {
+                return Err(SqliteStoreError::MutationOutcomeUnknown);
+            }
             return Err(error);
         }
-        (Ok(()), Ok(())) => {}
-    }
-    Ok((connection, database_file.identity))
+        (Ok(migrated), Err(error)) => {
+            drop(connection);
+            if database_file.cleanup_created_path(&path).is_err() || migrated {
+                return Err(SqliteStoreError::MutationOutcomeUnknown);
+            }
+            return Err(error);
+        }
+        (Ok(migrated), Ok(())) => migrated,
+    };
+    Ok((connection, database_file.identity, migrated))
 }
 
 fn check_startup_control(
@@ -227,7 +272,9 @@ fn startup_error_at_control(
     cancelled: Option<&AtomicBool>,
     deadline: Option<Instant>,
 ) -> SqliteStoreError {
-    if cancelled.is_some_and(|cancelled| cancelled.load(Ordering::Acquire)) {
+    if error == SqliteStoreError::MutationOutcomeUnknown {
+        error
+    } else if cancelled.is_some_and(|cancelled| cancelled.load(Ordering::Acquire)) {
         SqliteStoreError::Cancelled
     } else if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
         SqliteStoreError::DeadlineExceeded
@@ -316,13 +363,8 @@ fn validate_database_file(file: &File) -> Result<(), SqliteStoreError> {
     if !metadata.is_file() {
         return Err(SqliteStoreError::DatabaseIdentityChanged);
     }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-
-        if metadata.nlink() != 1 {
-            return Err(SqliteStoreError::DatabaseIdentityChanged);
-        }
+    if !file_has_single_link(file).map_err(|_| SqliteStoreError::DatabaseIdentityChanged)? {
+        return Err(SqliteStoreError::DatabaseIdentityChanged);
     }
     Ok(())
 }
@@ -407,7 +449,7 @@ fn migrate_or_validate(
     connection: &mut Connection,
     database_created: bool,
     applied_at_unix_ms: u64,
-) -> Result<(), SqliteStoreError> {
+) -> Result<bool, SqliteStoreError> {
     let application_id = pragma_i64(connection, "application_id")?;
     let user_version = pragma_i64(connection, "user_version")?;
     let expected_application_id = if database_created { 0 } else { APPLICATION_ID };
@@ -426,14 +468,30 @@ fn migrate_or_validate(
         validate_migration_ledger_through(connection, user_version)?;
     }
     configure_writer_journal(connection)?;
+    let mut migrated = false;
     for (version, name, sql) in migrations()
         .iter()
         .copied()
         .filter(|(version, _, _)| *version > user_version)
     {
-        apply_migration(connection, version, name, sql, applied_at_unix_ms)?;
+        if let Err(error) = apply_migration(connection, version, name, sql, applied_at_unix_ms) {
+            return Err(if migrated {
+                SqliteStoreError::MutationOutcomeUnknown
+            } else {
+                error
+            });
+        }
+        migrated = true;
     }
     validate_migration_ledger(connection)
+        .map(|()| migrated)
+        .map_err(|error| {
+            if migrated {
+                SqliteStoreError::MutationOutcomeUnknown
+            } else {
+                error
+            }
+        })
 }
 
 fn pragma_i64(connection: &Connection, name: &str) -> Result<i64, SqliteStoreError> {
@@ -471,9 +529,7 @@ fn apply_migration(
     transaction
         .pragma_update(None, "user_version", version)
         .map_err(|_| SqliteStoreError::MigrationFailed)?;
-    transaction
-        .commit()
-        .map_err(|_| SqliteStoreError::MigrationFailed)?;
+    writer::commit_mutation(transaction)?;
     Ok(())
 }
 

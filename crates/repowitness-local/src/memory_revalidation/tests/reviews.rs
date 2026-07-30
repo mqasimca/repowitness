@@ -437,6 +437,62 @@ fn invalid_review_targets_append_no_audit_event() {
     assert_eq!(audit_count, 0);
 }
 
+#[cfg(unix)]
+#[test]
+fn review_reports_database_replacement_after_the_commit() {
+    let (fixture, repository, database, repository_identity, identity) = exact_projection_fixture();
+    let selector = review_selector(&database, repository_identity);
+    let moved = fixture.path.join("review-writer-opened.sqlite3");
+    let request = LocalMemoryCorrespondenceReviewRequest::new(
+        &repository,
+        &database,
+        &identity,
+        &selector.record_id,
+        &selector.revision,
+        0,
+        MemoryCorrespondenceReviewOperation::Approved,
+        &selector.path,
+        &selector.artifact,
+        selector.fact_ordinal,
+        "trusted-reviewer",
+        123,
+        1_722_000_000_300,
+    );
+
+    let receipt = crate::memory_management::review_local_memory_correspondence_with_hook(
+        request,
+        Arc::new(AtomicBool::new(false)),
+        || {
+            fs::rename(&database, &moved).expect("writer-opened database should move");
+            fs::copy(&moved, &database).expect("database path should be replaced");
+        },
+    )
+    .expect("known review commit should retain its receipt");
+
+    assert!(receipt.inserted());
+    let maintenance = receipt.maintenance();
+    assert!(!maintenance.complete());
+    assert_eq!(maintenance.warning_count(), 1);
+    assert_eq!(
+        maintenance.database_identity(),
+        LocalMemoryDatabaseIdentity::ChangedAfterCommit
+    );
+    assert_eq!(
+        maintenance.checkpoint(),
+        LocalMemoryMaintenanceStep::Complete
+    );
+    assert_eq!(maintenance.shutdown(), LocalMemoryMaintenanceStep::Complete);
+    let reviews: i64 = Connection::open(moved)
+        .expect("writer-opened database should remain readable")
+        .query_row(
+            "SELECT count(*) FROM memory_correspondence_audit",
+            [],
+            |row| row.get(0),
+        )
+        .expect("known review should remain durable");
+    assert_eq!(reviews, 1);
+}
+
 #[test]
 fn review_boundaries_and_debug_are_redacted_before_database_io() {
     let private_repository = Path::new("/private/repository");

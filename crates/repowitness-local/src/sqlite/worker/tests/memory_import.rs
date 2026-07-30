@@ -3,6 +3,7 @@ struct MemoryImportFailureCase {
     yaml: &'static [u8],
     approval: MemoryImportApproval,
     trigger: &'static str,
+    expected_error: SqliteStoreError,
 }
 
 const MEMORY_IMPORT_FAILURE_CASES: [MemoryImportFailureCase; 8] = [
@@ -14,6 +15,7 @@ const MEMORY_IMPORT_FAILURE_CASES: [MemoryImportFailureCase; 8] = [
             BEFORE INSERT ON memory_version_parents BEGIN
                 SELECT RAISE(ABORT, 'fixture parent failure');
             END;",
+        expected_error: SqliteStoreError::DatabaseOperationFailed,
     },
     MemoryImportFailureCase {
         name: "commit validity",
@@ -23,6 +25,7 @@ const MEMORY_IMPORT_FAILURE_CASES: [MemoryImportFailureCase; 8] = [
             BEFORE INSERT ON memory_validity_commits BEGIN
                 SELECT RAISE(ABORT, 'fixture validity failure');
             END;",
+        expected_error: SqliteStoreError::DatabaseOperationFailed,
     },
     MemoryImportFailureCase {
         name: "evidence",
@@ -32,6 +35,7 @@ const MEMORY_IMPORT_FAILURE_CASES: [MemoryImportFailureCase; 8] = [
             BEFORE INSERT ON memory_evidence BEGIN
                 SELECT RAISE(ABORT, 'fixture evidence failure');
             END;",
+        expected_error: SqliteStoreError::DatabaseOperationFailed,
     },
     MemoryImportFailureCase {
         name: "relationship",
@@ -41,6 +45,7 @@ const MEMORY_IMPORT_FAILURE_CASES: [MemoryImportFailureCase; 8] = [
             BEFORE INSERT ON memory_relationships BEGIN
                 SELECT RAISE(ABORT, 'fixture relationship failure');
             END;",
+        expected_error: SqliteStoreError::DatabaseOperationFailed,
     },
     MemoryImportFailureCase {
         name: "canonical version",
@@ -50,6 +55,7 @@ const MEMORY_IMPORT_FAILURE_CASES: [MemoryImportFailureCase; 8] = [
             BEFORE INSERT ON memory_versions BEGIN
                 SELECT RAISE(ABORT, 'fixture version failure');
             END;",
+        expected_error: SqliteStoreError::DatabaseOperationFailed,
     },
     MemoryImportFailureCase {
         name: "observation audit",
@@ -60,6 +66,7 @@ const MEMORY_IMPORT_FAILURE_CASES: [MemoryImportFailureCase; 8] = [
             WHEN NEW.operation = 'observed' BEGIN
                 SELECT RAISE(ABORT, 'fixture observation failure');
             END;",
+        expected_error: SqliteStoreError::DatabaseOperationFailed,
     },
     MemoryImportFailureCase {
         name: "approval audit",
@@ -70,6 +77,7 @@ const MEMORY_IMPORT_FAILURE_CASES: [MemoryImportFailureCase; 8] = [
             WHEN NEW.operation = 'locally_approved' BEGIN
                 SELECT RAISE(ABORT, 'fixture approval failure');
             END;",
+        expected_error: SqliteStoreError::DatabaseOperationFailed,
     },
     MemoryImportFailureCase {
         name: "transaction commit",
@@ -87,6 +95,7 @@ const MEMORY_IMPORT_FAILURE_CASES: [MemoryImportFailureCase; 8] = [
                 INSERT INTO fixture_memory_commit_failure(marker, workspace_id)
                 VALUES (1, -1);
             END;",
+        expected_error: SqliteStoreError::MutationOutcomeUnknown,
     },
 ];
 
@@ -102,6 +111,7 @@ fn saturated_drop_detaches_instead_of_waiting_without_shutdown() {
         commands,
         worker: Some(worker),
         opened_database_identity: None,
+        unresolved_mutation: Arc::new(AtomicBool::new(false)),
     };
 
     let started = Instant::now();
@@ -356,6 +366,66 @@ fn memory_import_control_failure_leaves_no_partial_rows() {
 }
 
 #[test]
+fn observed_history_batch_rolls_back_workspace_and_prior_records_together() {
+    let directory = TempDirectory::new();
+    let database = directory.database();
+    let (first, _, first_presentation) = memory_input(COMMIT_MEMORY_YAML);
+    let (second, _, second_presentation) = memory_input(WORKTREE_RELATIONSHIP_MEMORY_YAML);
+    let repository = first.scope().repository();
+    assert_eq!(second.scope().repository(), repository);
+
+    let (store, _) =
+        OwnedSqliteIndex::start(&database, 123, deadline()).expect("store should start");
+    store.shutdown(deadline()).expect("writer should stop");
+    let raw = Connection::open(&database).expect("fixture database should open");
+    raw.execute_batch(
+        "CREATE TRIGGER fail_second_history_observation
+         BEFORE INSERT ON memory_audit
+         WHEN NEW.operation = 'observed'
+          AND (SELECT count(*) FROM memory_audit) = 1
+         BEGIN
+             SELECT RAISE(ABORT, 'fixture second observation failure');
+         END;",
+    )
+    .expect("fixture failure trigger should install");
+    drop(raw);
+
+    let (store, _) =
+        OwnedSqliteIndex::start(&database, 456, deadline()).expect("store should reopen");
+    let error = store
+        .import_observed_memory_history(
+            repository,
+            vec![
+                ObservedMemoryHistoryItem::new(
+                    first,
+                    first_presentation,
+                    MemoryCommitId::Sha1([0x21; 20]),
+                ),
+                ObservedMemoryHistoryItem::new(
+                    second,
+                    second_presentation,
+                    MemoryCommitId::Sha1([0x22; 20]),
+                ),
+            ],
+            memory_actor(),
+            memory_recorded_at(),
+            Arc::new(AtomicBool::new(false)),
+            deadline(),
+        )
+        .expect_err("the injected second observation should fail the batch");
+    assert_eq!(error, SqliteStoreError::DatabaseOperationFailed);
+    store.shutdown(deadline()).expect("writer should stop");
+
+    let raw = Connection::open(&database).expect("rolled-back database should reopen");
+    let workspace_count: i64 = raw
+        .query_row("SELECT count(*) FROM workspaces", [], |row| row.get(0))
+        .expect("workspace count should be readable");
+    assert_eq!(workspace_count, 0);
+    drop(raw);
+    assert_eq!(memory_row_count(&database), 0);
+}
+
+#[test]
 fn every_memory_import_stage_failure_rolls_back_the_whole_journal_transaction() {
     for case in MEMORY_IMPORT_FAILURE_CASES {
         let directory = TempDirectory::new();
@@ -391,7 +461,7 @@ fn every_memory_import_stage_failure_rolls_back_the_whole_journal_transaction() 
             .expect_err("injected stage failure should fail the import");
         assert_eq!(
             error,
-            SqliteStoreError::DatabaseOperationFailed,
+            case.expected_error,
             "{} stage returned an unexpected error",
             case.name
         );

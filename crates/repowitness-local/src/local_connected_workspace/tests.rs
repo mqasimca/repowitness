@@ -124,6 +124,31 @@ fn cancellation_and_deadline_fail_before_database_creation() {
 }
 
 #[test]
+fn unknown_view_publication_preserves_reconciliation_category_and_guidance() {
+    let error = LocalConnectedWorkspaceIndexError::from_internal(
+        crate::local_index::connected_workspace::model::ConnectedWorkspaceIndexError::ViewPublication {
+            source: crate::SqliteStoreError::MutationOutcomeUnknown,
+        },
+    );
+
+    assert_eq!(
+        error,
+        LocalConnectedWorkspaceIndexError::MutationOutcomeUnknown {
+            phase: LocalConnectedWorkspacePhase::ViewPublication,
+            source_ordinal: None,
+        }
+    );
+    assert_eq!(
+        error.reconciliation_guidance(),
+        Some("reopen the store and read the active immutable workspace view before retrying")
+    );
+    assert_eq!(
+        error.to_string(),
+        "connected-workspace mutation outcome could not be determined"
+    );
+}
+
+#[test]
 fn typed_request_and_error_output_redact_manifest_paths_and_selectors() {
     const CANARY: &str = "PRIVATE_CONNECTED_WORKSPACE_CANARY";
 

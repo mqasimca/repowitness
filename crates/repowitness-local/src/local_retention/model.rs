@@ -555,11 +555,27 @@ impl LocalRetentionError {
     pub const fn kind(self) -> LocalRetentionErrorKind {
         self.kind
     }
+
+    /// Returns authoritative reconciliation guidance for an unknown apply.
+    #[must_use]
+    pub const fn reconciliation_guidance(self) -> Option<&'static str> {
+        if matches!(self.kind, LocalRetentionErrorKind::OutcomeUnknown) {
+            Some(
+                "look up retention_collection_audit by the exact policy and plan digests; only when no committed receipt exists, run a fresh read-only retention plan and compare current roots with the expected plan before retrying apply",
+            )
+        } else {
+            None
+        }
+    }
 }
 
 impl fmt::Display for LocalRetentionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("local retention maintenance failed")
+        if matches!(self.kind, LocalRetentionErrorKind::OutcomeUnknown) {
+            formatter.write_str("local retention apply outcome could not be determined")
+        } else {
+            formatter.write_str("local retention maintenance failed")
+        }
     }
 }
 

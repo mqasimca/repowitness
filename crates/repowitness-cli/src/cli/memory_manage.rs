@@ -44,9 +44,11 @@ enum CliMemoryManageReport {
         version_inserted: bool,
         observation_inserted: bool,
         approval_inserted: bool,
+        maintenance: CliMemoryMaintenanceStatus,
     },
     Review {
         inserted: bool,
+        maintenance: CliMemoryMaintenanceStatus,
     },
     ImportHistory {
         commits_inspected: u32,
@@ -56,7 +58,70 @@ enum CliMemoryManageReport {
         total_record_bytes: u64,
         git_processes: u32,
         history_complete: bool,
+        maintenance: CliMemoryMaintenanceStatus,
     },
+}
+
+#[derive(Clone, Copy)]
+struct CliMemoryMaintenanceStatus {
+    complete: bool,
+    warning_count: u8,
+    checkpoint: &'static str,
+    shutdown: &'static str,
+    database_identity: &'static str,
+}
+
+#[cfg(test)]
+impl CliMemoryMaintenanceStatus {
+    const fn confirmed_for_test() -> Self {
+        Self {
+            complete: true,
+            warning_count: 0,
+            checkpoint: "complete",
+            shutdown: "complete",
+            database_identity: "confirmed_at_final_fence",
+        }
+    }
+
+    const fn checkpoint_deferred_for_test() -> Self {
+        Self {
+            complete: false,
+            warning_count: 1,
+            checkpoint: "deferred",
+            shutdown: "complete",
+            database_identity: "confirmed_at_final_fence",
+        }
+    }
+
+    const fn shutdown_deferred_for_test() -> Self {
+        Self {
+            complete: false,
+            warning_count: 1,
+            checkpoint: "complete",
+            shutdown: "deferred",
+            database_identity: "confirmed_at_final_fence",
+        }
+    }
+
+    const fn all_steps_deferred_for_test() -> Self {
+        Self {
+            complete: false,
+            warning_count: 2,
+            checkpoint: "deferred",
+            shutdown: "deferred",
+            database_identity: "confirmed_at_final_fence",
+        }
+    }
+
+    const fn changed_database_for_test() -> Self {
+        Self {
+            complete: false,
+            warning_count: 1,
+            checkpoint: "complete",
+            shutdown: "complete",
+            database_identity: "changed_after_commit",
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -71,7 +136,7 @@ struct CliMemoryPublicationStatus {
 
 impl CliMemoryPublicationStatus {
     #[cfg(test)]
-    const fn complete() -> Self {
+    const fn confirmed_for_test() -> Self {
         Self {
             complete: true,
             warning_count: 0,
@@ -85,7 +150,7 @@ impl CliMemoryPublicationStatus {
 
 fn manage_local_memory(
     invocation: &MemoryManageInvocation,
-) -> Result<CliMemoryManageReport, String> {
+) -> Result<CliMemoryManageReport, CliMemoryError> {
     let now = current_unix_ms()?;
     let cancelled = Arc::new(AtomicBool::new(false));
     match invocation {
@@ -105,7 +170,7 @@ fn manage_local_memory(
 fn manage_local_memory_write(
     invocation: &MemoryManageInvocation,
     cancelled: Arc<AtomicBool>,
-) -> Result<CliMemoryManageReport, String> {
+) -> Result<CliMemoryManageReport, CliMemoryError> {
     let MemoryManageInvocation::Write {
         repository_root,
         repository_identity,
@@ -125,7 +190,7 @@ fn manage_local_memory_write(
         canonical_bytes: receipt.canonical_bytes(),
         publication: cli_memory_publication_status(receipt.publication_status()),
     })
-    .map_err(|error| error.to_string())
+    .map_err(|error| CliMemoryError::from_management(MemoryMutationRequestScope::Write, error))
 }
 
 fn cli_memory_publication_status(
@@ -160,7 +225,7 @@ fn manage_local_memory_approve(
     invocation: &MemoryManageInvocation,
     now: u64,
     cancelled: Arc<AtomicBool>,
-) -> Result<CliMemoryManageReport, String> {
+) -> Result<CliMemoryManageReport, CliMemoryError> {
     let MemoryManageInvocation::Approve {
         repository_root,
         database,
@@ -191,15 +256,16 @@ fn manage_local_memory_approve(
         version_inserted: receipt.version_inserted(),
         observation_inserted: receipt.observation_inserted(),
         approval_inserted: receipt.approval_inserted(),
+        maintenance: cli_memory_maintenance(receipt.maintenance()),
     })
-    .map_err(|error| error.to_string())
+    .map_err(|error| CliMemoryError::from_management(MemoryMutationRequestScope::Approve, error))
 }
 
 fn manage_local_memory_review(
     invocation: &MemoryManageInvocation,
     now: u64,
     cancelled: Arc<AtomicBool>,
-) -> Result<CliMemoryManageReport, String> {
+) -> Result<CliMemoryManageReport, CliMemoryError> {
     let MemoryManageInvocation::Review {
         repository_root,
         database,
@@ -242,15 +308,16 @@ fn manage_local_memory_review(
     )
     .map(|receipt| CliMemoryManageReport::Review {
         inserted: receipt.inserted(),
+        maintenance: cli_memory_maintenance(receipt.maintenance()),
     })
-    .map_err(|error| error.to_string())
+    .map_err(|error| CliMemoryError::from_management(MemoryMutationRequestScope::Review, error))
 }
 
 fn manage_local_memory_history(
     invocation: &MemoryManageInvocation,
     now: u64,
     cancelled: Arc<AtomicBool>,
-) -> Result<CliMemoryManageReport, String> {
+) -> Result<CliMemoryManageReport, CliMemoryError> {
     let MemoryManageInvocation::ImportHistory {
         repository_root,
         database,
@@ -281,12 +348,33 @@ fn manage_local_memory_history(
         total_record_bytes: report.total_record_bytes(),
         git_processes: report.git_processes(),
         history_complete: report.history_complete(),
+        maintenance: cli_memory_maintenance(report.maintenance()),
     })
-    .map_err(|error| error.to_string())
+    .map_err(|error| {
+        CliMemoryError::from_management(MemoryMutationRequestScope::ImportHistory, error)
+    })
 }
 
-fn manage_utf8(value: &OsStr) -> Result<&str, String> {
-    value
-        .to_str()
-        .ok_or_else(|| "memory management text is not valid UTF-8".to_owned())
+fn cli_memory_maintenance(status: LocalMemoryMaintenance) -> CliMemoryMaintenanceStatus {
+    CliMemoryMaintenanceStatus {
+        complete: status.complete(),
+        warning_count: status.warning_count(),
+        checkpoint: match status.checkpoint() {
+            LocalMemoryMaintenanceStep::Complete => "complete",
+            LocalMemoryMaintenanceStep::Deferred => "deferred",
+        },
+        shutdown: match status.shutdown() {
+            LocalMemoryMaintenanceStep::Complete => "complete",
+            LocalMemoryMaintenanceStep::Deferred => "deferred",
+        },
+        database_identity: match status.database_identity() {
+            LocalMemoryDatabaseIdentity::ConfirmedAtFinalFence => "confirmed_at_final_fence",
+            LocalMemoryDatabaseIdentity::ChangedAfterCommit => "changed_after_commit",
+            LocalMemoryDatabaseIdentity::Unconfirmed => "unconfirmed",
+        },
+    }
+}
+
+fn manage_utf8(value: &OsStr) -> Result<&str, CliMemoryError> {
+    value.to_str().ok_or(CliMemoryError::Failed)
 }

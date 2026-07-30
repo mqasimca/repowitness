@@ -18,10 +18,11 @@ use repowitness_application::{
 };
 use repowitness_domain::{
     AnalysisSchemaDigest, CanonicalMemoryDigest, ConfigurationDigest, ConnectedWorkspaceId,
-    GitStateDigest, MemoryAuditActorId, MemoryCommitId, MemoryEvidence, MemoryObservationSource,
-    MemoryPresentationDigest, MemoryProjectValidity, MemoryRecord, MemoryRecordedAtUnixMillis,
-    MemoryRevalidationTarget, ProducerManifestDigest, RepositoryIdentityDigest, RepositoryPath,
-    RepositoryPathLimits, SourceSlotId, SourceSnapshotDigest, WorktreeStateDigest,
+    GitStateDigest, MemoryAuditActorId, MemoryCommitId, MemoryCorrespondenceReviewOperation,
+    MemoryEvidence, MemoryObservationSource, MemoryPresentationDigest, MemoryProjectValidity,
+    MemoryRecord, MemoryRecordedAtUnixMillis, MemoryRevalidationTarget, ProducerManifestDigest,
+    RepositoryIdentityDigest, RepositoryPath, RepositoryPathLimits, SourceSlotId,
+    SourceSnapshotDigest, WorktreeStateDigest,
 };
 use rusqlite::{Connection, TransactionBehavior, params};
 use sha2::{Digest, Sha256};
@@ -34,15 +35,17 @@ use crate::{
 };
 
 use super::{
-    CompletedWorkspaceSource, GenerationCoverage, GenerationId, OwnedSqliteIndex, SourceSlotEpoch,
-    SqliteStoreError, WorkspaceSourceSlot, WorkspaceViewId, WorkspaceViewMember, WriterCommand,
-    mutation_lease_path, receive_mutation_reply,
+    CompletedWorkspaceSource, GenerationCoverage, GenerationId, ObservedMemoryHistoryItem,
+    OwnedSqliteIndex, SourceSlotEpoch, SqliteStoreError, WorkspaceSourceSlot, WorkspaceViewId,
+    WorkspaceViewMember, WriterCommand, mutation_lease_path, receive_mutation_reply,
 };
 use crate::sqlite::memory_projection::{
     MemoryProjectionLoadLimits, MemoryProjectionResultLimits, PreparedMemoryProjection,
     PreparedProjectionCandidate, PreparedProjectionEvidence, PreparedProjectionRecord,
-    PreparedProjectionRecordKind, ProjectionCandidateRelation, ProjectionOccurrence,
+    PreparedProjectionRecordKind, ProjectionCandidateRelation, ProjectionEvidenceAssurance,
+    ProjectionEvidenceOutcome, ProjectionOccurrence,
 };
+use crate::sqlite::memory_review::PreparedMemoryCorrespondenceReview;
 use crate::sqlite::writer::MAX_STARTUP_RECOVERY_GENERATIONS;
 
 static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
@@ -114,9 +117,11 @@ fn memory_source() -> MemoryObservationSource {
 }
 
 include!("tests/memory_import.rs");
+include!("tests/commit_outcomes.rs");
 include!("tests/mutation_outcome.rs");
 include!("tests/generation.rs");
 include!("tests/projection_publication.rs");
+include!("tests/progress_handler_cleanup.rs");
 include!("tests/projection.rs");
 include!("tests/recovery.rs");
 include!("tests/source_slot_epochs.rs");
@@ -126,6 +131,7 @@ include!("tests/workspace_publication.rs");
 include!("tests/retention.rs");
 include!("tests/retention_budget.rs");
 include!("tests/retention_recovery.rs");
+include!("tests/retention_roots.rs");
 include!("tests/retention_views.rs");
 include!("tests/graph.rs");
 include!("tests/graph_adversarial.rs");

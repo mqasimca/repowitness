@@ -384,6 +384,8 @@ read-only tools by default:
 Explicit fixed-actor startup authorization adds `memory_manage` as the twelfth
 tool. An explicit compatibility profile adds only the bounded, schema-tested
 aliases listed by ADR-0030; it does not alter the native default inventory.
+The current receipts assert name compatibility only, report incompatible
+request shapes, and leave response and behavior compatibility unassessed.
 General `query_graph` compatibility is excluded until a versioned, bounded
 query language and safety contract is approved.
 
@@ -399,6 +401,13 @@ fail before runtime initialization. Repository identity, database, contained
 source root, actor, resolved configuration, and resource policy are fixed at
 process startup rather than accepted from tool callers. The transport rejects
 a protocol line over 3 MiB; every result envelope has a bounded encoded size.
+A version-1 `memory_manage` request produces a version-2 receipt. The output
+version change is explicit because database-backed receipts now report
+checkpoint, shutdown, and final database-path identity truth. The identity
+category is confirmed, changed after commit, or unconfirmed; either latter
+state makes aggregate maintenance incomplete without erasing the known durable
+receipt. No compatibility constructor may synthesize a successful maintenance
+state.
 A four-permit semaphore bounds admitted repository work. Each synchronous
 local operation runs on Tokio's blocking pool with a remaining deadline and
 cooperative cancellation flag, while stdout remains exclusively JSON-RPC

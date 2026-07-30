@@ -38,20 +38,20 @@ impl RepositoryMemory for ConfigurationRecordingMemory {
     fn revalidate(
         &self,
         _invocation: &MemoryRevalidationInvocation,
-    ) -> Result<CliMemoryRevalidationReport, String> {
-        Err("must not be called".to_owned())
+    ) -> Result<CliMemoryRevalidationReport, CliMemoryError> {
+        Err(CliMemoryError::Failed)
     }
 
     fn recall(
         &self,
         _invocation: &MemoryRecallInvocation,
         configuration: &ResolvedConfiguration,
-    ) -> Result<MemoryRecallOutput, String> {
+    ) -> Result<MemoryRecallOutput, CliMemoryError> {
         self.calls.set(self.calls.get() + 1);
         self.query_results.set(Some(
             *configuration.preferences().query_results().effective(),
         ));
-        Err("intentional test stop".to_owned())
+        Err(CliMemoryError::Failed)
     }
 }
 

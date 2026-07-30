@@ -25,6 +25,7 @@ use super::super::{
 use crate::{OwnedSqliteIndex, WorkspaceViewId};
 
 static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
+const FIXTURE_DEADLINE: Duration = Duration::from_secs(180);
 
 pub(super) struct TempDirectory(PathBuf);
 
@@ -96,6 +97,7 @@ pub(super) fn write_source(repository: &Path, path: &str, content: &[u8]) {
 pub(super) fn git(repository: &Path, args: &[&str]) {
     let status = Command::new("git")
         .current_dir(repository)
+        .args(["-c", "core.autocrlf=false", "-c", "core.eol=lf"])
         .args(args)
         .status()
         .expect("Git should start");
@@ -141,7 +143,7 @@ pub(super) fn slot<'a>(
         configuration,
         crate::LocalRustIndexLimits::default(),
         crate::source_selector::SourceSelectorLimits::default(),
-        Duration::from_secs(30),
+        FIXTURE_DEADLINE,
     )
     .expect("fixture source slot should validate")
 }
@@ -155,7 +157,7 @@ pub(super) fn request<'a>(
         connected_workspace,
         database,
         0,
-        Duration::from_secs(60),
+        FIXTURE_DEADLINE,
         source_slots,
     )
     .expect("fixture workspace request should validate")

@@ -17,6 +17,16 @@ use super::{
     SEARCH_CODE_ALIAS_TOOL_NAME, SEARCH_GRAPH_ALIAS_TOOL_NAME, TRACE_PATH_ALIAS_TOOL_NAME,
 };
 
+const INCUMBENT_OBSERVED_ON: &str = "2026-07-29";
+const INCUMBENT_PUBLIC_SOURCE_URL: &str =
+    "https://github.com/DeusData/codebase-memory-mcp/releases/tag/v0.9.0";
+const INCUMBENT_RELEASE: &str = "v0.9.0";
+const INCUMBENT_REVISION: &str = "b637e3330c96cfe452da623db068c241aaa3ec01";
+const INCUMBENT_LICENSE: &str = "MIT";
+const INCUMBENT_OBSERVED_ARTIFACT_SHA256: &str =
+    "faa02f0404230c451a9812230394481948f80183801fa5bf67044b41c2f25ed4";
+const COMPATIBILITY_PROVENANCE: &str = "independently_authored_public_protocol_observation";
+
 /// Conservative compatibility assessment for one alias.
 #[derive(Clone, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -25,6 +35,19 @@ pub struct CompatibilityLevels {
     pub request: String,
     pub response: String,
     pub behavior: String,
+}
+
+/// Exact public observation that bounds a compatibility assessment.
+#[derive(Clone, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompatibilityObservation {
+    pub observed_on: String,
+    pub public_source_url: String,
+    pub release: String,
+    pub revision: String,
+    pub license: String,
+    pub observed_artifact_sha256: String,
+    pub provenance: String,
 }
 
 /// Versioned, path-free capability receipt for one compatibility alias.
@@ -37,6 +60,7 @@ pub struct CompatibilityReceipt {
     pub alias: String,
     pub canonical_tool: String,
     pub compatibility: CompatibilityLevels,
+    pub observation: CompatibilityObservation,
     pub known_limitations: Vec<String>,
 }
 
@@ -170,9 +194,18 @@ impl CompatibilityAlias {
             canonical_tool: self.canonical_tool().to_owned(),
             compatibility: CompatibilityLevels {
                 name: "compatible".to_owned(),
-                request: "subset".to_owned(),
-                response: "extended".to_owned(),
+                request: "incompatible".to_owned(),
+                response: "not_assessed".to_owned(),
                 behavior: "not_assessed".to_owned(),
+            },
+            observation: CompatibilityObservation {
+                observed_on: INCUMBENT_OBSERVED_ON.to_owned(),
+                public_source_url: INCUMBENT_PUBLIC_SOURCE_URL.to_owned(),
+                release: INCUMBENT_RELEASE.to_owned(),
+                revision: INCUMBENT_REVISION.to_owned(),
+                license: INCUMBENT_LICENSE.to_owned(),
+                observed_artifact_sha256: INCUMBENT_OBSERVED_ARTIFACT_SHA256.to_owned(),
+                provenance: COMPATIBILITY_PROVENANCE.to_owned(),
             },
             known_limitations: owned(self.known_limitations()),
         }

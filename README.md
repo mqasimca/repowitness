@@ -474,11 +474,18 @@ operator must add both `--enable-memory-writes` and one fixed
 `--memory-actor <local-actor>` to `mcp-serve`. Without both options, the server
 lists only read tools. The default canonical profile lists eleven. A user-owned
 configuration may opt into the incumbent-compatible profile, which adds seven
-bounded read-only aliases. Startup requires the configured tool profile to
-remain authorized and refuses mutation when any effective layer denies memory
-writes. The enabled `memory_manage` tool cannot choose the repository identity,
-root, database, actor, host input path, timestamp, deadline policy, history
-revision, or resource limits.
+bounded read-only aliases. Their receipts currently claim only name
+compatibility: request shapes are incompatible with the pinned public
+observation, while response and behavior compatibility are not assessed.
+Startup requires the configured tool profile to remain authorized and refuses
+mutation when any effective layer denies memory writes. The enabled
+`memory_manage` tool cannot choose the repository identity, root, database,
+actor, host input path, timestamp, deadline policy, history revision, or
+resource limits. Its request shape remains version 1. Its current output
+receipt schema is version 2: database-backed approval, review, and history
+receipts report checkpoint, shutdown, and final database-path identity
+separately. They never report aggregate `complete` when a step is deferred or
+the final identity is changed or unconfirmed.
 
 When the database contains a connected workspace, add
 `--connected-workspace-id <cwi1:h:...>` and `--source-slot-id <ssi1:h:...>`

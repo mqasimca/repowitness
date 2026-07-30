@@ -10,9 +10,10 @@ use repowitness_domain::{
 };
 
 use super::{
-    LocalMemoryCorrespondenceReviewRequest, LocalMemoryManageError, check_control,
-    checked_deadline, map_repository_identity_error, map_store_error, open_store, open_worktree,
-    record_id,
+    LocalMemoryCorrespondenceReviewRequest, LocalMemoryMaintenance, LocalMemoryManageError,
+    LocalMemoryMutation, OpenedMemoryStore, check_control, checked_deadline,
+    finish_known_memory_mutation_with_hook, map_repository_identity_error, map_store_error,
+    open_store, open_worktree, record_id,
 };
 use crate::sqlite::memory_review::PreparedMemoryCorrespondenceReview;
 
@@ -24,6 +25,7 @@ const REVIEW_PATH_LIMITS: RepositoryPathLimits = RepositoryPathLimits::new(32_76
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct LocalMemoryCorrespondenceReviewReceipt {
     inserted: bool,
+    maintenance: LocalMemoryMaintenance,
 }
 
 impl LocalMemoryCorrespondenceReviewReceipt {
@@ -32,11 +34,25 @@ impl LocalMemoryCorrespondenceReviewReceipt {
     pub const fn inserted(self) -> bool {
         self.inserted
     }
+
+    /// Returns the truthful post-commit SQLite maintenance status.
+    #[must_use]
+    pub const fn maintenance(self) -> LocalMemoryMaintenance {
+        self.maintenance
+    }
 }
 
 pub(super) fn review(
     request: LocalMemoryCorrespondenceReviewRequest<'_>,
     cancelled: Arc<AtomicBool>,
+) -> Result<LocalMemoryCorrespondenceReviewReceipt, LocalMemoryManageError> {
+    review_with_hook(request, cancelled, || {})
+}
+
+pub(super) fn review_with_hook(
+    request: LocalMemoryCorrespondenceReviewRequest<'_>,
+    cancelled: Arc<AtomicBool>,
+    after_commit: impl FnOnce(),
 ) -> Result<LocalMemoryCorrespondenceReviewReceipt, LocalMemoryManageError> {
     let deadline = checked_deadline(request.deadline)?;
     check_control(cancelled.as_ref(), deadline)?;
@@ -96,28 +112,29 @@ pub(super) fn review(
         )
         .map(|receipt| LocalMemoryCorrespondenceReviewReceipt {
             inserted: receipt.inserted(),
+            maintenance: LocalMemoryMaintenance::pending(),
         })
-        .map_err(map_store_error);
-    finish(store, operation, deadline)
+        .map_err(|source| map_store_error(source, LocalMemoryMutation::CorrespondenceReview));
+    finish(store, operation, deadline, after_commit)
 }
 
 fn finish(
-    store: crate::OwnedSqliteIndex,
+    store: OpenedMemoryStore,
     operation: Result<LocalMemoryCorrespondenceReviewReceipt, LocalMemoryManageError>,
     deadline: std::time::Instant,
+    after_commit: impl FnOnce(),
 ) -> Result<LocalMemoryCorrespondenceReviewReceipt, LocalMemoryManageError> {
-    let checkpoint = if operation.is_ok() {
-        store
-            .checkpoint(deadline)
-            .map(|_| ())
-            .map_err(map_store_error)
-    } else {
-        Ok(())
-    };
-    let shutdown = store.shutdown(deadline).map_err(map_store_error);
-    match (operation, checkpoint, shutdown) {
-        (Err(error), _, _) | (Ok(_), Err(error), _) | (Ok(_), Ok(()), Err(error)) => Err(error),
-        (Ok(receipt), Ok(()), Ok(())) => Ok(receipt),
+    match operation {
+        Err(error) => {
+            let _ = store.shutdown(deadline);
+            Err(error)
+        }
+        Ok(receipt) => {
+            let (mut receipt, maintenance) =
+                finish_known_memory_mutation_with_hook(store, receipt, deadline, after_commit);
+            receipt.maintenance = maintenance;
+            Ok(receipt)
+        }
     }
 }
 

@@ -1,0 +1,125 @@
+{
+  "schema_version": 1,
+  "observed_on": "2026-07-29",
+  "public_source_url": "https://github.com/DeusData/codebase-memory-mcp/releases/tag/v0.9.0",
+  "release": "v0.9.0",
+  "revision": "b637e3330c96cfe452da623db068c241aaa3ec01",
+  "license": "MIT",
+  "darwin_arm64_archive_sha256": "faa02f0404230c451a9812230394481948f80183801fa5bf67044b41c2f25ed4",
+  "observation": "Independently authored from the public release binary's MCP tools/list response. No upstream source, tests, fixtures, generated code, schemas, or prompts are incorporated.",
+  "aliases": [
+    {
+      "alias": "get_architecture",
+      "incumbent_required_request_fields": ["project"],
+      "repowitness_request": {},
+      "expected_compatibility": {
+        "name": "compatible",
+        "request": "incompatible",
+        "response": "not_assessed",
+        "behavior": "not_assessed"
+      }
+    },
+    {
+      "alias": "get_code_snippet",
+      "incumbent_required_request_fields": ["qualified_name", "project"],
+      "repowitness_request": {
+        "snapshot_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+        "generation": 9,
+        "path": "rwp1:h:7372632F6C69622E7273",
+        "content_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+        "artifact_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+        "fact_ordinal": 7
+      },
+      "expected_compatibility": {
+        "name": "compatible",
+        "request": "incompatible",
+        "response": "not_assessed",
+        "behavior": "not_assessed"
+      }
+    },
+    {
+      "alias": "get_graph_schema",
+      "incumbent_required_request_fields": ["project"],
+      "repowitness_request": {},
+      "expected_compatibility": {
+        "name": "compatible",
+        "request": "incompatible",
+        "response": "not_assessed",
+        "behavior": "not_assessed"
+      }
+    },
+    {
+      "alias": "index_status",
+      "incumbent_required_request_fields": ["project"],
+      "repowitness_request": {},
+      "expected_compatibility": {
+        "name": "compatible",
+        "request": "incompatible",
+        "response": "not_assessed",
+        "behavior": "not_assessed"
+      }
+    },
+    {
+      "alias": "search_code",
+      "incumbent_required_request_fields": ["pattern", "project"],
+      "repowitness_request": {
+        "query": "run"
+      },
+      "expected_compatibility": {
+        "name": "compatible",
+        "request": "incompatible",
+        "response": "not_assessed",
+        "behavior": "not_assessed"
+      }
+    },
+    {
+      "alias": "search_graph",
+      "incumbent_required_request_fields": ["project"],
+      "repowitness_request": {
+        "query": "run"
+      },
+      "expected_compatibility": {
+        "name": "compatible",
+        "request": "incompatible",
+        "response": "not_assessed",
+        "behavior": "not_assessed"
+      }
+    },
+    {
+      "alias": "trace_path",
+      "incumbent_required_request_fields": ["function_name", "project"],
+      "repowitness_request": {
+        "start": {
+          "type": "definition",
+          "definition": {
+            "source_slot": "ssi1:h:ABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABAB",
+            "source_generation": 9,
+            "path": "rwp1:h:7372632F6C69622E7273",
+            "content_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+            "artifact_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+            "fact_ordinal": 7,
+            "symbol_kind": "function",
+            "name": "run",
+            "qualified_name": "fixture::run",
+            "name_span": {
+              "start": 7,
+              "end": 10
+            },
+            "declaration_span": {
+              "start": 0,
+              "end": 13
+            }
+          }
+        },
+        "direction": "outbound",
+        "edge_kinds": ["call"]
+      },
+      "expected_compatibility": {
+        "name": "compatible",
+        "request": "incompatible",
+        "response": "not_assessed",
+        "behavior": "not_assessed"
+      }
+    }
+  ]
+}

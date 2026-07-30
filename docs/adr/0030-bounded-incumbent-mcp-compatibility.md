@@ -13,14 +13,12 @@ code-graph servers. Requiring a completely different vocabulary adds discovery
 cost even when RepoWitness provides an equivalent bounded operation.
 
 The public
-[`codebase-memory-mcp` README](https://github.com/DeusData/codebase-memory-mcp/blob/main/README.md),
-observed on 2026-07-28, documents 15 MCP tools. Its query surface includes
-`search_graph`, `search_code`, `trace_path`, `detect_changes`,
-`get_graph_schema`, `get_code_snippet`, `get_architecture`, and a read-only
-openCypher subset. It also documents indexing, project deletion, ADR mutation,
-and runtime-trace ingestion. That product changes independently, so a shared
-tool name does not by itself prove compatible input, response, behavior,
-coverage, or failure semantics.
+[`codebase-memory-mcp` v0.9.0 release](https://github.com/DeusData/codebase-memory-mcp/releases/tag/v0.9.0),
+observed on 2026-07-29 at exact tag revision
+`b637e3330c96cfe452da623db068c241aaa3ec01`, exposes familiar code-discovery
+names. The release changes independently, so a shared tool name does not by
+itself prove compatible input, response, behavior, coverage, or failure
+semantics.
 
 RepoWitness must preserve proof-carrying answers, immutable generation
 selection, explicit coverage, bounded traversal, default read-only MCP, and the
@@ -48,7 +46,7 @@ responses must not use “drop-in compatible” unless the full supported matrix
 green against a pinned public incumbent release and all known differences are
 listed.
 
-### Initial alias set
+### Initial candidate alias set
 
 The first profile may expose only these aliases:
 
@@ -155,7 +153,8 @@ Every compatibility record includes:
 
 - observation date, public source URL, and pinned release or commit;
 - exact tool and compatibility levels tested;
-- independently written request/response vectors;
+- independently written vectors for every claimed request, response, or
+  behavior level;
 - known semantic and limit differences; and
 - provenance and license review.
 
@@ -233,16 +232,43 @@ search and traversal are easier to bound, authorize, explain, and test.
 - Provenance review proves all production code and fixtures are independently
   authored.
 
+The implemented subset currently claims only name compatibility. Its
+acceptance evidence is therefore deliberately narrower than the validation
+needed to claim request, response, or behavior compatibility:
+
+- a pinned, independently authored public `tools/list` observation proves the
+  seven shared names and records the incompatible minimum request shapes;
+- an exact local name-only `tools/list` contract golden freezes the seven-alias
+  order, descriptions, strict input-field inventory, schema presence, and
+  read-only annotations without copying an incumbent schema;
+- table-driven boundary tests prove invalid inputs for all seven aliases fail
+  before service access and do not disclose canaries; and
+- all seven successful local responses preserve the canonical payload and a
+  canary-free receipt that says `name=compatible`, `request=incompatible`,
+  `response=not_assessed`, and `behavior=not_assessed`.
+
+Differential request, response, and behavior fixtures become mandatory before
+any of those three levels can be upgraded from the current conservative
+assessment.
+
 ## Implementation status
 
 Proposed. The opt-in version-1 `incumbent-compatible` profile is implemented
 as `native-v1-plus-incumbent-subset-v1`. It advertises seven independently
 authored bounded read-only aliases: `search_code`, `get_code_snippet`,
 `search_graph`, `trace_path`, `get_graph_schema`, `get_architecture`, and
-`index_status`. The default remains the canonical native surface. The other
-initial candidates remain excluded until their own use case, strict boundary,
-and contract fixtures are implemented. This ADR remains proposed until
-maintainers review the compatibility claims and release evidence.
+`index_status`. Every alias claims name compatibility only. Request shapes are
+explicitly incompatible with the pinned release, and response and behavior
+compatibility are not assessed.
+
+The independently authored
+[public observation fixture](../../crates/repowitness-mcp/src/wire/compatibility/fixtures/codebase-memory-mcp-v0.9.0.json)
+and
+[local `tools/list` golden](../../crates/repowitness-mcp/src/server/tests/fixtures/incumbent-subset-v1-tools-list.json)
+bound those claims. The default remains the canonical native surface. The
+other initial candidates remain excluded until their own use case, strict
+boundary, and contract fixtures are implemented. This ADR remains proposed
+until maintainers review the name-only claims and release evidence.
 
 ## Supersession
 

@@ -1,0 +1,479 @@
+#!/bin/sh
+
+# Shared fail-closed helpers for the Phase 1 benchmark runner. The caller owns
+# BENCHMARK_TEMP and provides the fixed command arguments.
+
+MAX_CAPTURED_OUTPUT_BYTES=1048576
+MAX_COMMAND_WALL_MS=900000
+COMMAND_DEADLINE_GRACE_MS=5000
+
+run_bounded_capture() {
+    stdout_path=$1
+    stderr_path=$2
+    shift 2
+    capture_deadline_ms=${PHASE1_CAPTURE_DEADLINE_MS:-$MAX_COMMAND_WALL_MS}
+    case "$capture_deadline_ms" in
+        ''|*[!0-9]*|0)
+            return 1
+            ;;
+    esac
+    if [ "$capture_deadline_ms" -gt "$MAX_COMMAND_WALL_MS" ]; then
+        return 1
+    fi
+    perl scripts/phase1-bounded-capture \
+        "$stdout_path" "$stderr_path" \
+        "$MAX_CAPTURED_OUTPUT_BYTES" "$capture_deadline_ms" "$@"
+}
+
+run_bounded_benchmark_git() {
+    stdout_path=$1
+    stderr_path=$2
+    shift 2
+    run_bounded_capture "$stdout_path" "$stderr_path" perl -e '
+        delete @ENV{qw(
+          GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY
+          GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_SHALLOW_FILE GIT_COMMON_DIR
+          GIT_CONFIG GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS GIT_NAMESPACE
+          GIT_IMPLICIT_WORK_TREE GIT_CEILING_DIRECTORIES
+          GIT_DISCOVERY_ACROSS_FILESYSTEM GIT_REFERENCE_BACKEND
+          GIT_LITERAL_PATHSPECS GIT_GLOB_PATHSPECS GIT_NOGLOB_PATHSPECS
+          GIT_ICASE_PATHSPECS GIT_EXTERNAL_DIFF GIT_EXEC_PATH GIT_TEMPLATE_DIR
+          GIT_TRACE GIT_TRACE2 GIT_TRACE2_EVENT GIT_TRACE2_PERF
+          GIT_ALLOW_PROTOCOL GIT_PROTOCOL_FROM_USER
+          GIT_SSH GIT_SSH_COMMAND GIT_SSH_VARIANT GIT_ASKPASS SSH_ASKPASS
+        )};
+        $ENV{GIT_CONFIG_NOSYSTEM} = q{1};
+        $ENV{GIT_CONFIG_GLOBAL} = q{/dev/null};
+        $ENV{GIT_CONFIG_SYSTEM} = q{/dev/null};
+        $ENV{GIT_TERMINAL_PROMPT} = q{0};
+        $ENV{GCM_INTERACTIVE} = q{never};
+        $ENV{GIT_OPTIONAL_LOCKS} = q{0};
+        $ENV{GIT_NO_REPLACE_OBJECTS} = q{1};
+        $ENV{GIT_PAGER} = q{cat};
+        $ENV{PAGER} = q{cat};
+        exec {q{git}} q{git}, q{--no-pager}, q{--literal-pathspecs},
+          q{-c}, q{core.fsmonitor=false}, q{-c}, q{core.hooksPath=/dev/null},
+          q{-c}, q{core.excludesFile=/dev/null}, q{-c}, q{core.untrackedCache=false},
+          q{-c}, q{diff.external=}, q{-c}, q{protocol.allow=never},
+          q{-c}, q{protocol.file.allow=always}, @ARGV;
+        exit 127;
+    ' -- "$@"
+}
+
+resolve_local_corpus_root() {
+    corpus_input=$1
+    if ! run_bounded_capture \
+        "$BENCHMARK_TEMP/corpus-root.output" \
+        "$BENCHMARK_TEMP/corpus-root.errors" \
+        perl -MCwd=abs_path -MFile::Spec -e '
+            use strict;
+            use warnings;
+
+            my $input = shift @ARGV;
+            die "invalid local corpus path\n"
+              if !defined($input) || $input eq q{} || length($input) > 4096
+              || $input =~ /[\0\r\n]/ || !-d $input;
+            my $resolved = abs_path($input);
+            die "invalid local corpus path\n"
+              if !defined($resolved) || length($resolved) > 4096
+              || $resolved =~ /[\0\r\n]/ || !-d $resolved
+              || !File::Spec->file_name_is_absolute($resolved);
+            print "$resolved\n";
+        ' -- "$corpus_input"
+    then
+        return 1
+    fi
+    required_single_line \
+        "$BENCHMARK_TEMP/corpus-root.output" "local corpus path"
+}
+
+required_single_line() {
+    value_path=$1
+    label=$2
+    value=$(sed -n '1p' "$value_path")
+    line_count=$(awk 'END { print NR }' "$value_path")
+    if [ "$line_count" -ne 1 ] || [ -z "$value" ]; then
+        echo "error: $label receipt was incomplete" >&2
+        return 1
+    fi
+    printf '%s' "$value"
+}
+
+fresh_workload_database() (
+    phase1_fresh_workload=$1
+    case "$phase1_fresh_workload" in
+        atomic-workspace|two-worktree-workspace)
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+    phase1_fresh_directory=$(
+        mktemp -d "$BENCHMARK_TEMP/$phase1_fresh_workload.XXXXXXXX"
+    ) || return 1
+    printf '%s/index.sqlite3' "$phase1_fresh_directory"
+)
+
+remove_fresh_workload_database() {
+    phase1_database_path=$1
+    case "$phase1_database_path" in
+        "$BENCHMARK_TEMP"/atomic-workspace.????????/index.sqlite3|\
+        "$BENCHMARK_TEMP"/two-worktree-workspace.????????/index.sqlite3)
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+    phase1_database_directory=${phase1_database_path%/index.sqlite3}
+    if [ ! -d "$phase1_database_directory" ] \
+        || [ -L "$phase1_database_directory" ]
+    then
+        return 1
+    fi
+    for phase1_database_file in \
+        "$phase1_database_path" \
+        "$phase1_database_path-wal" \
+        "$phase1_database_path-shm" \
+        "$phase1_database_path-journal" \
+        "$phase1_database_path.repowitness-mutation.lock"
+    do
+        if { [ -e "$phase1_database_file" ] || [ -L "$phase1_database_file" ]; } \
+            && { [ ! -f "$phase1_database_file" ] || [ -L "$phase1_database_file" ]; }
+        then
+            return 1
+        fi
+    done
+    rm -f \
+        "$phase1_database_path" \
+        "$phase1_database_path-wal" \
+        "$phase1_database_path-shm" \
+        "$phase1_database_path-journal" \
+        "$phase1_database_path.repowitness-mutation.lock" \
+        || return 1
+    rmdir "$phase1_database_directory"
+}
+
+capture_environment_command() {
+    name=$1
+    shift
+    if ! run_bounded_capture \
+        "$BENCHMARK_TEMP/environment-$name.output" \
+        "$BENCHMARK_TEMP/environment-$name.errors" "$@"
+    then
+        echo "error: benchmark environment field $name could not be captured" >&2
+        return 1
+    fi
+}
+
+capture_darwin_filesystem_type() {
+    capture_environment_command filesystem-type \
+        perl -MCwd=abs_path -e '
+            use strict;
+            use warnings;
+
+            my $path = abs_path($ARGV[0]);
+            die "cannot resolve benchmark path\n" if !defined($path);
+            open my $mounts, "-|", "/sbin/mount"
+              or die "cannot inspect mounted filesystems\n";
+            my ($best_mount, $best_type) = (q{}, q{});
+            while (my $line = <$mounts>) {
+                chomp $line;
+                next if $line !~ /\A.* on (.*) \(([^,\s)]+)/;
+                my ($mount, $type) = ($1, $2);
+                $mount =~ s/\\040/ /g;
+                $mount =~ s/\\011/\t/g;
+                $mount =~ s/\\134/\\/g;
+                my $matches =
+                  $mount eq q{/}
+                  ? index($path, q{/}) == 0
+                  : $path eq $mount || index($path, "$mount/") == 0;
+                if ($matches && length($mount) > length($best_mount)) {
+                    ($best_mount, $best_type) = ($mount, $type);
+                }
+            }
+            close $mounts or die "cannot finish filesystem inspection\n";
+            die "filesystem type is unavailable\n" if $best_type eq q{};
+            print "$best_type\n";
+        ' -- "$BENCHMARK_TEMP"
+}
+
+emit_run_environment() {
+    if ! run_bounded_benchmark_git \
+        "$BENCHMARK_TEMP/repowitness-revision.output" \
+        "$BENCHMARK_TEMP/repowitness-revision.errors" \
+        -C . rev-parse --verify HEAD \
+        || ! run_bounded_benchmark_git \
+            "$BENCHMARK_TEMP/repowitness-status.output" \
+            "$BENCHMARK_TEMP/repowitness-status.errors" \
+            -C . status --porcelain --untracked-files=all \
+        || ! run_bounded_benchmark_git \
+            "$BENCHMARK_TEMP/git-version.output" \
+            "$BENCHMARK_TEMP/git-version.errors" --version \
+        || ! capture_environment_command observed-at date -u +%Y-%m-%dT%H:%M:%SZ \
+        || ! capture_environment_command rust-version rustc --version \
+        || ! capture_environment_command operating-system uname -srm
+    then
+        return 1
+    fi
+
+    INITIAL_REPOWITNESS_REVISION=$(
+        required_single_line \
+            "$BENCHMARK_TEMP/repowitness-revision.output" "RepoWitness revision"
+    ) || return 1
+    observed_at=$(
+        required_single_line \
+            "$BENCHMARK_TEMP/environment-observed-at.output" "observation time"
+    ) || return 1
+    rust_toolchain=$(
+        required_single_line \
+            "$BENCHMARK_TEMP/environment-rust-version.output" "Rust toolchain"
+    ) || return 1
+    operating_system=$(
+        required_single_line \
+            "$BENCHMARK_TEMP/environment-operating-system.output" "operating system"
+    ) || return 1
+    git_version=$(
+        required_single_line "$BENCHMARK_TEMP/git-version.output" "Git version"
+    ) || return 1
+
+    case "$INITIAL_REPOWITNESS_REVISION" in
+        *[!0-9a-f]*|'') return 1 ;;
+    esac
+    if [ "${#INITIAL_REPOWITNESS_REVISION}" -ne 40 ]; then
+        echo "error: RepoWitness revision receipt was invalid" >&2
+        return 1
+    fi
+    case "$observed_at" in
+        ????-??-??T??:??:??Z) ;;
+        *)
+            echo "error: observation time receipt was invalid" >&2
+            return 1
+            ;;
+    esac
+
+    if capture_environment_command logical-cpu-count getconf _NPROCESSORS_ONLN; then
+        :
+    elif capture_environment_command logical-cpu-count sysctl -n hw.logicalcpu; then
+        :
+    else
+        return 1
+    fi
+    logical_cpu_count=$(
+        required_single_line \
+            "$BENCHMARK_TEMP/environment-logical-cpu-count.output" \
+            "logical CPU count"
+    ) || return 1
+    case "$logical_cpu_count" in
+        ''|*[!0-9]*|0)
+            echo "error: logical CPU count receipt was invalid" >&2
+            return 1
+            ;;
+    esac
+
+    system_name=$(uname -s)
+    case "$system_name" in
+        Linux)
+            capture_environment_command cpu-details lscpu || return 1
+            awk '
+                /^Model name:[[:space:]]*/ {
+                    sub(/^Model name:[[:space:]]*/, "")
+                    print
+                    exit
+                }
+            ' "$BENCHMARK_TEMP/environment-cpu-details.output" \
+                >"$BENCHMARK_TEMP/environment-cpu-model.output"
+            awk '
+                /^MemTotal:[[:space:]]+[0-9]+[[:space:]]+kB$/ {
+                    printf "%d\n", $2 / 1024
+                    exit
+                }
+            ' /proc/meminfo >"$BENCHMARK_TEMP/environment-memory-mib.output"
+            capture_environment_command filesystem df -PT "$BENCHMARK_TEMP" \
+                || return 1
+            awk 'NR == 2 { print $2 }' \
+                "$BENCHMARK_TEMP/environment-filesystem.output" \
+                >"$BENCHMARK_TEMP/environment-filesystem-type.output"
+            ;;
+        Darwin)
+            capture_environment_command cpu-model \
+                sysctl -n machdep.cpu.brand_string || return 1
+            capture_environment_command memory-bytes sysctl -n hw.memsize \
+                || return 1
+            awk '{ printf "%d\n", $1 / 1048576 }' \
+                "$BENCHMARK_TEMP/environment-memory-bytes.output" \
+                >"$BENCHMARK_TEMP/environment-memory-mib.output"
+            capture_darwin_filesystem_type || return 1
+            ;;
+        *)
+            echo "error: benchmark environment platform is unsupported" >&2
+            return 1
+            ;;
+    esac
+
+    cpu_model=$(
+        required_single_line \
+            "$BENCHMARK_TEMP/environment-cpu-model.output" "CPU model"
+    ) || return 1
+    memory_mib=$(
+        required_single_line \
+            "$BENCHMARK_TEMP/environment-memory-mib.output" "memory"
+    ) || return 1
+    filesystem_type=$(
+        required_single_line \
+            "$BENCHMARK_TEMP/environment-filesystem-type.output" \
+            "filesystem type"
+    ) || return 1
+    case "$memory_mib" in
+        ''|*[!0-9]*|0)
+            echo "error: memory receipt was invalid" >&2
+            return 1
+            ;;
+    esac
+
+    package_scope_digest=$(perl -MDigest::SHA=sha256_hex -e \
+        'print sha256_hex("phase1-package-scope-v1:whole-repository")')
+    case "$package_scope_digest" in
+        *[!0-9a-f]*|'') return 1 ;;
+    esac
+    if [ "${#package_scope_digest}" -ne 64 ]; then
+        return 1
+    fi
+
+    echo "observed_at_utc=$observed_at"
+    echo "repowitness_revision=$INITIAL_REPOWITNESS_REVISION"
+    if [ -s "$BENCHMARK_TEMP/repowitness-status.output" ]; then
+        echo "repowitness_worktree_dirty=true"
+    else
+        echo "repowitness_worktree_dirty=false"
+    fi
+    echo "corpus_revision=$ACTUAL_REVISION"
+    echo "rust_toolchain=$rust_toolchain"
+    echo "operating_system=$operating_system"
+    echo "cpu_model=$cpu_model"
+    echo "logical_cpu_count=$logical_cpu_count"
+    echo "memory_mib=$memory_mib"
+    echo "filesystem_type=$filesystem_type"
+    echo "git_version=$git_version"
+    echo "selector_profile=source-selector-v1/worktree-head"
+    echo "package_scope_digest_sha256=$package_scope_digest"
+    echo "compatibility_profile=native-v1-plus-incumbent-subset-v1"
+}
+
+create_bounded_checkout() {
+    checkout_root=$1
+    checkout_label=$2
+    case "$checkout_label:$checkout_root" in
+        "worktree-one:$BENCHMARK_TEMP/worktree-one"|\
+        "worktree-two:$BENCHMARK_TEMP/worktree-two")
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+    if [ -e "$checkout_root" ] || [ -L "$checkout_root" ]; then
+        return 1
+    fi
+    if ! run_bounded_benchmark_git \
+        "$BENCHMARK_TEMP/$checkout_label-init.output" \
+        "$BENCHMARK_TEMP/$checkout_label-init.errors" \
+        init --quiet "$checkout_root" \
+        || ! run_bounded_benchmark_git \
+            "$BENCHMARK_TEMP/$checkout_label-fetch.output" \
+            "$BENCHMARK_TEMP/$checkout_label-fetch.errors" \
+            -C "$checkout_root" fetch --quiet --depth=1 --no-tags \
+            -- "$CORPUS_ROOT" "$EXPECTED_REVISION" \
+        || ! run_bounded_benchmark_git \
+            "$BENCHMARK_TEMP/$checkout_label-checkout.output" \
+            "$BENCHMARK_TEMP/$checkout_label-checkout.errors" \
+            -C "$checkout_root" checkout --quiet --detach FETCH_HEAD \
+        || ! run_bounded_benchmark_git \
+            "$BENCHMARK_TEMP/$checkout_label-shallow.output" \
+            "$BENCHMARK_TEMP/$checkout_label-shallow.errors" \
+            -C "$checkout_root" rev-parse --is-shallow-repository \
+        || ! run_bounded_benchmark_git \
+            "$BENCHMARK_TEMP/$checkout_label-count.output" \
+            "$BENCHMARK_TEMP/$checkout_label-count.errors" \
+            -C "$checkout_root" rev-list --count HEAD
+    then
+        return 1
+    fi
+    shallow=$(
+        required_single_line \
+            "$BENCHMARK_TEMP/$checkout_label-shallow.output" \
+            "$checkout_label shallow state"
+    ) || return 1
+    commit_count=$(
+        required_single_line \
+            "$BENCHMARK_TEMP/$checkout_label-count.output" \
+            "$checkout_label commit count"
+    ) || return 1
+    [ "$shallow" = true ] \
+        && [ "$commit_count" = 1 ] \
+        && verify_clean_checkout \
+            "$checkout_root" "$EXPECTED_REVISION" "setup-$checkout_label"
+}
+
+verify_clean_checkout() {
+    checkout_root=$1
+    expected_revision=$2
+    receipt_prefix=$3
+    if ! run_bounded_benchmark_git \
+        "$BENCHMARK_TEMP/$receipt_prefix-revision.output" \
+        "$BENCHMARK_TEMP/$receipt_prefix-revision.errors" \
+        -C "$checkout_root" rev-parse --verify HEAD \
+        || ! run_bounded_benchmark_git \
+            "$BENCHMARK_TEMP/$receipt_prefix-status.output" \
+            "$BENCHMARK_TEMP/$receipt_prefix-status.errors" \
+            -C "$checkout_root" status --porcelain --untracked-files=all
+    then
+        return 1
+    fi
+    actual=$(
+        required_single_line \
+            "$BENCHMARK_TEMP/$receipt_prefix-revision.output" \
+            "$receipt_prefix revision"
+    ) || return 1
+    [ "$actual" = "$expected_revision" ] \
+        && [ ! -s "$BENCHMARK_TEMP/$receipt_prefix-status.output" ]
+}
+
+verify_final_git_state() {
+    if ! run_bounded_benchmark_git \
+        "$BENCHMARK_TEMP/final-repowitness-revision.output" \
+        "$BENCHMARK_TEMP/final-repowitness-revision.errors" \
+        -C . rev-parse --verify HEAD \
+        || ! run_bounded_benchmark_git \
+            "$BENCHMARK_TEMP/final-repowitness-status.output" \
+            "$BENCHMARK_TEMP/final-repowitness-status.errors" \
+            -C . status --porcelain --untracked-files=all
+    then
+        return 1
+    fi
+    final_revision=$(
+        required_single_line \
+            "$BENCHMARK_TEMP/final-repowitness-revision.output" \
+            "final RepoWitness revision"
+    ) || return 1
+    if [ "$final_revision" != "$INITIAL_REPOWITNESS_REVISION" ] \
+        || ! cmp -s \
+            "$BENCHMARK_TEMP/repowitness-status.output" \
+            "$BENCHMARK_TEMP/final-repowitness-status.output" \
+        || ! verify_clean_checkout "$CORPUS_ROOT" "$EXPECTED_REVISION" final-corpus \
+        || ! verify_clean_checkout "$WORKTREE_ONE" "$EXPECTED_REVISION" final-worktree-one \
+        || ! verify_clean_checkout "$WORKTREE_TWO" "$EXPECTED_REVISION" final-worktree-two
+    then
+        echo "error: a benchmark source checkout changed during the run" >&2
+        return 1
+    fi
+    echo "repowitness_final_revision_verified=true"
+    echo "repowitness_final_status_unchanged=true"
+    echo "corpus_final_revision_verified=true"
+    echo "corpus_final_status_clean=true"
+    echo "disposable_worktrees_final_revision_verified=true"
+    echo "disposable_worktrees_final_status_clean=true"
+}
+
+monotonic_now_us() {
+    perl -MTime::HiRes=clock_gettime,CLOCK_MONOTONIC -e \
+        'printf "%.0f\n", clock_gettime(CLOCK_MONOTONIC) * 1_000_000'
+}

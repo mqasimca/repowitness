@@ -102,6 +102,50 @@ fn ordinary_reads_require_exact_component_spelling() {
 }
 
 #[test]
+fn exact_component_checks_classify_alternate_spelling_without_reading_the_leaf() {
+    let fixture = TempDirectory::new();
+    fs::create_dir(fixture.path().join("Exact")).expect("fixture directory should be created");
+    fs::write(fixture.path().join("Exact/Source.rs"), b"exact")
+        .expect("fixture source should be written");
+    let exact = path(b"Exact/Source.rs");
+    let alternate_directory = path(b"exact/Source.rs");
+    let alternate_leaf = path(b"Exact/source.rs");
+    let paths = [&exact, &alternate_directory, &alternate_leaf];
+    let root = ContainedSourceRoot::open(fixture.path()).expect("root should open");
+    let deadline_duration = Duration::from_secs(1);
+    let deadline = Instant::now() + deadline_duration;
+    let mut session = root
+        .exact_read_session(paths, deadline, || false)
+        .expect("exact-component plan should complete");
+
+    assert!(
+        !session
+            .exact_components_available(
+                &alternate_directory,
+                deadline_duration,
+                deadline,
+                &mut || false,
+            )
+            .expect("alternate directory spelling should be classified")
+    );
+    assert!(
+        !session
+            .exact_components_available(
+                &alternate_leaf,
+                deadline_duration,
+                deadline,
+                &mut || false,
+            )
+            .expect("alternate leaf spelling should be classified")
+    );
+    assert!(
+        session
+            .exact_components_available(&exact, deadline_duration, deadline, &mut || false,)
+            .expect("exact spelling should be classified")
+    );
+}
+
+#[test]
 fn exact_read_sessions_scan_flat_directories_once() {
     const FILE_COUNT: u64 = 256;
 
@@ -257,20 +301,34 @@ fn final_and_intermediate_symlinks_cannot_escape_the_root() {
     symlink(outside.path(), fixture.path().join("linked"))
         .expect("directory symlink must be created");
     let root = ContainedSourceRoot::open(fixture.path()).expect("root must open");
+    let linked_source = path(b"linked/private.rs");
 
     let final_error = root
         .read(&path(b"final.rs"), SourceReadLimits::default())
         .expect_err("final symlink must not be followed");
     let intermediate_error = root
-        .read(&path(b"linked/private.rs"), SourceReadLimits::default())
+        .read(&linked_source, SourceReadLimits::default())
         .expect_err("intermediate symlink must not be followed");
+    let deadline_duration = Duration::from_secs(1);
+    let deadline = Instant::now() + deadline_duration;
+    let mut session = root
+        .exact_read_session(std::iter::once(&linked_source), deadline, || false)
+        .expect("symlink path plan should complete");
+    let classification_error = session
+        .exact_components_available(&linked_source, deadline_duration, deadline, &mut || false)
+        .expect_err("exact-component checks must not follow intermediate symlinks");
     assert!(matches!(final_error, ContainedSourceError::FileOpen { .. }));
     assert!(matches!(
         intermediate_error,
         ContainedSourceError::DirectoryOpen { ordinal: 1, .. }
     ));
+    assert!(matches!(
+        classification_error,
+        ContainedSourceError::DirectoryOpen { ordinal: 1, .. }
+    ));
     assert!(!final_error.to_string().contains("private"));
     assert!(!intermediate_error.to_string().contains("private"));
+    assert!(!classification_error.to_string().contains("private"));
 }
 
 #[cfg(unix)]
@@ -297,6 +355,20 @@ fn non_utf8_paths_are_opened_without_lossy_conversion() {
             .as_ref(),
         b"bytes"
     );
+}
+
+#[cfg(any(unix, windows))]
+#[test]
+fn file_link_count_is_checked_from_the_open_handle() {
+    let fixture = TempDirectory::new();
+    let original = fixture.path().join("original");
+    let alias = fixture.path().join("alias");
+    fs::write(&original, b"linked").expect("hard-link source must be written");
+    let file = std::fs::File::open(&original).expect("single-link file must open");
+    assert!(file_has_single_link(&file).expect("single-link metadata must be readable"));
+
+    fs::hard_link(&original, &alias).expect("hard-link fixture must be created");
+    assert!(!file_has_single_link(&file).expect("hard-link metadata must be readable"));
 }
 
 #[cfg(any(unix, windows))]

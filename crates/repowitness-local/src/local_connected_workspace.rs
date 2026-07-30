@@ -48,6 +48,11 @@ pub const MAX_LOCAL_CONNECTED_WORKSPACE_MANIFEST_BYTES: usize =
 /// coordinator's final publication fence. The result exposes only aggregate
 /// counts and semantic digests; manifest DTOs, roots, selectors, source slots,
 /// and database-local identities never cross this facade.
+///
+/// Do not retry
+/// [`LocalConnectedWorkspaceIndexError::MutationOutcomeUnknown`] until
+/// authoritative workspace state has been read using the error's
+/// [`LocalConnectedWorkspaceIndexError::reconciliation_guidance`].
 pub fn index_local_connected_workspace(
     request: LocalConnectedWorkspaceIndexRequest<'_>,
     cancelled: Arc<AtomicBool>,

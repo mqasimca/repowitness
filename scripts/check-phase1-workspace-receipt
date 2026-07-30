@@ -1,0 +1,282 @@
+#!/usr/bin/env perl
+
+use strict;
+use warnings;
+
+use Errno qw(ENOENT);
+use Fcntl qw(S_ISREG);
+use File::Temp qw(tempdir);
+
+my @required_keys = qw(
+  status
+  operation
+  workspace_report_version
+  manifest_schema_version
+  view_receipt_version
+  configuration_sha256
+  view_receipt_sha256
+  source_slots
+  distinct_generations
+  recovered_generations
+  repository_paths
+  indexed_files
+  reused_files
+  analyzed_files
+  skipped_policy_paths
+  skipped_unsupported_paths
+  outcome
+  maintenance
+);
+
+sub canonical_integer {
+    my ($values, $key, $errors) = @_;
+    my $value = $values->{$key};
+    if (!defined($value)
+        || $value !~ /\A(?:0|[1-9][0-9]*)\z/
+        || length($value) > 15)
+    {
+        push @$errors, "$key must be a canonical nonnegative integer";
+        return;
+    }
+    return 0 + $value;
+}
+
+sub exact {
+    my ($values, $key, $expected, $errors) = @_;
+    push @$errors, "$key does not match the workspace contract"
+      if !defined($values->{$key}) || $values->{$key} ne "$expected";
+}
+
+sub validate_report {
+    my ($content) = @_;
+    my @errors;
+    my %allowed = map { $_ => 1 } @required_keys;
+    my %values;
+
+    push @errors, 'workspace report must end with LF'
+      if $content eq '' || $content !~ /\n\z/;
+    my @lines = split /\n/, $content, -1;
+    pop @lines if @lines && $lines[-1] eq '';
+    for my $line (@lines) {
+        if ($line =~ /\r/ || length($line) > 4096) {
+            push @errors, 'workspace report contains an invalid line';
+            next;
+        }
+        if ($line !~ /\A([a-z][a-z0-9_]*)=(.{1,512})\z/) {
+            push @errors, 'workspace report contains unexpected output';
+            next;
+        }
+        my ($key, $value) = ($1, $2);
+        if (!$allowed{$key}) {
+            push @errors, "workspace report contains unexpected key $key";
+        } elsif (exists $values{$key}) {
+            push @errors, "workspace report repeats key $key";
+        } elsif ($value =~ /[[:cntrl:]]/) {
+            push @errors, "$key contains control data";
+        } else {
+            $values{$key} = $value;
+        }
+    }
+    for my $key (@required_keys) {
+        push @errors, "workspace report omits key $key"
+          if !exists $values{$key};
+    }
+
+    exact(\%values, 'status', 'ok', \@errors);
+    exact(\%values, 'operation', 'workspace_index', \@errors);
+    exact(\%values, 'workspace_report_version', 1, \@errors);
+    exact(\%values, 'manifest_schema_version', 1, \@errors);
+    exact(\%values, 'view_receipt_version', 1, \@errors);
+    exact(\%values, 'source_slots', 2, \@errors);
+    exact(\%values, 'distinct_generations', 2, \@errors);
+    exact(\%values, 'recovered_generations', 0, \@errors);
+    exact(\%values, 'outcome', 'published', \@errors);
+    exact(\%values, 'maintenance', 'complete', \@errors);
+
+    for my $key (qw(configuration_sha256 view_receipt_sha256)) {
+        push @errors, "$key must be a lowercase SHA-256 digest"
+          if defined($values{$key})
+          && $values{$key} !~ /\A[0-9a-f]{64}\z/;
+    }
+    my %numbers;
+    for my $key (
+        qw(
+        source_slots
+        distinct_generations
+        recovered_generations
+        repository_paths
+        indexed_files
+        reused_files
+        analyzed_files
+        skipped_policy_paths
+        skipped_unsupported_paths
+        )
+      )
+    {
+        $numbers{$key} = canonical_integer(\%values, $key, \@errors);
+    }
+    for my $key (qw(repository_paths indexed_files analyzed_files)) {
+        push @errors, "$key must be positive"
+          if defined($numbers{$key}) && $numbers{$key} == 0;
+    }
+    if (defined($numbers{indexed_files})
+        && defined($numbers{reused_files})
+        && defined($numbers{analyzed_files})
+        && $numbers{indexed_files}
+        != $numbers{reused_files} + $numbers{analyzed_files})
+    {
+        push @errors, 'workspace file-accounting totals are inconsistent';
+    }
+    if (defined($numbers{repository_paths})
+        && defined($numbers{indexed_files})
+        && defined($numbers{skipped_policy_paths})
+        && defined($numbers{skipped_unsupported_paths})
+        && $numbers{repository_paths}
+        != $numbers{indexed_files}
+        + $numbers{skipped_policy_paths}
+        + $numbers{skipped_unsupported_paths})
+    {
+        push @errors, 'workspace path-coverage totals are inconsistent';
+    }
+    return @errors;
+}
+
+sub existing_regular_file_size {
+    my ($path, $label, $errors) = @_;
+    my @metadata = lstat $path;
+    if (!@metadata) {
+        push @$errors, "$label is unavailable";
+        return;
+    }
+    if (!S_ISREG($metadata[2])) {
+        push @$errors, "$label must be a regular file";
+        return;
+    }
+    return $metadata[7];
+}
+
+sub optional_regular_file_size {
+    my ($path, $label, $errors) = @_;
+    my @metadata = lstat $path;
+    if (!@metadata) {
+        return 0 if $! == ENOENT;
+        push @$errors, "$label could not be inspected";
+        return;
+    }
+    if (!S_ISREG($metadata[2])) {
+        push @$errors, "$label must be a regular file";
+        return;
+    }
+    return $metadata[7];
+}
+
+sub validate_storage {
+    my ($database, $max_database_bytes, $max_wal_bytes) = @_;
+    my @errors;
+    my $database_bytes =
+      existing_regular_file_size($database, 'workspace database', \@errors);
+    my $wal_bytes =
+      optional_regular_file_size("$database-wal", 'workspace WAL', \@errors);
+    push @errors, 'workspace database exceeded its byte budget'
+      if defined($database_bytes) && $database_bytes > $max_database_bytes;
+    push @errors, 'workspace WAL exceeded its post-completion byte budget'
+      if defined($wal_bytes) && $wal_bytes > $max_wal_bytes;
+    return @errors;
+}
+
+sub write_file {
+    my ($path, $content) = @_;
+    open my $handle, '>:raw', $path or die "cannot create self-test fixture\n";
+    print {$handle} $content or die "cannot write self-test fixture\n";
+    close $handle or die "cannot close self-test fixture\n";
+}
+
+sub valid_report {
+    return join(
+        "\n",
+        'status=ok',
+        'operation=workspace_index',
+        'workspace_report_version=1',
+        'manifest_schema_version=1',
+        'view_receipt_version=1',
+        'configuration_sha256=' . ('a' x 64),
+        'view_receipt_sha256=' . ('b' x 64),
+        'source_slots=2',
+        'distinct_generations=2',
+        'recovered_generations=0',
+        'repository_paths=8',
+        'indexed_files=6',
+        'reused_files=2',
+        'analyzed_files=4',
+        'skipped_policy_paths=1',
+        'skipped_unsupported_paths=1',
+        'outcome=published',
+        'maintenance=complete',
+        ''
+    );
+}
+
+sub run_self_test {
+    my $valid = valid_report();
+    my @valid_errors = validate_report($valid);
+    die 'valid workspace report was rejected: ' . join('; ', @valid_errors) . "\n"
+      if @valid_errors;
+
+    my @invalid = (
+        ($valid =~ s/^maintenance=.*$/maintenance=checkpoint_deferred/mr),
+        ($valid =~ s/^view_receipt_sha256=.*\n//mr),
+        $valid . "maintenance=complete\n",
+        $valid . "unexpected_key=value\n",
+        ($valid =~ s/^configuration_sha256=.*$/configuration_sha256=ABC/mr),
+        ($valid =~ s/^indexed_files=.*$/indexed_files=7/mr),
+        ($valid =~ s/^repository_paths=.*$/repository_paths=7/mr),
+    );
+    for my $fixture (@invalid) {
+        die "invalid workspace report was accepted\n"
+          if !validate_report($fixture);
+    }
+
+    my $temporary = tempdir(CLEANUP => 1);
+    my $database = "$temporary/index.sqlite3";
+    write_file($database, 'abc');
+    die "valid workspace storage was rejected\n"
+      if validate_storage($database, 3, 0);
+    die "oversized workspace database was accepted\n"
+      if !validate_storage($database, 2, 0);
+    write_file("$database-wal", 'x');
+    die "nonempty workspace WAL was accepted\n"
+      if !validate_storage($database, 3, 0);
+
+    print "Phase 1 workspace receipt self-tests passed\n";
+}
+
+if (@ARGV == 1 && $ARGV[0] eq '--self-test') {
+    run_self_test();
+    exit 0;
+}
+die "usage: perl scripts/check-phase1-workspace-receipt <report> <database> "
+  . "<max-database-bytes> <max-wal-bytes>\n"
+  if @ARGV != 4;
+my ($report_path, $database_path, $max_database_bytes, $max_wal_bytes) = @ARGV;
+for my $budget ($max_database_bytes, $max_wal_bytes) {
+    die "workspace storage budget is invalid\n"
+      if $budget !~ /\A(?:0|[1-9][0-9]{0,10})\z/
+      || $budget > 17_179_869_184;
+}
+my @report_metadata = lstat $report_path;
+die "workspace report is unavailable\n"
+  if !@report_metadata || !S_ISREG($report_metadata[2]);
+die "workspace report is too large\n" if $report_metadata[7] > 65_536;
+open my $report, '<:raw', $report_path or die "cannot read workspace report\n";
+local $/;
+my $content = <$report>;
+close $report or die "cannot close workspace report\n";
+my @errors = (
+    validate_report($content),
+    validate_storage($database_path, $max_database_bytes, $max_wal_bytes),
+);
+if (@errors) {
+    print STDERR join("\n", map { "workspace receipt: $_" } @errors), "\n";
+    exit 1;
+}
+print "Phase 1 workspace receipt is exact and complete\n";

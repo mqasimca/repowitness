@@ -137,6 +137,16 @@ fn storage_budget_and_unknown_apply_errors_remain_categorical() {
     ] {
         let unknown = super::execution::map_apply_store_error(source);
         assert_eq!(unknown.kind(), LocalRetentionErrorKind::OutcomeUnknown);
+        assert_eq!(
+            unknown.reconciliation_guidance(),
+            Some(
+                "look up retention_collection_audit by the exact policy and plan digests; only when no committed receipt exists, run a fresh read-only retention plan and compare current roots with the expected plan before retrying apply"
+            )
+        );
+        assert_eq!(
+            unknown.to_string(),
+            "local retention apply outcome could not be determined"
+        );
     }
 }
 
@@ -403,7 +413,7 @@ fn lock_wait_observes_external_cancellation() {
 
 #[cfg(unix)]
 #[test]
-fn symlink_and_hardlink_aliases_fail_before_creating_alias_leases() {
+fn symlink_aliases_fail_before_creating_alias_leases() {
     use std::os::unix::fs::symlink;
 
     let directory = TempDirectory::new();
@@ -415,13 +425,20 @@ fn symlink_and_hardlink_aliases_fail_before_creating_alias_leases() {
         plan(&symlink_path, &configuration, Duration::from_secs(2)).expect_err("symlink rejected");
     assert_eq!(error.kind(), LocalRetentionErrorKind::DatabaseUnavailable);
     assert!(!alias_lease_path(&symlink_path).exists());
+}
 
-    std::fs::remove_file(&symlink_path).expect("remove symlink");
-    std::fs::hard_link(&database, &symlink_path).expect("hard link");
-    let error = plan(&symlink_path, &configuration, Duration::from_secs(2))
+#[cfg(any(unix, windows))]
+#[test]
+fn hardlink_aliases_fail_before_creating_alias_leases() {
+    let directory = TempDirectory::new();
+    let database = initialize_database(directory.path());
+    let hardlink_path = directory.path().join("alias.db");
+    std::fs::hard_link(&database, &hardlink_path).expect("hard link");
+    let configuration = resolve_configuration(&[]).expect("configuration");
+    let error = plan(&hardlink_path, &configuration, Duration::from_secs(2))
         .expect_err("hard link rejected");
     assert_eq!(error.kind(), LocalRetentionErrorKind::DatabaseUnavailable);
-    assert!(!alias_lease_path(&symlink_path).exists());
+    assert!(!alias_lease_path(&hardlink_path).exists());
 }
 
 fn initialize_database(directory: &Path) -> PathBuf {
@@ -507,7 +524,6 @@ fn mutation_lease_path(database: &Path) -> PathBuf {
     PathBuf::from(value)
 }
 
-#[cfg(unix)]
 fn alias_lease_path(database: &Path) -> PathBuf {
     mutation_lease_path(database)
 }

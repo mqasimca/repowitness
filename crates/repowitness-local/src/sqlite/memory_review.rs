@@ -11,9 +11,9 @@ use super::{
     memory_projection::{
         MANUAL_REVIEW_METHOD_ID, MANUAL_REVIEW_METHOD_VERSION, MemoryProjectionSource,
         ProjectionOccurrence, check_control, control_database_error, load_active_source,
-        require_current_write_source, with_progress_handler,
+        require_current_write_source, with_mutation_progress_handler, with_progress_handler,
     },
-    writer::WriteControl,
+    writer::{WriteControl, WriterMutationResult, commit_mutation},
 };
 
 const MAX_REVIEW_EVENTS_PER_EVIDENCE: i64 = 4_096;
@@ -136,10 +136,14 @@ pub(super) fn append_memory_correspondence_review(
     connection: &mut Connection,
     prepared: &PreparedMemoryCorrespondenceReview,
     control: WriteControl<'_>,
-) -> Result<MemoryCorrespondenceReviewReceipt, SqliteStoreError> {
-    with_progress_handler(connection, control, |connection| {
-        append_review_inner(connection, prepared, control)
-    })
+    force_progress_handler_clear_failure: bool,
+) -> WriterMutationResult<MemoryCorrespondenceReviewReceipt> {
+    with_mutation_progress_handler(
+        connection,
+        control,
+        force_progress_handler_clear_failure,
+        |connection| append_review_inner(connection, prepared, control),
+    )
 }
 
 fn append_review_inner(
@@ -210,9 +214,7 @@ fn append_review_inner(
         return Err(SqliteStoreError::IntegrityCheckFailed);
     }
     check_control(control)?;
-    transaction
-        .commit()
-        .map_err(|_| control_database_error(control))?;
+    commit_mutation(transaction)?;
     Ok(MemoryCorrespondenceReviewReceipt {
         inserted: inserted == 1,
     })

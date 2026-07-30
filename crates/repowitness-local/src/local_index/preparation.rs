@@ -399,32 +399,27 @@ pub(crate) fn validated_database_outside_worktree(
     Ok(database)
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub(crate) fn database_alias_identity(
     database: &Path,
 ) -> Result<Option<FileIdentity>, LocalIndexError> {
-    use std::os::unix::fs::MetadataExt;
-
-    match fs::metadata(database) {
-        Ok(metadata) if !metadata.is_file() => Err(LocalIndexError::DatabasePathUnavailable),
-        Ok(metadata) if metadata.nlink() > 1 => Err(LocalIndexError::DatabaseHasMultipleLinks),
-        Ok(_) => FileIdentity::from_path(database)
-            .map(Some)
-            .map_err(|_| LocalIndexError::DatabasePathUnavailable),
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(_) => Err(LocalIndexError::DatabasePathUnavailable),
-    }
-}
-
-#[cfg(windows)]
-pub(crate) fn database_alias_identity(
-    database: &Path,
-) -> Result<Option<FileIdentity>, LocalIndexError> {
-    match fs::metadata(database) {
-        Ok(metadata) if metadata.is_file() => FileIdentity::from_path(database)
-            .map(Some)
-            .map_err(|_| LocalIndexError::DatabasePathUnavailable),
-        Ok(_) => Err(LocalIndexError::DatabasePathUnavailable),
+    match fs::File::open(database) {
+        Ok(file) => {
+            let metadata = file
+                .metadata()
+                .map_err(|_| LocalIndexError::DatabasePathUnavailable)?;
+            if !metadata.is_file() {
+                return Err(LocalIndexError::DatabasePathUnavailable);
+            }
+            if !file_has_single_link(&file)
+                .map_err(|_| LocalIndexError::DatabasePathUnavailable)?
+            {
+                return Err(LocalIndexError::DatabaseHasMultipleLinks);
+            }
+            FileIdentity::from_file(file)
+                .map(Some)
+                .map_err(|_| LocalIndexError::DatabasePathUnavailable)
+        }
         Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(_) => Err(LocalIndexError::DatabasePathUnavailable),
     }

@@ -40,6 +40,11 @@ impl OwnedSqliteIndex {
     }
 
     /// Revalidates and atomically applies one prior retention plan.
+    ///
+    /// On [`SqliteStoreError::MutationOutcomeUnknown`], first look up the
+    /// aggregate audit receipt by the exact policy and plan digests. Only when
+    /// no committed receipt exists may a caller compute a fresh read-only plan
+    /// and compare current roots with the expected plan before retrying apply.
     pub fn apply_generation_retention(
         &self,
         request: RetentionApplyRequest,
@@ -56,7 +61,12 @@ impl OwnedSqliteIndex {
             })),
             deadline,
         )?;
-        match receive_mutation_reply(&receiver, Some(cancelled.as_ref()), deadline) {
+        match receive_mutation_reply(
+            &receiver,
+            Some(cancelled.as_ref()),
+            deadline,
+            Some(&self.unresolved_mutation),
+        ) {
             Ok(outcome) => Ok(outcome),
             Err(error) => {
                 cancelled.store(true, Ordering::Release);

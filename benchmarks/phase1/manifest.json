@@ -200,6 +200,7 @@
     },
     "phase1_resources": {
       "max_two_source_publication_wall_ms": 20000,
+      "quiet_poll_session_ms": 100,
       "max_quiet_poll_p95_ms": 500,
       "max_native_graph_read_p95_ms": 250,
       "max_retention_plan_wall_ms": 1000,

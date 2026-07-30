@@ -90,7 +90,8 @@ The output is a design-partner alpha, not a general public beta.
   dynamic dispatch, and cross-language edges.
 - Ratify and stabilize the implemented versioned configuration, monotonic
   policy, `config explain`, and `doctor` contract.
-- Add bounded, schema-tested incumbent compatibility aliases.
+- Add bounded, schema-tested incumbent aliases with independently measured
+  compatibility levels; the implemented subset currently claims names only.
 - Add another language only for a named user need.
 
 Exit when crash consistency, identity precision/ambiguity, cross-platform behavior, query/resource budgets, and explicit compatibility fixtures pass.

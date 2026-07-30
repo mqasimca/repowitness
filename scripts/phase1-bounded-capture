@@ -1,0 +1,232 @@
+#!/usr/bin/env perl
+
+use strict;
+use warnings;
+
+use Errno qw(ECHILD EINTR);
+use IO::Select;
+use POSIX qw(:sys_wait_h setpgid);
+use Time::HiRes qw(CLOCK_MONOTONIC clock_gettime sleep);
+
+my ($stdout_path, $stderr_path, $maximum, $deadline_ms, @command) = @ARGV;
+exit 1
+  if !defined($stdout_path)
+  || $stdout_path eq q{}
+  || !defined($stderr_path)
+  || $stderr_path eq q{}
+  || $stdout_path eq $stderr_path
+  || !defined($maximum)
+  || $maximum !~ /\A[1-9][0-9]{0,7}\z/
+  || $maximum > 1_048_576
+  || !defined($deadline_ms)
+  || $deadline_ms !~ /\A[1-9][0-9]{0,5}\z/
+  || $deadline_ms > 900_000
+  || !@command;
+
+my $interrupted = 0;
+$SIG{HUP} = sub { $interrupted = 1 };
+$SIG{INT} = sub { $interrupted = 1 };
+$SIG{TERM} = sub { $interrupted = 1 };
+
+open my $stdout_file, '>:raw', $stdout_path or exit 1;
+open my $stderr_file, '>:raw', $stderr_path or exit 1;
+pipe(my $stdout, my $stdout_child) or exit 1;
+pipe(my $stderr, my $stderr_child) or exit 1;
+pipe(my $status_reader, my $status_writer) or exit 1;
+exit 1 if $interrupted;
+
+my $pid = fork();
+exit 1 if !defined $pid;
+if ($pid == 0) {
+    $SIG{HUP} = 'DEFAULT';
+    $SIG{INT} = 'DEFAULT';
+    $SIG{TERM} = 'DEFAULT';
+    close $stdout;
+    close $stderr;
+    close $status_reader;
+    close $stdout_file;
+    close $stderr_file;
+    my $child_group_ready = eval {
+        my $result = setpgid(0, 0);
+        defined $result;
+    };
+    POSIX::_exit(125) if !$child_group_ready;
+
+    my $command_pid = fork();
+    POSIX::_exit(125) if !defined $command_pid;
+    if ($command_pid == 0) {
+        close $status_writer;
+        open STDIN, '<', '/dev/null' or POSIX::_exit(126);
+        open STDOUT, '>&', $stdout_child or POSIX::_exit(126);
+        open STDERR, '>&', $stderr_child or POSIX::_exit(126);
+        close $stdout_child;
+        close $stderr_child;
+        exec {$command[0]} @command or POSIX::_exit(127);
+    }
+
+    close $stdout_child;
+    close $stderr_child;
+    my $waited;
+    do {
+        $waited = waitpid($command_pid, 0);
+    } while ($waited == -1 && $! == EINTR);
+    POSIX::_exit(125) if $waited != $command_pid;
+    my $command_status = $?;
+    print {$status_writer} "$command_status\n" or POSIX::_exit(125);
+    close $status_writer or POSIX::_exit(125);
+
+    # Keep the owned process-group leader alive until the parent has drained
+    # output and can terminate every residual descendant without PGID reuse.
+    while (1) {
+        sleep(3600);
+    }
+}
+
+close $stdout_child;
+close $stderr_child;
+close $status_writer;
+my $group_ready = eval {
+    my $result = setpgid($pid, $pid);
+    defined $result;
+};
+my $ready = IO::Select->new($stdout, $stderr, $status_reader);
+my %targets = (
+    fileno($stdout) => $stdout_file,
+    fileno($stderr) => $stderr_file,
+);
+my $status_fileno = fileno($status_reader);
+my $deadline =
+  clock_gettime(CLOCK_MONOTONIC) + (int($deadline_ms) / 1000);
+my $captured = 0;
+my ($command_done, $status) = (0, 0);
+my $status_text = q{};
+my ($over_limit, $timed_out) = (0, 0);
+my $io_failed = $group_ready ? 0 : 1;
+
+READ_LOOP:
+while (!$command_done || $ready->count()) {
+    last READ_LOOP if $interrupted;
+    my $remaining_seconds =
+      $deadline - clock_gettime(CLOCK_MONOTONIC);
+    if ($remaining_seconds <= 0) {
+        $timed_out = 1;
+        last READ_LOOP;
+    }
+    if (!$ready->count()) {
+        sleep($remaining_seconds < 0.01 ? $remaining_seconds : 0.01);
+        next;
+    }
+
+    my @readable;
+    my $selected = eval {
+        @readable = $ready->can_read($remaining_seconds);
+        1;
+    };
+    last READ_LOOP if $interrupted;
+    if (!$selected) {
+        $io_failed = 1;
+        last READ_LOOP;
+    }
+    if (!@readable) {
+        $timed_out = 1
+          if clock_gettime(CLOCK_MONOTONIC) >= $deadline;
+        last READ_LOOP if $timed_out;
+        next;
+    }
+
+    for my $handle (@readable) {
+        my ($chunk, $read);
+        do {
+            $chunk = q{};
+            $read = sysread($handle, $chunk, 8192);
+        } while (!defined($read) && $! == EINTR && !$interrupted);
+        last READ_LOOP if $interrupted;
+        if (!defined $read) {
+            $io_failed = 1;
+            last READ_LOOP;
+        }
+        if (fileno($handle) == $status_fileno) {
+            if ($read == 0) {
+                $ready->remove($handle);
+                close $handle;
+                if ($status_text =~ /\A([0-9]{1,5})\n\z/
+                    && int($1) <= 65_535) {
+                    $status = int($1);
+                    $command_done = 1;
+                } else {
+                    $io_failed = 1;
+                    last READ_LOOP;
+                }
+                next;
+            }
+            if (length($status_text) + $read > 6) {
+                $io_failed = 1;
+                last READ_LOOP;
+            }
+            $status_text .= $chunk;
+            next;
+        }
+        if ($read == 0) {
+            $ready->remove($handle);
+            close $handle;
+            next;
+        }
+        my $remaining = int($maximum) - $captured;
+        if ($read > $remaining) {
+            $over_limit = 1;
+            last READ_LOOP;
+        }
+        my $target = $targets{fileno($handle)};
+        if (!print {$target} $chunk) {
+            $io_failed = 1;
+            last READ_LOOP;
+        }
+        $captured += $read;
+    }
+}
+
+# Cleanup runs on success too: a command can exit zero after forking a
+# background process that closes its output handles. The unreaped group-leader
+# wrapper keeps the PGID owned until both signals have been sent.
+kill 'TERM', -$pid;
+kill 'TERM', $pid;
+if (!$command_done) {
+    my $kill_deadline = clock_gettime(CLOCK_MONOTONIC) + 0.25;
+    while (clock_gettime(CLOCK_MONOTONIC) < $kill_deadline) {
+        sleep(0.01);
+    }
+}
+kill 'KILL', -$pid;
+kill 'KILL', $pid;
+
+my $wrapper_done = 0;
+my $reap_deadline = clock_gettime(CLOCK_MONOTONIC) + 0.25;
+while (clock_gettime(CLOCK_MONOTONIC) < $reap_deadline) {
+    my $waited;
+    do {
+        $waited = waitpid($pid, WNOHANG);
+    } while ($waited == -1 && $! == EINTR);
+    if ($waited == $pid) {
+        $wrapper_done = 1;
+        last;
+    }
+    if ($waited == -1) {
+        $io_failed = 1;
+        last;
+    }
+    sleep(0.01);
+}
+$io_failed = 1 if !$wrapper_done;
+
+close $stdout if defined(fileno($stdout));
+close $stderr if defined(fileno($stderr));
+close $status_reader if defined(fileno($status_reader));
+$io_failed = 1 if !close($stdout_file);
+$io_failed = 1 if !close($stderr_file);
+exit 1
+  if $over_limit
+  || $timed_out
+  || $io_failed
+  || $interrupted
+  || !$command_done
+  || $status != 0;

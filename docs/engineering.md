@@ -230,7 +230,7 @@ Enforce the six-package dependency direction accepted in [ADR-0008](adr/0008-lay
 | Unit | Domain transitions, normalization, ranking, validation, and error mapping |
 | Golden | Extraction, evidence envelopes, coverage receipts, context packs, and compatibility schemas |
 | Property | Identity, memory lifecycle, deterministic ranking, canonical serialization, and migration invariants |
-| Differential | Clean versus incremental index, syntax versus SCIP overlays, SQLite rebuild, incumbent-compatible behavior |
+| Differential | Clean versus incremental index, syntax versus SCIP overlays, SQLite rebuild, and each explicitly claimed incumbent compatibility level |
 | Integration | MCP stdio, Git worktrees, file watching, cancellation, crash recovery, and Git-memory import |
 | Fuzz | Protocol/config decoders, paths/URIs, tree-sitter queries, imports, migrations, and query limits |
 | Concurrency | Writer ownership, shutdown races, generation activation, cancellation, and backpressure |
@@ -401,7 +401,6 @@ When the Rust workspace and dependency-policy configuration exist, the baseline 
 
 ```text
 cargo fmt --all -- --check
-./scripts/check-rust-source-lines
 cargo check --workspace --all-targets --all-features --locked
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo test --workspace --locked

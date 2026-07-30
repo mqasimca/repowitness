@@ -1,20 +1,29 @@
 use std::sync::{Arc, atomic::AtomicBool};
 
 use repowitness_application::{
-    MemoryImportApproval, RepositoryIdentityTextV1, import_memory_record,
+    ImportMemoryRecordError, MemoryImportApproval, RepositoryIdentityTextV1, import_memory_record,
 };
 use repowitness_domain::{MemoryAuditActorId, MemoryObservationSource, MemoryRecordedAtUnixMillis};
 
 use super::{
-    LocalMemoryApprovalReceipt, LocalMemoryApprovalRequest, LocalMemoryManageError, check_control,
-    checked_deadline, map_file_error, map_repository_identity_error, map_store_error, open_store,
-    open_worktree, record_id, secret,
+    LocalMemoryApprovalReceipt, LocalMemoryApprovalRequest, LocalMemoryManageError,
+    LocalMemoryMutation, OpenedMemoryStore, check_control, checked_deadline,
+    finish_known_memory_mutation_with_hook, map_file_error, map_repository_identity_error,
+    map_store_error, open_store, open_worktree, record_id, secret,
 };
 use crate::MemoryRecordFiles;
 
 pub(super) fn approve(
     request: LocalMemoryApprovalRequest<'_>,
     cancelled: Arc<AtomicBool>,
+) -> Result<LocalMemoryApprovalReceipt, LocalMemoryManageError> {
+    approve_with_hook(request, cancelled, || {})
+}
+
+pub(super) fn approve_with_hook(
+    request: LocalMemoryApprovalRequest<'_>,
+    cancelled: Arc<AtomicBool>,
+    after_commit: impl FnOnce(),
 ) -> Result<LocalMemoryApprovalReceipt, LocalMemoryManageError> {
     let deadline = checked_deadline(request.deadline)?;
     check_control(cancelled.as_ref(), deadline)?;
@@ -51,7 +60,7 @@ pub(super) fn approve(
         &cancelled,
         deadline,
     );
-    finish(store, operation, deadline)
+    finish(store, operation, deadline, after_commit)
 }
 
 #[allow(
@@ -69,7 +78,7 @@ fn approve_loaded(
 ) -> Result<LocalMemoryApprovalReceipt, LocalMemoryManageError> {
     let source = store
         .load_memory_source(repository, Arc::clone(cancelled), deadline)
-        .map_err(map_store_error)?;
+        .map_err(|source| map_store_error(source, LocalMemoryMutation::Approval))?;
     let (record, _, presentation) = loaded.into_parts();
     import_memory_record(
         store,
@@ -85,22 +94,32 @@ fn approve_loaded(
             deadline,
         ),
     )
-    .map(LocalMemoryApprovalReceipt::from)
-    .map_err(|_| LocalMemoryManageError::PersistenceFailed)
+    .map(LocalMemoryApprovalReceipt::from_unmaintained_import)
+    .map_err(|error| match error {
+        ImportMemoryRecordError::Cancelled => LocalMemoryManageError::Cancelled,
+        ImportMemoryRecordError::DeadlineExceeded => LocalMemoryManageError::DeadlineExceeded,
+        ImportMemoryRecordError::ScopeMismatch => LocalMemoryManageError::ScopeMismatch,
+        ImportMemoryRecordError::Port(source) => {
+            map_store_error(source, LocalMemoryMutation::Approval)
+        }
+    })
 }
 
 fn finish(
-    store: crate::OwnedSqliteIndex,
+    store: OpenedMemoryStore,
     operation: Result<LocalMemoryApprovalReceipt, LocalMemoryManageError>,
     deadline: std::time::Instant,
+    after_commit: impl FnOnce(),
 ) -> Result<LocalMemoryApprovalReceipt, LocalMemoryManageError> {
-    if operation.is_ok() {
-        store.checkpoint(deadline).map_err(map_store_error)?;
-    }
-    let shutdown = store.shutdown(deadline).map_err(map_store_error);
-    match (operation, shutdown) {
-        (Err(error), _) => Err(error),
-        (Ok(_), Err(error)) => Err(error),
-        (Ok(receipt), Ok(())) => Ok(receipt),
+    match operation {
+        Err(error) => {
+            let _ = store.shutdown(deadline);
+            Err(error)
+        }
+        Ok(receipt) => {
+            let (receipt, maintenance) =
+                finish_known_memory_mutation_with_hook(store, receipt, deadline, after_commit);
+            Ok(receipt.with_maintenance(maintenance))
+        }
     }
 }

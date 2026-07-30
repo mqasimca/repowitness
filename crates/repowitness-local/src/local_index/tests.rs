@@ -18,9 +18,10 @@ use crate::{OwnedSqliteReader, SearchLimits};
 
 use super::polling_runner::reconcile_local_repository;
 use super::{
-    LocalIndexError, LocalIndexRequest, LocalReconciliationOutcome, index_local_rust_repository,
-    index_local_rust_repository_with_hook, index_local_rust_repository_with_hooks,
-    local_producer_implementation_fingerprint_inputs, phase0_local_rust_artifact_identity,
+    LocalIndexError, LocalIndexMutation, LocalIndexRequest, LocalReconciliationOutcome,
+    index_local_rust_repository, index_local_rust_repository_with_hook,
+    index_local_rust_repository_with_hooks, local_producer_implementation_fingerprint_inputs,
+    map_index_mutation_error, phase0_local_rust_artifact_identity,
     phase0_local_source_artifact_identities,
 };
 
@@ -93,6 +94,7 @@ fn fixture_repository(directory: &TempDirectory) -> PathBuf {
     let repository = directory.repository();
     fs::create_dir_all(repository.join("src")).expect("fixture source directory should be created");
     let status = Command::new("git")
+        .args(["-c", "core.autocrlf=false", "-c", "core.eol=lf"])
         .args(["init", "--quiet"])
         .arg(&repository)
         .status()
@@ -107,6 +109,7 @@ fn fixture_repository(directory: &TempDirectory) -> PathBuf {
         .expect("non-Rust fixture should be written");
     let status = Command::new("git")
         .current_dir(&repository)
+        .args(["-c", "core.autocrlf=false", "-c", "core.eol=lf"])
         .args(["add", "--", "src/lib.rs", "README.md"])
         .status()
         .expect("Git should start");
@@ -643,6 +646,32 @@ fn dangling_database_symlink_cannot_bypass_worktree_isolation() {
 
     assert!(matches!(error, LocalIndexError::DatabasePathUnavailable));
     assert!(!target.exists());
+}
+
+#[test]
+fn unknown_index_mutation_is_explicit_and_not_rendered_as_failed() {
+    let error = map_index_mutation_error(
+        LocalIndexMutation::GenerationPublication,
+        crate::SqliteStoreError::MutationOutcomeUnknown,
+        |source| LocalIndexError::PublicationActivation { source },
+    );
+
+    assert!(matches!(
+        error,
+        LocalIndexError::MutationOutcomeUnknown {
+            operation: LocalIndexMutation::GenerationPublication
+        }
+    ));
+    assert_eq!(
+        error.reconciliation_guidance(),
+        Some(
+            "reopen the store and read the active generation and source-slot completion before retrying"
+        )
+    );
+    assert_eq!(
+        error.to_string(),
+        "local index mutation outcome could not be determined"
+    );
 }
 
 include!("tests/python.rs");

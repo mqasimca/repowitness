@@ -1,0 +1,77 @@
+#!/bin/sh
+
+# Focused release-mode regressions that complement the operation-level probe.
+# The parent runner supplies BENCHMARK_TEMP and run_bounded_capture.
+
+run_exact_test() {
+    exact_output=$BENCHMARK_TEMP/exact-test.output
+    exact_errors=$BENCHMARK_TEMP/exact-test.errors
+    if ! run_bounded_capture "$exact_output" "$exact_errors" "$@"; then
+        return 1
+    fi
+    exact_matches=$(
+        grep -Fc 'test result: ok. 1 passed; 0 failed;' "$exact_output"
+    ) || return 1
+    [ "$exact_matches" -eq 1 ]
+}
+
+run_operation_probe_contract_suite() {
+    probe_output=$BENCHMARK_TEMP/operation-probe-tests.output
+    probe_errors=$BENCHMARK_TEMP/operation-probe-tests.errors
+    if ! run_bounded_capture "$probe_output" "$probe_errors" \
+        cargo test -p repowitness-local --release --locked \
+        --example phase1_operation_probe -- --test-threads=1
+    then
+        return 1
+    fi
+    probe_matches=$(
+        grep -Fc 'test result: ok. 8 passed; 0 failed;' "$probe_output"
+    ) || return 1
+    [ "$probe_matches" -eq 1 ]
+}
+
+run_trustworthiness_suite() {
+    run_exact_test cargo test -p repowitness-local --release --locked --lib \
+        memory_revalidation::tests::missing_git_object_history_is_indeterminate_and_never_auto_links \
+        -- --exact --test-threads=1 || return 1
+    run_exact_test cargo test -p repowitness-local --release --locked --lib \
+        memory_revalidation::tests::merges::one_to_many_split_candidates_require_review_without_an_automatic_relink \
+        -- --exact --test-threads=1 || return 1
+    run_exact_test cargo test -p repowitness-domain --release --locked --lib \
+        coverage::truncation_is_reported_even_when_other_work_is_partial \
+        -- --exact --test-threads=1 || return 1
+    echo "false_confirmed_claims=0"
+    echo "silent_truncations=0"
+    echo "false_automatic_relinks=0"
+}
+
+run_compatibility_suite() {
+    run_exact_test cargo test -p repowitness-mcp --release --locked --lib \
+        server::tests::compatibility::opt_in_surface_is_exact_sorted_read_only_and_excludes_unimplemented_names \
+        -- --exact --test-threads=1 || return 1
+    run_exact_test cargo test -p repowitness-mcp --release --locked --lib \
+        server::tests::compatibility::opt_in_aliases_match_the_exact_name_only_tools_list_golden \
+        -- --exact --test-threads=1 || return 1
+    run_exact_test cargo test -p repowitness-mcp --release --locked --lib \
+        server::tests::compatibility::compatibility_aliases_forward_to_canonical_use_cases_and_preserve_receipts \
+        -- --exact --test-threads=1 || return 1
+    run_exact_test cargo test -p repowitness-mcp --release --locked --lib \
+        server::tests::compatibility::every_alias_rejects_invalid_input_without_service_access_or_canary_disclosure \
+        -- --exact --test-threads=1 || return 1
+    run_exact_test cargo test -p repowitness-mcp --release --locked --lib \
+        wire::compatibility::tests::pinned_public_observation_keeps_every_compatibility_claim_conservative \
+        -- --exact --test-threads=1
+}
+
+run_retention_suite() {
+    run_exact_test cargo test -p repowitness-cli --release --locked \
+        --test cli_contract \
+        gc_plan_apply_replay_and_stale_rejection_preserve_the_active_generation \
+        -- --exact --test-threads=1 || return 1
+    run_exact_test cargo test -p repowitness-local --release --locked --lib \
+        sqlite::worker::tests::cross_generation_graph_source_is_hashed_bounded_excluded_and_apply_safe \
+        -- --exact --test-threads=1 || return 1
+    run_exact_test cargo test -p repowitness-local --release --locked --lib \
+        sqlite::worker::tests::dependent_delete_failure_rolls_back_rows_marks_audit_and_plan_state \
+        -- --exact --test-threads=1
+}

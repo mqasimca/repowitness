@@ -29,7 +29,7 @@ use repowitness_domain::{
 use crate::{
     GenerationId, GitMemoryQueries, GitMemoryQueryError, GitMemoryQueryLimits,
     GitPathContinuityOutcome, GitPathDiscoveryError, GitPathDiscoveryLimits, LocalIndexError,
-    OwnedSqliteIndex, SourceStateError, SqliteStoreError,
+    LocalMemoryMaintenance, OwnedSqliteIndex, SourceStateError, SqliteStoreError,
     git_paths::discovered_worktree_root,
     local_index::{database_alias_identity, validated_database_outside_worktree},
     source_state::{CapturedSourceState, capture_source_state_with_cancel},
@@ -218,6 +218,7 @@ pub struct LocalMemoryRevalidationReport {
     unresolved_records: u32,
     git_queries: u32,
     head_available: bool,
+    maintenance: LocalMemoryMaintenance,
 }
 
 impl LocalMemoryRevalidationReport {
@@ -273,6 +274,41 @@ impl LocalMemoryRevalidationReport {
     #[must_use]
     pub const fn head_available(self) -> bool {
         self.head_available
+    }
+
+    /// Returns the truthful post-publication SQLite maintenance status.
+    #[must_use]
+    pub const fn maintenance(self) -> LocalMemoryMaintenance {
+        self.maintenance
+    }
+}
+
+/// Durable operation that callers must reconcile after an unknown revalidation outcome.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LocalMemoryRevalidationMutation {
+    /// Writer startup recovery may have committed before its receipt was lost.
+    StoreStartup,
+    /// Immutable memory-projection publication may have committed.
+    ProjectionPublication,
+    /// The post-publication WAL checkpoint may have completed.
+    Checkpoint,
+}
+
+impl LocalMemoryRevalidationMutation {
+    /// Returns non-sensitive authoritative reconciliation guidance.
+    #[must_use]
+    pub const fn reconciliation_guidance(self) -> &'static str {
+        match self {
+            Self::StoreStartup => {
+                "reopen the store and run read-only database diagnostics before retrying startup"
+            }
+            Self::ProjectionPublication => {
+                "reopen the store and read the active memory projection for the exact source generation before retrying revalidation"
+            }
+            Self::Checkpoint => {
+                "reopen the store and read the already-published memory projection before retrying maintenance"
+            }
+        }
     }
 }
 
@@ -374,6 +410,11 @@ pub enum LocalMemoryRevalidationError {
         /// Stable SQLite boundary failure.
         source: SqliteStoreError,
     },
+    /// A queued mutation may have committed without a definitive receipt.
+    MutationOutcomeUnknown {
+        /// Exact durable operation whose authoritative state must be read.
+        operation: LocalMemoryRevalidationMutation,
+    },
     /// A bounded count could not be represented by the projection contract.
     CountNotRepresentable,
     /// Integrity-checked journal data contradicted its selected head.
@@ -420,9 +461,23 @@ impl fmt::Display for LocalMemoryRevalidationError {
             Self::Publication { .. } => "local memory projection publication failed",
             Self::Checkpoint { .. } => "local memory checkpoint failed after publication",
             Self::Shutdown { .. } => "local memory writer shutdown failed after publication",
+            Self::MutationOutcomeUnknown { .. } => {
+                "local memory revalidation mutation outcome could not be determined"
+            }
             Self::CountNotRepresentable => "local memory count is not representable",
             Self::JournalIntegrity => "local memory journal integrity validation failed",
         })
+    }
+}
+
+impl LocalMemoryRevalidationError {
+    /// Returns operation-specific guidance only for an outcome-unknown mutation.
+    #[must_use]
+    pub const fn reconciliation_guidance(&self) -> Option<&'static str> {
+        match self {
+            Self::MutationOutcomeUnknown { operation } => Some(operation.reconciliation_guidance()),
+            _ => None,
+        }
     }
 }
 
@@ -453,6 +508,7 @@ impl Error for LocalMemoryRevalidationError {
             | Self::DatabaseHasMultipleLinks
             | Self::DatabaseChangedDuringRevalidation
             | Self::GitQueryLimitExceeded
+            | Self::MutationOutcomeUnknown { .. }
             | Self::CountNotRepresentable
             | Self::JournalIntegrity => None,
         }

@@ -1,5 +1,6 @@
 //! Bounded repository-path discovery through a sanitized Git subprocess.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fmt;
 use std::fs;
@@ -12,6 +13,8 @@ use std::time::{Duration, Instant};
 
 use repowitness_domain::{RepositoryPath, RepositoryPathError, RepositoryPathLimits};
 
+use crate::contained_source::{ContainedSourceError, ContainedSourceRoot, ExactReadSessionError};
+
 const POLL_INTERVAL: Duration = Duration::from_millis(5);
 const DEFAULT_DEADLINE: Duration = Duration::from_secs(30);
 const DEFAULT_OUTPUT_BYTE_LIMIT: u64 = 64 * 1024 * 1024;
@@ -21,10 +24,12 @@ const DEFAULT_PATH_COMPONENT_LIMIT: u64 = 65_535;
 
 #[derive(Clone, Copy)]
 enum GitPathDiscoveryScope {
-    #[cfg(test)]
     Cached,
-    CachedAndUntracked,
+    Untracked,
+    Deleted,
 }
+
+type CapturedGitPathOutputs = (Vec<u8>, Vec<u8>, Vec<u8>);
 
 /// Resource and time bounds for one Git repository-path discovery operation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -257,6 +262,13 @@ pub enum GitPathDiscoveryError {
     },
     /// Git returned the same repository identity more than once.
     DuplicateRepositoryPath,
+    /// Exact worktree path spelling could not be inspected safely.
+    RepositoryPathInspection {
+        /// The redacted contained-filesystem failure.
+        source: ContainedSourceError,
+    },
+    /// Git and exact worktree path observations could not be reconciled.
+    InconsistentRepositoryPathSet,
     /// The aggregate validated path-byte count overflowed.
     TotalPathBytesOverflowed,
 }
@@ -329,6 +341,12 @@ impl fmt::Display for GitPathDiscoveryError {
             Self::DuplicateRepositoryPath => {
                 formatter.write_str("Git returned a duplicate repository path")
             }
+            Self::RepositoryPathInspection { .. } => {
+                formatter.write_str("repository path spelling could not be inspected safely")
+            }
+            Self::InconsistentRepositoryPathSet => {
+                formatter.write_str("repository path observations were inconsistent")
+            }
             Self::TotalPathBytesOverflowed => {
                 formatter.write_str("total repository path bytes overflowed")
             }
@@ -345,6 +363,7 @@ impl std::error::Error for GitPathDiscoveryError {
             | Self::OutputReaderStart { source }
             | Self::GitOutputRead { source }
             | Self::GitPoll { source } => Some(source),
+            Self::RepositoryPathInspection { source } => Some(source),
             Self::InvalidRepositoryPath { source, .. } => Some(source),
             _ => None,
         }
@@ -398,20 +417,87 @@ pub fn discover_repository_paths_with_cancel(
     let deadline = Instant::now()
         .checked_add(limits.deadline())
         .ok_or(GitPathDiscoveryError::DeadlineNotRepresentable)?;
-    let output = capture_git_output(root, limits, deadline, &mut is_cancelled)?;
-    parse_git_paths_with_control(output, limits, deadline, &mut is_cancelled)
+    let worktree_root = discovered_worktree_root(root)?;
+    let (cached, untracked, deleted) =
+        capture_git_path_outputs(&worktree_root, limits, deadline, &mut is_cancelled)?;
+    let cached_paths = parse_git_paths_with_control(cached, limits, deadline, &mut is_cancelled)?;
+    let untracked_paths =
+        parse_git_paths_with_control(untracked, limits, deadline, &mut is_cancelled)?;
+    let deleted_paths = parse_git_paths_with_control(deleted, limits, deadline, &mut is_cancelled)?;
+    reconcile_repository_paths(
+        &worktree_root,
+        cached_paths,
+        untracked_paths,
+        deleted_paths,
+        limits,
+        deadline,
+        &mut is_cancelled,
+    )
 }
 
-fn capture_git_output(
+fn capture_git_path_outputs(
     root: &Path,
     limits: GitPathDiscoveryLimits,
     deadline: Instant,
     is_cancelled: &mut impl FnMut() -> bool,
+) -> Result<CapturedGitPathOutputs, GitPathDiscoveryError> {
+    let mut captured_output_bytes = 0_u64;
+    let cached = capture_git_scope_output(
+        root,
+        GitPathDiscoveryScope::Cached,
+        limits,
+        deadline,
+        &mut captured_output_bytes,
+        is_cancelled,
+    )?;
+    let untracked = capture_git_scope_output(
+        root,
+        GitPathDiscoveryScope::Untracked,
+        limits,
+        deadline,
+        &mut captured_output_bytes,
+        is_cancelled,
+    )?;
+    let deleted = capture_git_scope_output(
+        root,
+        GitPathDiscoveryScope::Deleted,
+        limits,
+        deadline,
+        &mut captured_output_bytes,
+        is_cancelled,
+    )?;
+    Ok((cached, untracked, deleted))
+}
+
+fn capture_git_scope_output(
+    worktree_root: &Path,
+    scope: GitPathDiscoveryScope,
+    limits: GitPathDiscoveryLimits,
+    deadline: Instant,
+    captured_output_bytes: &mut u64,
+    is_cancelled: &mut impl FnMut() -> bool,
 ) -> Result<Vec<u8>, GitPathDiscoveryError> {
-    let worktree_root = discovered_worktree_root(root)?;
+    let remaining_output_bytes = limits
+        .output_bytes()
+        .checked_sub(*captured_output_bytes)
+        .ok_or(GitPathDiscoveryError::OutputByteLimitExceeded {
+            limit: limits.output_bytes(),
+        })?;
+    let scoped_limits = GitPathDiscoveryLimits::new(
+        limits.deadline(),
+        remaining_output_bytes,
+        limits.paths(),
+        limits.repository_path(),
+    );
     check_operation_control(deadline, limits.deadline(), is_cancelled)?;
-    let command = sanitized_git_command(&worktree_root, GitPathDiscoveryScope::CachedAndUntracked);
-    capture_git_output_from_command(command, limits, deadline, is_cancelled)
+    let command = sanitized_git_command(worktree_root, scope);
+    let output = capture_git_output_from_command(command, scoped_limits, deadline, is_cancelled)?;
+    let output_bytes = u64::try_from(output.len())
+        .map_err(|_| GitPathDiscoveryError::OutputByteCountNotRepresentable)?;
+    *captured_output_bytes = captured_output_bytes
+        .checked_add(output_bytes)
+        .ok_or(GitPathDiscoveryError::OutputByteCountNotRepresentable)?;
+    Ok(output)
 }
 
 pub(crate) fn capture_git_output_from_command(
@@ -514,6 +600,7 @@ pub(crate) fn capture_git_output_with_status_from_command(
     outcome
 }
 
+include!("git_paths/reconciliation.rs");
 include!("git_paths/process.rs");
 
 #[cfg(test)]

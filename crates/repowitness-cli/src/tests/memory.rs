@@ -1,8 +1,8 @@
 use super::*;
 
 struct RecordingMemory {
-    revalidate_result: RefCell<Option<Result<CliMemoryRevalidationReport, &'static str>>>,
-    recall_result: RefCell<Option<Result<MemoryRecallOutput, &'static str>>>,
+    revalidate_result: RefCell<Option<Result<CliMemoryRevalidationReport, CliMemoryError>>>,
+    recall_result: RefCell<Option<Result<MemoryRecallOutput, CliMemoryError>>>,
     revalidate_calls: Cell<u64>,
     recall_calls: Cell<u64>,
     repository_root: RefCell<Option<PathBuf>>,
@@ -17,7 +17,7 @@ impl RecordingMemory {
     fn revalidation(report: CliMemoryRevalidationReport) -> Self {
         Self {
             revalidate_result: RefCell::new(Some(Ok(report))),
-            recall_result: RefCell::new(Some(Err("must not be called"))),
+            recall_result: RefCell::new(Some(Err(CliMemoryError::Failed))),
             revalidate_calls: Cell::new(0),
             recall_calls: Cell::new(0),
             repository_root: RefCell::new(None),
@@ -31,7 +31,7 @@ impl RecordingMemory {
 
     fn recall(report: MemoryRecallOutput) -> Self {
         Self {
-            revalidate_result: RefCell::new(Some(Err("must not be called"))),
+            revalidate_result: RefCell::new(Some(Err(CliMemoryError::Failed))),
             recall_result: RefCell::new(Some(Ok(report))),
             revalidate_calls: Cell::new(0),
             recall_calls: Cell::new(0),
@@ -45,9 +45,28 @@ impl RecordingMemory {
     }
 
     fn failure(message: &'static str) -> Self {
+        let _ = message;
         Self {
-            revalidate_result: RefCell::new(Some(Err(message))),
-            recall_result: RefCell::new(Some(Err(message))),
+            revalidate_result: RefCell::new(Some(Err(CliMemoryError::Failed))),
+            recall_result: RefCell::new(Some(Err(CliMemoryError::Failed))),
+            revalidate_calls: Cell::new(0),
+            recall_calls: Cell::new(0),
+            repository_root: RefCell::new(None),
+            database: RefCell::new(None),
+            repository_identity: RefCell::new(None),
+            recall_all: Cell::new(None),
+            recall_query: RefCell::new(None),
+            recall_limit: Cell::new(None),
+        }
+    }
+
+    fn revalidation_outcome_unknown(operation: MemoryMutationOperation) -> Self {
+        Self {
+            revalidate_result: RefCell::new(Some(Err(CliMemoryError::MutationOutcomeUnknown {
+                request_scope: MemoryMutationRequestScope::Revalidation,
+                operation,
+            }))),
+            recall_result: RefCell::new(Some(Err(CliMemoryError::Failed))),
             revalidate_calls: Cell::new(0),
             recall_calls: Cell::new(0),
             repository_root: RefCell::new(None),
@@ -64,7 +83,7 @@ impl RepositoryMemory for RecordingMemory {
     fn revalidate(
         &self,
         invocation: &MemoryRevalidationInvocation,
-    ) -> Result<CliMemoryRevalidationReport, String> {
+    ) -> Result<CliMemoryRevalidationReport, CliMemoryError> {
         self.revalidate_calls.set(self.revalidate_calls.get() + 1);
         self.repository_root
             .replace(Some(invocation.repository_root.clone()));
@@ -75,14 +94,13 @@ impl RepositoryMemory for RecordingMemory {
             .borrow_mut()
             .take()
             .expect("revalidation fake is called at most once")
-            .map_err(str::to_owned)
     }
 
     fn recall(
         &self,
         invocation: &MemoryRecallInvocation,
         _configuration: &ResolvedConfiguration,
-    ) -> Result<MemoryRecallOutput, String> {
+    ) -> Result<MemoryRecallOutput, CliMemoryError> {
         self.recall_calls.set(self.recall_calls.get() + 1);
         self.database.replace(Some(invocation.database.clone()));
         self.repository_identity
@@ -99,7 +117,6 @@ impl RepositoryMemory for RecordingMemory {
             .borrow_mut()
             .take()
             .expect("recall fake is called at most once")
-            .map_err(str::to_owned)
     }
 }
 
@@ -211,6 +228,7 @@ fn memory_revalidation_passes_explicit_inputs_and_reports_public_counts() {
         unresolved_records: 2,
         git_queries: 5,
         head_available: true,
+        maintenance: CliMemoryMaintenanceStatus::all_steps_deferred_for_test(),
     });
     let identity = identity();
     let (code, stdout, stderr) = invoke_memory(
@@ -229,6 +247,12 @@ fn memory_revalidation_passes_explicit_inputs_and_reports_public_counts() {
     assert!(stdout.contains("operation=memory-revalidate\n"));
     assert!(stdout.contains("projection=4\ngeneration=7\nsource_epoch=2\n"));
     assert!(stdout.contains("projected_records=3\n"));
+    assert!(stdout.contains("status=warning\n"));
+    assert!(stdout.contains("maintenance_complete=false\n"));
+    assert!(stdout.contains("maintenance_warning_count=2\n"));
+    assert!(stdout.contains("maintenance_checkpoint=deferred\n"));
+    assert!(stdout.contains("maintenance_shutdown=deferred\n"));
+    assert!(stdout.contains("database_identity_fence=confirmed_at_final_fence\n"));
     assert!(!stdout.contains("private"));
     assert_eq!(memory.revalidate_calls.get(), 1);
     assert_eq!(
@@ -373,4 +397,98 @@ fn memory_help_and_failures_are_redacted() {
     assert_eq!(code, EXIT_SOFTWARE);
     assert!(stdout.is_empty());
     assert_eq!(stderr, "error: memory revalidation failed\n");
+}
+
+#[test]
+fn revalidation_outcome_unknown_preserves_phase_guidance_without_retry_or_private_data() {
+    let memory = RecordingMemory::revalidation_outcome_unknown(
+        MemoryMutationOperation::ProjectionPublication,
+    );
+    let identity = identity();
+    let (code, stdout, stderr) = invoke_memory(
+        &[
+            "memory-revalidate",
+            "--repository-id",
+            &identity,
+            "--database",
+            "private-revalidation.db",
+            "private-revalidation-repository",
+        ],
+        &memory,
+    );
+    assert_eq!(code, EXIT_SOFTWARE);
+    assert!(stdout.is_empty());
+    assert!(stderr.contains("request_scope=revalidation\noperation=projection_publication\n"));
+    assert!(stderr.contains(
+        "reconciliation_required_before_retry=reopen the store and read the active memory projection for the exact source generation\n"
+    ));
+    assert!(stderr.ends_with("automatic_retry=false\n"));
+    assert!(!stderr.contains("private"));
+    assert!(!stderr.contains(&identity));
+    assert_eq!(memory.revalidate_calls.get(), 1);
+
+    for (local, expected) in [
+        (
+            LocalMemoryRevalidationMutation::StoreStartup,
+            MemoryMutationOperation::StoreStartup,
+        ),
+        (
+            LocalMemoryRevalidationMutation::ProjectionPublication,
+            MemoryMutationOperation::ProjectionPublication,
+        ),
+        (
+            LocalMemoryRevalidationMutation::Checkpoint,
+            MemoryMutationOperation::Checkpoint,
+        ),
+    ] {
+        assert_eq!(
+            CliMemoryError::from_revalidation(
+                LocalMemoryRevalidationError::MutationOutcomeUnknown { operation: local },
+            ),
+            CliMemoryError::MutationOutcomeUnknown {
+                request_scope: MemoryMutationRequestScope::Revalidation,
+                operation: expected,
+            }
+        );
+    }
+}
+
+struct FailingMemoryReceiptWriter;
+
+impl io::Write for FailingMemoryReceiptWriter {
+    fn write(&mut self, _buffer: &[u8]) -> io::Result<usize> {
+        Err(io::Error::other("injected output failure"))
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn undelivered_revalidation_receipt_requires_reconciliation_and_no_retry() {
+    let mut stderr = Vec::new();
+    let report = CliMemoryRevalidationReport {
+        projection_id: 4,
+        generation: 7,
+        source_epoch: 2,
+        recovered_generations: 1,
+        projected_records: 3,
+        skipped_records: 1,
+        unresolved_records: 2,
+        git_queries: 5,
+        head_available: true,
+        maintenance: CliMemoryMaintenanceStatus::confirmed_for_test(),
+    };
+    assert_eq!(
+        emit_memory_revalidation_report(&mut FailingMemoryReceiptWriter, &mut stderr, report,),
+        EXIT_IO
+    );
+    let stderr = String::from_utf8(stderr).expect("diagnostic should be UTF-8");
+    assert!(stderr.starts_with("error: committed memory receipt could not be written\n"));
+    assert!(stderr.contains("request_scope=revalidation\noperation=projection_publication\n"));
+    assert!(
+        stderr.contains(MemoryMutationOperation::ProjectionPublication.reconciliation_guidance())
+    );
+    assert!(stderr.ends_with("automatic_retry=false\n"));
 }

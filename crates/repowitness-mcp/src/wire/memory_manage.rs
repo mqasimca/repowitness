@@ -6,13 +6,19 @@ use repowitness_application::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::{MAX_MCP_INTEROPERABLE_INTEGER, is_lowercase_sha256, validate_timeout};
+use super::{
+    MAX_MCP_INTEROPERABLE_INTEGER, MemoryMutationRequestScope, is_lowercase_sha256,
+    validate_timeout,
+};
 
 const MAX_INLINE_MEMORY_YAML_BYTES: usize = 64 * 1024;
 const MAX_MEMORY_EVIDENCE_ORDINAL: u8 = 15;
 const MAX_REVIEW_PATH_TEXT_BYTES: u64 = 65_535;
 const MAX_REVIEW_PATH_BYTES: u64 = 32_764;
 const MAX_REVIEW_PATH_COMPONENTS: u64 = 16_382;
+
+/// Current `memory_manage` receipt schema with explicit maintenance truth.
+pub const MEMORY_MANAGE_SCHEMA_VERSION: u16 = 2;
 
 /// Allow-listed mutation selected by the opt-in `memory_manage` tool.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq)]
@@ -198,6 +204,17 @@ impl MemoryManageServiceRequest {
         }
     }
 
+    /// Returns the request-level durable operation for timeout reconciliation.
+    #[must_use]
+    pub const fn mutation_request_scope(&self) -> MemoryMutationRequestScope {
+        match self {
+            Self::Write { .. } => MemoryMutationRequestScope::Write,
+            Self::Approve { .. } => MemoryMutationRequestScope::Approve,
+            Self::Review { .. } => MemoryMutationRequestScope::Review,
+            Self::ImportHistory { .. } => MemoryMutationRequestScope::ImportHistory,
+        }
+    }
+
     pub(crate) fn with_timeout(mut self, timeout: Duration) -> Self {
         match &mut self {
             Self::Write {
@@ -247,7 +264,7 @@ impl fmt::Debug for MemoryManageServiceRequest {
     }
 }
 
-/// Version-1 redacted receipt from one authorized memory mutation.
+/// Version-2 redacted receipt from one authorized memory mutation.
 #[derive(Clone, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct MemoryManageOutput {
@@ -282,11 +299,15 @@ pub enum MemoryManageReceipt {
         observation_inserted: bool,
         /// Whether the trusted approval was newly appended.
         approval_inserted: bool,
+        /// Truthful post-commit SQLite maintenance status.
+        maintenance: MemoryManageMaintenanceStatus,
     },
     /// Correspondence-review append receipt.
     Review {
         /// Whether a new semantic review event was appended.
         inserted: bool,
+        /// Truthful post-commit SQLite maintenance status.
+        maintenance: MemoryManageMaintenanceStatus,
     },
     /// Observation-only Git-history import report.
     ImportHistory {
@@ -304,7 +325,79 @@ pub enum MemoryManageReceipt {
         git_processes: u32,
         /// Whether the bounded reachable-history coverage was complete.
         history_complete: bool,
+        /// Truthful post-commit SQLite maintenance status.
+        maintenance: MemoryManageMaintenanceStatus,
     },
+}
+
+/// Categorical state of one post-commit SQLite maintenance step.
+#[derive(Clone, Copy, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryManageMaintenanceStepStatus {
+    /// The step completed at its named final fence.
+    Complete,
+    /// The durable receipt is known, but the step was not confirmed.
+    Deferred,
+}
+
+/// Database-path identity evidence observed after a committed SQLite mutation.
+#[derive(Clone, Copy, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryManageDatabaseIdentityStatus {
+    /// The canonical path named the exact unique writer-opened file.
+    ConfirmedAtFinalFence,
+    /// The path, file type, link policy, or identity changed after commit.
+    ChangedAfterCommit,
+    /// The final identity could not be determined safely.
+    Unconfirmed,
+}
+
+/// Path-free finalization evidence for one committed SQLite memory mutation.
+#[derive(Clone, Copy, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MemoryManageMaintenanceStatus {
+    /// Whether every maintenance step and the database identity fence completed.
+    pub complete: bool,
+    /// Exact number of deferred or unconfirmed finalization facts.
+    pub warning_count: u8,
+    /// Terminal WAL-checkpoint status.
+    pub checkpoint: MemoryManageMaintenanceStepStatus,
+    /// Writer-shutdown status.
+    pub shutdown: MemoryManageMaintenanceStepStatus,
+    /// Database-path evidence at the final fence.
+    pub database_identity: MemoryManageDatabaseIdentityStatus,
+}
+
+impl MemoryManageMaintenanceStatus {
+    /// Constructs internally consistent finalization evidence.
+    #[must_use]
+    pub const fn from_evidence(
+        checkpoint: MemoryManageMaintenanceStepStatus,
+        shutdown: MemoryManageMaintenanceStepStatus,
+        database_identity: MemoryManageDatabaseIdentityStatus,
+    ) -> Self {
+        let checkpoint_warning = match checkpoint {
+            MemoryManageMaintenanceStepStatus::Complete => 0,
+            MemoryManageMaintenanceStepStatus::Deferred => 1,
+        };
+        let shutdown_warning = match shutdown {
+            MemoryManageMaintenanceStepStatus::Complete => 0,
+            MemoryManageMaintenanceStepStatus::Deferred => 1,
+        };
+        let identity_warning = match database_identity {
+            MemoryManageDatabaseIdentityStatus::ConfirmedAtFinalFence => 0,
+            MemoryManageDatabaseIdentityStatus::ChangedAfterCommit
+            | MemoryManageDatabaseIdentityStatus::Unconfirmed => 1,
+        };
+        let warning_count = checkpoint_warning + shutdown_warning + identity_warning;
+        Self {
+            complete: warning_count == 0,
+            warning_count,
+            checkpoint,
+            shutdown,
+            database_identity,
+        }
+    }
 }
 
 /// Identity confirmation observed at one memory-file final fence.
@@ -347,34 +440,8 @@ pub struct MemoryManagePublicationStatus {
     pub directory_sync: MemoryManagePublicationStepStatus,
 }
 
-impl MemoryManagePublicationStatus {
-    /// Returns the complete, warning-free state used by legacy constructors.
-    #[must_use]
-    pub const fn complete() -> Self {
-        Self {
-            complete: true,
-            warning_count: 0,
-            temporary_cleanup: MemoryManagePublicationStepStatus::Complete,
-            target_identity: MemoryManageFileIdentityStatus::ConfirmedAtFinalFence,
-            records_directory_identity: MemoryManageFileIdentityStatus::ConfirmedAtFinalFence,
-            directory_sync: MemoryManagePublicationStepStatus::Complete,
-        }
-    }
-}
-
 impl MemoryManageOutput {
-    /// Constructs a version-1 canonical record-publication receipt.
-    #[must_use]
-    pub fn write(revision_sha256: String, created: bool, canonical_bytes: u64) -> Self {
-        Self::write_with_publication(
-            revision_sha256,
-            created,
-            canonical_bytes,
-            MemoryManagePublicationStatus::complete(),
-        )
-    }
-
-    /// Constructs a version-1 canonical record-publication receipt with its
+    /// Constructs a version-2 canonical record-publication receipt with its
     /// exact post-commit status.
     #[must_use]
     pub fn write_with_publication(
@@ -384,7 +451,7 @@ impl MemoryManageOutput {
         publication: MemoryManagePublicationStatus,
     ) -> Self {
         Self {
-            schema_version: 1,
+            schema_version: MEMORY_MANAGE_SCHEMA_VERSION,
             receipt: MemoryManageReceipt::Write {
                 revision_sha256,
                 created,
@@ -394,41 +461,49 @@ impl MemoryManageOutput {
         }
     }
 
-    /// Constructs a version-1 local approval receipt.
+    /// Constructs a version-2 local approval receipt with truthful maintenance.
     #[must_use]
-    pub fn approve(
+    pub fn approve_with_maintenance(
         revision_sha256: String,
         version_inserted: bool,
         observation_inserted: bool,
         approval_inserted: bool,
+        maintenance: MemoryManageMaintenanceStatus,
     ) -> Self {
         Self {
-            schema_version: 1,
+            schema_version: MEMORY_MANAGE_SCHEMA_VERSION,
             receipt: MemoryManageReceipt::Approve {
                 revision_sha256,
                 version_inserted,
                 observation_inserted,
                 approval_inserted,
+                maintenance,
             },
         }
     }
 
-    /// Constructs a version-1 correspondence-review receipt.
+    /// Constructs a version-2 correspondence-review receipt with truthful maintenance.
     #[must_use]
-    pub const fn review(inserted: bool) -> Self {
+    pub const fn review_with_maintenance(
+        inserted: bool,
+        maintenance: MemoryManageMaintenanceStatus,
+    ) -> Self {
         Self {
-            schema_version: 1,
-            receipt: MemoryManageReceipt::Review { inserted },
+            schema_version: MEMORY_MANAGE_SCHEMA_VERSION,
+            receipt: MemoryManageReceipt::Review {
+                inserted,
+                maintenance,
+            },
         }
     }
 
-    /// Constructs a version-1 observation-only history-import report.
+    /// Constructs a version-2 history-import report with truthful maintenance.
     #[allow(
         clippy::too_many_arguments,
-        reason = "the bounded import receipt keeps every coverage count explicit"
+        reason = "the bounded import receipt and maintenance state remain explicit"
     )]
     #[must_use]
-    pub const fn import_history(
+    pub const fn import_history_with_maintenance(
         commits_inspected: u32,
         records_inspected: u32,
         imported_versions: u32,
@@ -436,9 +511,10 @@ impl MemoryManageOutput {
         total_record_bytes: u64,
         git_processes: u32,
         history_complete: bool,
+        maintenance: MemoryManageMaintenanceStatus,
     ) -> Self {
         Self {
-            schema_version: 1,
+            schema_version: MEMORY_MANAGE_SCHEMA_VERSION,
             receipt: MemoryManageReceipt::ImportHistory {
                 commits_inspected,
                 records_inspected,
@@ -447,6 +523,7 @@ impl MemoryManageOutput {
                 total_record_bytes,
                 git_processes,
                 history_complete,
+                maintenance,
             },
         }
     }
@@ -526,175 +603,5 @@ fn reject_non_history_fields(input: &MemoryManageInput) -> Result<(), &'static s
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    const RECORD_ID: &str = "mem_00000000000000000000000000";
-
-    #[test]
-    fn operations_are_exact_bounded_and_redacted() {
-        let write: MemoryManageInput = serde_json::from_value(serde_json::json!({
-            "operation": "write",
-            "record_yaml": "private memory yaml",
-            "timeout_ms": 100
-        }))
-        .expect("write input");
-        assert!(!format!("{write:?}").contains("private"));
-        assert!(matches!(
-            write.validate().expect("valid write"),
-            MemoryManageServiceRequest::Write { .. }
-        ));
-
-        let approve: MemoryManageInput = serde_json::from_value(serde_json::json!({
-            "operation": "approve",
-            "record_id": RECORD_ID
-        }))
-        .expect("approval input");
-        assert!(matches!(
-            approve.validate().expect("valid approval"),
-            MemoryManageServiceRequest::Approve { .. }
-        ));
-
-        let review: MemoryManageInput = serde_json::from_value(serde_json::json!({
-            "operation": "review",
-            "record_id": RECORD_ID,
-            "revision_sha256": "11".repeat(32),
-            "evidence_ordinal": 15,
-            "review_decision": "manual_link",
-            "target_path": "rwp1:h:7372632F6C69622E7273",
-            "target_artifact_sha256": "22".repeat(32),
-            "target_fact_ordinal": MAX_MCP_INTEROPERABLE_INTEGER,
-        }))
-        .expect("review input");
-        let request = review.validate().expect("valid review");
-        assert!(!format!("{request:?}").contains("737263"));
-        assert!(matches!(
-            request,
-            MemoryManageServiceRequest::Review {
-                decision: MemoryManageReviewDecision::ManualLink,
-                ..
-            }
-        ));
-
-        let history: MemoryManageInput =
-            serde_json::from_value(serde_json::json!({"operation": "import_history"}))
-                .expect("history input");
-        assert!(matches!(
-            history.validate().expect("valid history"),
-            MemoryManageServiceRequest::ImportHistory { .. }
-        ));
-    }
-
-    #[test]
-    fn invalid_combinations_and_unknown_fields_fail_closed() {
-        assert!(
-            serde_json::from_value::<MemoryManageInput>(serde_json::json!({
-                "operation": "approve",
-                "record_id": RECORD_ID,
-                "actor": "untrusted-caller"
-            }),)
-            .is_err()
-        );
-        for value in [
-            serde_json::json!({
-                "operation": "write",
-                "record_yaml": "",
-            }),
-            serde_json::json!({
-                "operation": "approve",
-                "record_id": RECORD_ID,
-                "record_yaml": "not allowed",
-            }),
-            serde_json::json!({
-                "operation": "review",
-                "record_id": RECORD_ID,
-                "revision_sha256": "11".repeat(32),
-                "evidence_ordinal": 16,
-                "review_decision": "approve",
-                "target_path": "rwp1:h:7372632F6C69622E7273",
-                "target_artifact_sha256": "22".repeat(32),
-                "target_fact_ordinal": 0,
-            }),
-            serde_json::json!({
-                "operation": "import_history",
-                "record_id": RECORD_ID,
-            }),
-            serde_json::json!({
-                "operation": "review",
-                "record_id": RECORD_ID,
-                "revision_sha256": "11".repeat(32),
-                "evidence_ordinal": 0,
-                "review_decision": "approve",
-                "target_path": "rwp1:h:7372632F6C69622E7273",
-                "target_artifact_sha256": "22".repeat(32),
-                "target_fact_ordinal": MAX_MCP_INTEROPERABLE_INTEGER + 1,
-            }),
-        ] {
-            let input: MemoryManageInput = serde_json::from_value(value).expect("wire shape");
-            assert!(input.validate().is_err());
-        }
-    }
-
-    #[test]
-    fn review_rejects_encoded_invalid_repository_paths() {
-        for target_path in [
-            "rwp1:h:00",
-            "rwp1:h:2F737263",
-            "rwp1:h:7372632F2E2E2F6C69622E7273",
-            "rwp1:h:7372632F2E6769742F636F6E666967",
-        ] {
-            let input: MemoryManageInput = serde_json::from_value(serde_json::json!({
-                "operation": "review",
-                "record_id": RECORD_ID,
-                "revision_sha256": "11".repeat(32),
-                "evidence_ordinal": 0,
-                "review_decision": "approve",
-                "target_path": target_path,
-                "target_artifact_sha256": "22".repeat(32),
-                "target_fact_ordinal": 0,
-            }))
-            .expect("wire shape");
-            assert!(input.validate().is_err());
-        }
-    }
-
-    #[test]
-    fn inline_yaml_byte_limit_is_inclusive() {
-        let exact: MemoryManageInput = serde_json::from_value(serde_json::json!({
-            "operation": "write",
-            "record_yaml": "x".repeat(MAX_INLINE_MEMORY_YAML_BYTES),
-        }))
-        .expect("wire shape");
-        assert!(exact.validate().is_ok());
-
-        let oversized: MemoryManageInput = serde_json::from_value(serde_json::json!({
-            "operation": "write",
-            "record_yaml": "x".repeat(MAX_INLINE_MEMORY_YAML_BYTES + 1),
-        }))
-        .expect("wire shape");
-        assert!(oversized.validate().is_err());
-    }
-
-    #[test]
-    fn write_receipt_preserves_post_commit_warnings_without_paths() {
-        let output = MemoryManageOutput::write_with_publication(
-            "11".repeat(32),
-            true,
-            12,
-            MemoryManagePublicationStatus {
-                complete: false,
-                warning_count: 2,
-                temporary_cleanup: MemoryManagePublicationStepStatus::Deferred,
-                target_identity: MemoryManageFileIdentityStatus::ChangedAfterCommit,
-                records_directory_identity: MemoryManageFileIdentityStatus::ConfirmedAtFinalFence,
-                directory_sync: MemoryManagePublicationStepStatus::Complete,
-            },
-        );
-        let value = serde_json::to_value(output).expect("output serializes");
-        let publication = &value["receipt"]["publication"];
-        assert_eq!(publication["complete"], false);
-        assert_eq!(publication["warning_count"], 2);
-        assert_eq!(publication["target_identity"], "changed_after_commit");
-        assert!(!value.to_string().contains('/'));
-    }
-}
+#[path = "memory_manage_tests.rs"]
+mod tests;

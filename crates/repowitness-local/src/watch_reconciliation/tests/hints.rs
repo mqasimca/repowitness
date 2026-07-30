@@ -1,6 +1,6 @@
 use super::super::{
-    MAX_WATCHER_HINT_PATH_BYTES, MAX_WATCHER_HINT_PATHS, WatcherHintAccumulator,
-    WatcherHintAdmission, WatcherHintLimitError, WatcherHintLimits,
+    DEFAULT_WATCHER_HINT_PATHS, MAX_WATCHER_HINT_PATH_BYTES, MAX_WATCHER_HINT_PATHS,
+    WatcherHintAccumulator, WatcherHintAdmission, WatcherHintLimitError, WatcherHintLimits,
 };
 use super::path;
 
@@ -151,6 +151,43 @@ fn overflow_storms_are_bounded_and_order_independent() {
     assert!(forward_batch.paths().is_empty());
     assert_eq!(forward.pending_path_count().get(), 0);
     assert_eq!(reverse.pending_path_bytes().get(), 0);
+}
+
+#[test]
+fn default_capacity_bounds_a_large_dirty_set_and_fails_closed_on_one_more_path() {
+    let mut accumulator = WatcherHintAccumulator::new(WatcherHintLimits::default());
+    let mut retained_bytes = 0_u64;
+    for index in 0..DEFAULT_WATCHER_HINT_PATHS {
+        let value = format!("generated/{index:05}.rs").into_bytes();
+        retained_bytes += u64::try_from(value.len()).expect("fixture path length must fit");
+        assert_eq!(
+            accumulator.record_hint(path(&value)),
+            WatcherHintAdmission::Retained
+        );
+    }
+
+    assert_eq!(
+        accumulator.pending_path_count().get(),
+        DEFAULT_WATCHER_HINT_PATHS
+    );
+    assert_eq!(accumulator.pending_path_bytes().get(), retained_bytes);
+    assert_eq!(
+        accumulator.record_hint(path(b"generated/overflow.rs")),
+        WatcherHintAdmission::PathCountOverflow
+    );
+    assert!(accumulator.full_reconciliation_required());
+    assert_eq!(accumulator.pending_path_count().get(), 0);
+    assert_eq!(accumulator.pending_path_bytes().get(), 0);
+    assert_eq!(
+        accumulator.counters().observed_events(),
+        u64::from(DEFAULT_WATCHER_HINT_PATHS) + 1
+    );
+    assert_eq!(accumulator.counters().overflow_events(), 1);
+
+    let batch = accumulator.drain();
+    assert!(batch.full_reconciliation_required());
+    assert!(batch.causes().path_count_overflow());
+    assert!(batch.paths().is_empty());
 }
 
 #[test]
