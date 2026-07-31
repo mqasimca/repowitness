@@ -30,6 +30,8 @@ fn memory_manage_tool_is_default_deny_and_conservatively_annotated() {
             IMPACT_ANALYZE_TOOL_NAME,
             MEMORY_MANAGE_TOOL_NAME,
             MEMORY_RECALL_TOOL_NAME,
+            PHASE2_CONTEXT_BUILD_TOOL_NAME,
+            SCIP_EVIDENCE_TOOL_NAME,
             SYMBOL_GET_TOOL_NAME,
         ]
     );

@@ -9,10 +9,14 @@ pub enum RepositoryServiceError {
     CodeSearch,
     /// Context compilation failed without a usable result.
     ContextBuild,
+    /// Phase 2 context compilation failed without a usable result.
+    Phase2ContextBuild,
     /// Repository diagnostics failed without a usable result.
     Diagnostics,
     /// Native Rust graph read failed without a usable result.
     GraphRead,
+    /// Immutable package-scoped SCIP evidence read failed without a usable result.
+    ScipEvidence,
     /// Memory recall failed without a usable result.
     MemoryRecall,
     /// Authorized local memory management failed without a usable result.
@@ -52,8 +56,10 @@ impl fmt::Display for RepositoryServiceError {
         formatter.write_str(match self {
             Self::CodeSearch => "code search failed",
             Self::ContextBuild => "context build failed",
+            Self::Phase2ContextBuild => "Phase 2 context build failed",
             Self::Diagnostics => "repository diagnostics failed",
             Self::GraphRead => "Rust graph read failed",
+            Self::ScipEvidence => "SCIP evidence read failed",
             Self::MemoryRecall => "memory recall failed",
             Self::MemoryManage => "memory management failed",
             Self::MemoryMutationOutcomeUnknown { .. } => {

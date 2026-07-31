@@ -18,7 +18,9 @@ mod graph;
 mod memory_manage;
 mod memory_mutation;
 mod memory_recall;
+mod phase2_context;
 mod repository_service_error;
+mod scip_evidence;
 
 pub use compatibility::{
     COMPATIBILITY_PROFILE_VERSION, CompatibilityGraphSchema, CompatibilityGraphSchemaLimits,
@@ -64,12 +66,23 @@ pub use memory_recall::{
     McpMemoryProducer, McpMemoryRecord, McpMemoryTarget, McpSelectedMemory, MemoryRecallInput,
     MemoryRecallOutput, MemoryRecallServiceRequest, MemoryRecallServiceSelection,
 };
+pub use phase2_context::{
+    McpPhase2ContextAttribution, McpPhase2ContextItem, McpPhase2ContextOmission,
+    McpPhase2ContextPayload, McpPhase2ContextProviderCoverage, McpPhase2ContextScope,
+    Phase2ContextBuildInput, Phase2ContextBuildOutput, Phase2ContextBuildServiceRequest,
+};
 pub use repository_service_error::RepositoryServiceError;
+pub use scip_evidence::{
+    McpScipOccurrence, McpScipOverlay, McpScipRelationship, ScipEvidenceInput, ScipEvidenceOutput,
+    ScipEvidenceServiceRequest,
+};
 
 /// MCP tool name for bounded lexical supported-language symbol search.
 pub const CODE_SEARCH_TOOL_NAME: &str = "code_search";
 /// MCP tool name for deterministic bounded context compilation.
 pub const CONTEXT_BUILD_TOOL_NAME: &str = "context_build";
+/// MCP tool name for the separate evidence-balanced Phase 2 context profile.
+pub const PHASE2_CONTEXT_BUILD_TOOL_NAME: &str = "phase2_context_build";
 /// MCP tool name for transactionally pinned read-only repository diagnostics.
 pub const DIAGNOSTICS_TOOL_NAME: &str = "diagnostics";
 /// MCP tool name for generation-pinned engineering-memory retrieval.
@@ -78,6 +91,8 @@ pub const MEMORY_RECALL_TOOL_NAME: &str = "memory_recall";
 pub const MEMORY_MANAGE_TOOL_NAME: &str = "memory_manage";
 /// MCP tool name for exact verified declaration retrieval.
 pub const SYMBOL_GET_TOOL_NAME: &str = "symbol_get";
+/// MCP tool name for immutable package-scoped SCIP symbol evidence.
+pub const SCIP_EVIDENCE_TOOL_NAME: &str = "scip_evidence";
 
 pub(crate) const DEFAULT_MCP_TIMEOUT_MS: u64 = 5_000;
 pub(crate) const MAX_MCP_TIMEOUT_MS: u64 = 30_000;
@@ -88,6 +103,7 @@ const MAX_PATH_TEXT_BYTES: u64 = 7 + (MAX_PATH_BYTES * 2);
 pub const MAX_MCP_INTEROPERABLE_INTEGER: u64 = 9_007_199_254_740_991;
 pub(crate) const MAX_MCP_SEARCH_OUTPUT_BYTES: usize = 3 * 1024 * 1024;
 pub(crate) const MAX_MCP_CONTEXT_OUTPUT_BYTES: usize = 24 * 1024 * 1024;
+pub(crate) const MAX_MCP_PHASE2_CONTEXT_OUTPUT_BYTES: usize = 24 * 1024 * 1024;
 pub(crate) const MAX_MCP_DIAGNOSTICS_OUTPUT_BYTES: usize = 256 * 1024;
 pub(crate) const MAX_MCP_GRAPH_OUTPUT_BYTES: usize = 64 * 1024 * 1024;
 pub(crate) const MAX_MCP_MEMORY_RECALL_OUTPUT_BYTES: usize = 20 * 1024 * 1024;
@@ -96,6 +112,7 @@ pub(crate) const MAX_MCP_MEMORY_MANAGE_OUTPUT_BYTES: usize = 64 * 1024;
 // A bounded 10 MiB application payload can therefore require almost 60 MiB
 // after exact source representation and nested JSON escaping.
 pub(crate) const MAX_MCP_SYMBOL_OUTPUT_BYTES: usize = 64 * 1024 * 1024;
+pub(crate) const MAX_MCP_SCIP_EVIDENCE_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
 
 /// Version-1 wire input for `code_search`.
 #[derive(Deserialize, JsonSchema)]
@@ -339,6 +356,15 @@ pub trait RepositoryService: Send + Sync + 'static {
         cancelled: Arc<AtomicBool>,
     ) -> Result<ContextBuildOutput, RepositoryServiceError>;
 
+    /// Compiles one bounded evidence-balanced Phase 2 context pack.
+    fn phase2_context_build(
+        &self,
+        _request: Phase2ContextBuildServiceRequest,
+        _cancelled: Arc<AtomicBool>,
+    ) -> Result<Phase2ContextBuildOutput, RepositoryServiceError> {
+        Err(RepositoryServiceError::Phase2ContextBuild)
+    }
+
     /// Reads one transactionally pinned active repository state.
     fn diagnostics(
         &self,
@@ -353,6 +379,15 @@ pub trait RepositoryService: Send + Sync + 'static {
         _cancelled: Arc<AtomicBool>,
     ) -> Result<GraphReadServiceOutput, RepositoryServiceError> {
         Err(RepositoryServiceError::GraphRead)
+    }
+
+    /// Reads bounded package-scoped SCIP evidence from one immutable overlay.
+    fn scip_evidence(
+        &self,
+        _request: ScipEvidenceServiceRequest,
+        _cancelled: Arc<AtomicBool>,
+    ) -> Result<ScipEvidenceOutput, RepositoryServiceError> {
+        Err(RepositoryServiceError::ScipEvidence)
     }
 
     /// Recalls bounded records from the complete active memory projection.

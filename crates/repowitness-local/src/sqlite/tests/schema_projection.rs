@@ -25,11 +25,20 @@ fn migration_checksums_are_stable_golden_vectors() {
         ]
     );
     assert_eq!(
+        migration_checksum(MIGRATION_4),
+        [
+            0x20, 0xcb, 0x92, 0x11, 0xca, 0x11, 0xc4, 0x04, 0x1b, 0x48, 0xb6, 0xc2, 0x87,
+            0xb7, 0x2c, 0x71, 0x43, 0x96, 0xeb, 0x85, 0x3d, 0x11, 0xde, 0x41, 0xaf, 0xf3,
+            0x6c, 0xbd, 0x52, 0xad, 0x23, 0xd8,
+        ]
+    );
+    assert_eq!(
         migrations(),
         [
             (1, MIGRATION_1_NAME, MIGRATION_1),
             (2, MIGRATION_2_NAME, MIGRATION_2),
             (3, MIGRATION_3_NAME, MIGRATION_3),
+            (4, MIGRATION_4_NAME, MIGRATION_4),
         ]
     );
     for transitional_statement in ["CREATE TEMP", "ALTER TABLE", "DROP TABLE"] {
@@ -38,7 +47,7 @@ fn migration_checksums_are_stable_golden_vectors() {
 }
 
 #[test]
-fn current_catalog_matches_the_provisional_version_three_golden() {
+fn current_catalog_matches_the_phase_two_version_four_golden() {
     let directory = TempDirectory::new();
     let connection =
         open_index_writer(&directory.database(), 123).expect("baseline should succeed");
@@ -71,11 +80,177 @@ fn current_catalog_matches_the_provisional_version_three_golden() {
     assert_eq!(
         migration_checksum(&canonical_catalog),
         [
-            0xbf, 0x14, 0xa1, 0xc7, 0x1f, 0xba, 0x3c, 0xf4, 0xab, 0x34, 0x22, 0xc3, 0xbc, 0x20,
-            0x2f, 0x45, 0x8e, 0x80, 0xf6, 0xcd, 0xd9, 0xc2, 0x38, 0x63, 0xa5, 0x3e, 0x3a, 0x16,
-            0x7c, 0x24, 0x0b, 0x15,
+            0xd0, 0x49, 0xd7, 0xcb, 0x31, 0xd8, 0x0e, 0x50, 0x7c, 0xca, 0xaf, 0x1f, 0xd2, 0x7d,
+            0x50, 0xb2, 0xaf, 0xa0, 0xc0, 0x89, 0x27, 0xea, 0x57, 0x83, 0x54, 0xe4, 0x78, 0x03,
+            0x62, 0x95, 0xa9, 0x80,
         ]
     );
+}
+
+#[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "the immutable overlay receipt fixture validates every scoped persisted field in one transactionally constructed schema state"
+)]
+fn scip_overlay_receipt_is_exact_complete_immutable_and_view_scoped() {
+    let directory = TempDirectory::new();
+    let connection =
+        open_index_writer(&directory.database(), 123).expect("migration should succeed");
+    insert_workspace(&connection);
+    insert_active_generation_fixture(&connection);
+    connection
+        .execute_batch(
+            "BEGIN IMMEDIATE;
+             INSERT INTO connected_workspaces(connected_workspace_id)
+             VALUES (X'1010101010101010101010101010101010101010101010101010101010101010');
+             INSERT INTO workspace_source_slots(
+                connected_workspace_id, source_slot_id, repository_identity,
+                generation_workspace_id, source_epoch
+             ) VALUES (
+                X'1010101010101010101010101010101010101010101010101010101010101010',
+                X'2020202020202020202020202020202020202020202020202020202020202020',
+                X'1010101010101010101010101010101010101010101010101010101010101010',
+                1, 0
+             );
+             INSERT INTO source_slot_generation_receipts(
+                connected_workspace_id, source_slot_id, source_epoch,
+                generation_workspace_id, generation_id
+             ) VALUES (
+                X'1010101010101010101010101010101010101010101010101010101010101010',
+                X'2020202020202020202020202020202020202020202020202020202020202020',
+                0, 1, 1
+             );
+             INSERT INTO workspace_views(connected_workspace_id, lifecycle_state)
+             VALUES (
+                X'1010101010101010101010101010101010101010101010101010101010101010',
+                'staging'
+             );
+             INSERT INTO workspace_view_members(
+                workspace_view_id, connected_workspace_id, source_slot_id,
+                source_epoch, ordinal, generation_workspace_id, generation_id
+             ) VALUES (
+                1,
+                X'1010101010101010101010101010101010101010101010101010101010101010',
+                X'2020202020202020202020202020202020202020202020202020202020202020',
+                0, 0, 1, 1
+             );
+             UPDATE workspace_views SET lifecycle_state = 'published'
+             WHERE workspace_view_id = 1;
+             INSERT INTO scip_overlay_receipts(
+                overlay_digest, connected_workspace_id, workspace_view_id,
+                source_slot_id, source_epoch, generation_workspace_id, generation_id,
+                source_snapshot_digest, source_manifest_digest, configuration_digest,
+                producer_digest, schema_digest, importer_digest, input_digest,
+                lifecycle_state, document_count, occurrence_count, relationship_count
+             ) VALUES (
+                X'9999999999999999999999999999999999999999999999999999999999999999',
+                X'1010101010101010101010101010101010101010101010101010101010101010',
+                1,
+                X'2020202020202020202020202020202020202020202020202020202020202020',
+                0, 1, 1,
+                X'3333333333333333333333333333333333333333333333333333333333333333',
+                zeroblob(32), zeroblob(32), zeroblob(32), zeroblob(32),
+                zeroblob(32), zeroblob(32),
+                'staging', 1, 1, 1
+             );
+             COMMIT;",
+        )
+        .expect("exact staging receipt should be accepted");
+
+    assert!(
+        connection
+            .execute(
+                "INSERT INTO scip_overlay_documents(
+                    overlay_digest, document_ordinal, repository_path, content_digest,
+                    occurrence_count, relationship_count
+                 ) VALUES (
+                    X'9999999999999999999999999999999999999999999999999999999999999999',
+                    0, X'6F746865722E7273',
+                    X'4444444444444444444444444444444444444444444444444444444444444444',
+                    1, 1
+                 )",
+                [],
+            )
+            .is_err(),
+        "a document path outside the pinned generation must be rejected"
+    );
+    connection
+        .execute_batch(
+            "INSERT INTO scip_overlay_documents(
+                overlay_digest, document_ordinal, repository_path, content_digest,
+                occurrence_count, relationship_count
+             ) VALUES (
+                X'9999999999999999999999999999999999999999999999999999999999999999',
+                0, X'7372632F6C69622E7273',
+                X'4444444444444444444444444444444444444444444444444444444444444444',
+                1, 1
+             );",
+        )
+        .expect("exact generation document should stage");
+    assert!(
+        connection
+            .execute(
+                "UPDATE scip_overlay_receipts SET lifecycle_state = 'complete'
+                 WHERE overlay_digest =
+                   X'9999999999999999999999999999999999999999999999999999999999999999'",
+                [],
+            )
+            .is_err(),
+        "completion requires all declared facts"
+    );
+    connection
+        .execute_batch(
+            "INSERT INTO scip_overlay_occurrences(
+                overlay_digest, document_ordinal, occurrence_ordinal,
+                symbol, roles, start_byte, end_byte
+             ) VALUES (
+                X'9999999999999999999999999999999999999999999999999999999999999999',
+                0, 0, X'73796D626F6C', 1, 0, 7
+             );
+             INSERT INTO scip_overlay_relationships(
+                overlay_digest, document_ordinal, relationship_ordinal,
+                source_symbol, target_symbol, kinds
+             ) VALUES (
+                X'9999999999999999999999999999999999999999999999999999999999999999',
+                0, 0, X'73796D626F6C', X'746172676574', 1
+             );
+             UPDATE scip_overlay_receipts SET lifecycle_state = 'complete'
+             WHERE overlay_digest =
+               X'9999999999999999999999999999999999999999999999999999999999999999';
+             INSERT INTO active_scip_overlays(
+                connected_workspace_id, source_slot_id, workspace_view_id, overlay_digest
+             ) VALUES (
+                X'1010101010101010101010101010101010101010101010101010101010101010',
+                X'2020202020202020202020202020202020202020202020202020202020202020',
+                1,
+                X'9999999999999999999999999999999999999999999999999999999999999999'
+             );",
+        )
+        .expect("complete exact overlay should activate");
+
+    assert!(
+        connection
+            .execute(
+                "UPDATE scip_overlay_documents SET occurrence_count = 0
+                 WHERE overlay_digest =
+                   X'9999999999999999999999999999999999999999999999999999999999999999'",
+                [],
+            )
+            .is_err(),
+        "completed overlay documents must be immutable"
+    );
+    let active: (i64, i64, i64) = connection
+        .query_row(
+            "SELECT receipt.document_count, receipt.occurrence_count,
+                    receipt.relationship_count
+             FROM active_scip_overlays AS active
+             JOIN scip_overlay_receipts AS receipt
+               ON receipt.overlay_digest = active.overlay_digest",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("active receipt should remain readable");
+    assert_eq!(active, (1, 1, 1));
 }
 
 #[test]
@@ -136,6 +311,10 @@ fn fresh_database_has_exact_identity_ledger_and_required_schema() {
                     'source_slot_generation_receipts',
                     'workspace_views', 'workspace_view_members',
                     'active_workspace_views',
+                    'scip_overlay_receipts', 'scip_overlay_documents',
+                    'scip_overlay_occurrences', 'scip_overlay_relationships',
+                    'active_scip_overlays',
+                    'retention_scip_overlay_garbage',
                     'rust_graph_artifacts', 'rust_graph_sites',
                     'generation_graph_requirements',
                     'generation_graph_publications',
@@ -232,12 +411,18 @@ fn fresh_database_has_exact_identity_ledger_and_required_schema() {
                 migration_checksum(MIGRATION_3).to_vec(),
                 123
             ),
+            (
+                4,
+                MIGRATION_4_NAME.to_owned(),
+                migration_checksum(MIGRATION_4).to_vec(),
+                123
+            ),
         ]
     );
-    assert_eq!(tables, 46);
+    assert_eq!(tables, 52);
     assert_eq!(memory_schema_objects, (4, 30));
     assert_eq!(graph_schema_objects, (2, 26));
-    assert_eq!(retention_schema_objects, (6, 13));
+    assert_eq!(retention_schema_objects, (7, 15));
     let payload_column: (String, i64) = connection
         .query_row(
             "SELECT type, [notnull] FROM pragma_table_info('analysis_artifacts')

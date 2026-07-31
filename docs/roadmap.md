@@ -63,9 +63,9 @@ The output is a design-partner alpha, not a general public beta.
 | Rust workspace and engineering baseline | Implemented | Six packages, enforced dependency policy, pinned Rust/MSRV and dependencies, formatting, Clippy, docs, lockfile, license/advisory/source checks, Make targets, and required Ubuntu PR CI |
 | Repository and source identity | Implemented | Sanitized bounded Git discovery, canonical Git/worktree receipts, exact byte paths, capability-contained no-follow reads, final stability fence, and fail-closed sparse/gitlink scope |
 | Rust, Go, TypeScript, TSX, and Python analysis and incremental reuse | Implemented | Bounded language-specific Tree-sitter facts, one canonical mixed snapshot, five independent artifact identities and payload digests, a checksum-pinned reviewed TypeScript/TSX grammar fix, exact per-language/dialect reuse validation, and clean-versus-incremental equivalence |
-| SQLite publication and recovery | Implemented | Immutable baseline-version-1, compatible accepted parser-diagnostic-version-2, and accepted connected-workspace-version-3 migrations with exact ledger rows and populated upgrade coverage; version 3 adds globally unique bounded source slots, immutable published workspace views, atomic active-view switching, pinned recovery, generation-scoped Rust graph publication, and explicit deterministic bounded retention plan/apply with root revalidation and aggregate audit |
+| SQLite publication and recovery | Implemented | Immutable baseline-version-1, compatible accepted parser-diagnostic-version-2, connected-workspace/version-3, and SCIP-overlay/version-4 migrations with exact ledger rows and populated upgrade coverage; version 3 adds globally unique bounded source slots, immutable published workspace views, atomic active-view switching, pinned recovery, generation-scoped Rust graph publication, and explicit deterministic bounded retention plan/apply with root revalidation and aggregate audit; version 4 adds source-slot/view-scoped immutable SCIP receipts, atomic active-overlay switching, retention-safe overlay collection, and pinned package-scope symbol/relationship reads |
 | Evidence retrieval | Implemented | Bounded literal `code_search`, exact digest-verified `symbol_get`, persisted language, language-specific producer attribution, and native generation-pinned Rust graph status, search, site evidence, architecture, trace, and conservative impact with explicit coverage and limits |
-| CLI and local stdio MCP | Implemented | CLI commands cover indexing, exact retrieval, six native Rust graph reads, canonical memory write/approval/history/review, memory revalidation/recall, context compilation, diagnostics, and path inspection; MCP exposes eleven deterministically ordered read-only tools by default and adds fixed-actor `memory_manage` only under explicit startup authorization |
+| CLI and local stdio MCP | Implemented | CLI commands cover indexing, exact retrieval, six native Rust graph reads, contained source-slot-scoped SCIP import, package-scoped SCIP evidence reads, canonical memory write/approval/history/review, memory revalidation/recall, Phase 0 and separate Phase 2 context compilation, diagnostics, and path inspection; MCP exposes thirteen deterministically ordered read-only tools by default and adds fixed-actor `memory_manage` only under explicit startup authorization |
 | Engineering-memory format | Implemented | Accepted version-1 pure domain values, strict hostile-YAML parser, bounded canonicalizer and deterministic writer, exact golden vectors, independent mutation/property oracle, release resource probes, and a coverage-guided fuzz target |
 | Engineering-memory import and persistence | Implemented | Capability-contained worktree admission and canonical writes, scope-checked import, observation-only bounded Git history, separately trusted approvals, immutable SQLite journal rows, and rebuildable current projections pass rollback, reopen, corruption, idempotency, and online-backup tests |
 | Correspondence and memory revalidation | Implemented | Versioned Rust fingerprints, exact/same-path-rename/exact-Git-move correspondence, explicit ambiguity and staleness, Git-DAG/worktree validity, head conflicts, idempotent approve/reject/manual-link audit events, deterministic conflict aggregation, and atomic projection activation are implemented |
@@ -102,9 +102,33 @@ compatibility fixtures. Broader incumbent compatibility remains deferred.
 
 ## Phase 2 — precision and full context compiler
 
+Phase 2 starts with accepted
+[ADR-0035](adr/0035-phase2-scip-precision-overlay.md), which keeps SCIP as an
+optional immutable precision overlay and preserves the accepted syntax graph,
+and [ADR-0036](adr/0036-phase2-context-ranking-profiles.md), which preserves
+the accepted Phase 0 context profile while defining a separately versioned
+evidence-ranking path. Accepted [ADR-0037](adr/0037-phase2-scip-overlay-source-slot-scope.md)
+defines the unambiguous source-slot scope required before persistence and
+activation.
+
 - Import SCIP and define evidence precedence.
 - Add package-aware cross-file resolution.
 - Implement deterministic multi-stage ranking, named profiles, and token allocation.
+- Initial progress: `phase2-evidence-balanced-v1` has a separate CLI/MCP contract and
+  deterministic pinned syntax/current-memory allocation. An explicit exact SCIP symbol can
+  contribute one source-verified unambiguous overlay occurrence. Unique in-scope native graph
+  edges contribute structural/import or reference/call targets. Exact syntax identifier spans
+  select matching unambiguous SCIP symbols automatically. The history tier admits only a current
+  locally approved memory revision with an immutable `observed` Git receipt; it preserves the
+  commit as historical provenance without asserting reachability or re-reading historical source.
+  A regression fixture proves that a formerly approved and historically observed record is removed
+  from both the memory and history providers after source revalidation makes it stale.
+  A public synthetic direct-call-chain evaluation compares lexical selector retrieval, graph-only
+  selector retrieval, the supported Phase 0 context, and Phase 2; Phase 2 retains the direct call
+  target and improves required source lines per content unit. The versioned local pinned-corpus
+  runner records warm latency and provider coverage, proves stale-provider exclusion, and offers an
+  opt-in isolated Codex consumer check with zero stale-memory input. Fresh macOS and Windows
+  evidence is intentionally deferred.
 - Add tests, ownership, and Git-history relationships.
 - Evaluate context packs against lexical, graph-only, and supported incumbent baselines.
 - Add second and third languages only after each meets identity, coverage, and retrieval gates.

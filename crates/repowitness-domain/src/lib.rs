@@ -11,8 +11,10 @@ mod evidence;
 mod memory;
 mod memory_revalidation;
 mod path;
+mod phase2_evidence;
 mod resolution;
 mod result;
+mod scip_overlay;
 mod snapshot;
 mod workspace;
 
@@ -23,6 +25,7 @@ pub use digest::{
     CanonicalMemoryDigest, ConfigurationDigest, CorrespondenceFingerprintDigest,
     CorrespondenceProfileDigest, DeclarationDigest, GitStateDigest, MemoryPresentationDigest,
     MigrationDigest, ProducerManifestDigest, RepositoryIdentityDigest, SHA256_DIGEST_BYTES,
+    ScipImporterDigest, ScipInputDigest, ScipOverlayDigest, ScipSchemaDigest,
     Sha256DigestLengthError, SourceContentDigest, SourceManifestDigest, SourceSnapshotDigest,
     WorktreeStateDigest,
 };
@@ -51,10 +54,21 @@ pub use path::{
     RepositoryPath, RepositoryPathByteCount, RepositoryPathComponentCount, RepositoryPathError,
     RepositoryPathLimits, RepositoryPathVersion,
 };
+pub use phase2_evidence::{
+    PHASE2_EVIDENCE_BALANCED_PROFILE_ID, PHASE2_EVIDENCE_BALANCED_PROFILE_VERSION,
+    Phase2ContextCandidateId, Phase2ContextProfile, Phase2ContextProviderAttribution,
+    Phase2ContextProviderAvailability, Phase2ContextProviderCoverage,
+    Phase2ContextProviderCoverageError, Phase2ContextProviderId, Phase2ContextScope,
+    Phase2ContextScopeError, Phase2ContextTier,
+};
 pub use resolution::ResolutionStatus;
 pub use result::{
     BoundedResultItems, MaterialResult, MaterialResultError, MaterialResultVersion,
     ResultItemCount, ResultItemLimit, ResultItemsError, ResultNotice, ResultNoticeKind,
+};
+pub use scip_overlay::{
+    MAX_SCIP_SYMBOL_BYTES, SCIP_OVERLAY_SCHEMA_VERSION, ScipOccurrence, ScipRelationship,
+    ScipRelationshipError, ScipRelationshipKinds, ScipSymbol, ScipSymbolError, ScipSymbolRoles,
 };
 pub use snapshot::{
     SourceFileCount, SourceFileKind, SourceFileLimit, SourceManifest, SourceManifestEntry,

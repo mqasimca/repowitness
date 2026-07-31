@@ -121,8 +121,8 @@ User-scoped memory stored outside the repository in a local, optionally encrypte
 ### Canonical tool
 
 A stable, compact RepoWitness MCP operation. The current local stdio server
-implements the read-only `context_build`, `code_search`, `diagnostics`,
-`memory_recall`, and `symbol_get` tools by default. It adds `memory_manage`
+implements the read-only `context_build`, `phase2_context_build`, `code_search`, `diagnostics`,
+`memory_recall`, `scip_evidence`, and `symbol_get` tools by default. It adds `memory_manage`
 only when the operator explicitly enables mutation with one fixed local actor.
 
 ### Compatibility alias

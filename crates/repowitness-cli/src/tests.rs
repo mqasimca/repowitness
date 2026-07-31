@@ -17,6 +17,8 @@ mod mcp;
 mod memory;
 mod memory_manage;
 mod runtime_configuration;
+mod scip_evidence;
+mod scip_import;
 mod symbol_inspect_io;
 mod watch;
 

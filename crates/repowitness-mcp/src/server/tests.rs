@@ -36,8 +36,10 @@ const fn checkpoint_deferred_memory_maintenance() -> MemoryManageMaintenanceStat
 struct FakeService {
     search_calls: AtomicUsize,
     context_calls: AtomicUsize,
+    phase2_context_calls: AtomicUsize,
     diagnostics_calls: AtomicUsize,
     graph_calls: AtomicUsize,
+    scip_calls: AtomicUsize,
     invalid_diagnostics: AtomicBool,
     manage_calls: AtomicUsize,
     memory_calls: AtomicUsize,
@@ -104,8 +106,10 @@ impl FakeService {
         Self {
             search_calls: AtomicUsize::new(0),
             context_calls: AtomicUsize::new(0),
+            phase2_context_calls: AtomicUsize::new(0),
             diagnostics_calls: AtomicUsize::new(0),
             graph_calls: AtomicUsize::new(0),
+            scip_calls: AtomicUsize::new(0),
             invalid_diagnostics: AtomicBool::new(false),
             manage_calls: AtomicUsize::new(0),
             memory_calls: AtomicUsize::new(0),
@@ -156,6 +160,18 @@ impl RepositoryService for FakeService {
         Ok(context_output())
     }
 
+    fn phase2_context_build(
+        &self,
+        request: Phase2ContextBuildServiceRequest,
+        _cancelled: Arc<AtomicBool>,
+    ) -> Result<Phase2ContextBuildOutput, RepositoryServiceError> {
+        self.phase2_context_calls.fetch_add(1, Ordering::Relaxed);
+        assert_eq!(request.intent(), "run");
+        assert_eq!(request.budget_units(), 4096);
+        assert_eq!(request.max_provider_results(), 7);
+        Ok(phase2_context_output())
+    }
+
     fn diagnostics(
         &self,
         _request: DiagnosticsServiceRequest,
@@ -176,6 +192,16 @@ impl RepositoryService for FakeService {
     ) -> Result<GraphReadServiceOutput, RepositoryServiceError> {
         self.graph_calls.fetch_add(1, Ordering::Relaxed);
         Ok(graph_output(request))
+    }
+
+    fn scip_evidence(
+        &self,
+        request: ScipEvidenceServiceRequest,
+        _cancelled: Arc<AtomicBool>,
+    ) -> Result<ScipEvidenceOutput, RepositoryServiceError> {
+        self.scip_calls.fetch_add(1, Ordering::Relaxed);
+        assert_eq!(request.symbol().as_str(), "scip-rust pkg 1 Symbol.");
+        Ok(scip_evidence_output())
     }
 
     fn memory_recall(
@@ -374,6 +400,28 @@ async fn initialized_client_lists_and_calls_all_tools() {
         Some(2)
     );
 
+    let phase2_context = client
+        .call_tool(
+            CallToolRequestParams::new(PHASE2_CONTEXT_BUILD_TOOL_NAME).with_arguments(json_object(
+                serde_json::json!({
+                    "intent": "  run  ",
+                    "budget_units": 4096,
+                    "max_provider_results": 7
+                }),
+            )),
+        )
+        .await
+        .expect("Phase 2 context response");
+    assert_eq!(phase2_context.is_error, Some(false));
+    assert_eq!(
+        phase2_context
+            .structured_content
+            .as_ref()
+            .and_then(|value| value.get("schema_version"))
+            .and_then(serde_json::Value::as_u64),
+        Some(1)
+    );
+
     let diagnostics = client
         .call_tool(CallToolRequestParams::new(DIAGNOSTICS_TOOL_NAME))
         .await
@@ -445,6 +493,24 @@ async fn initialized_client_lists_and_calls_all_tools() {
         .await
         .expect("symbol response");
     assert_eq!(symbol.is_error, Some(false));
+    let scip = client
+        .call_tool(
+            CallToolRequestParams::new(SCIP_EVIDENCE_TOOL_NAME).with_arguments(json_object(
+                serde_json::json!({
+                    "symbol": "scip-rust pkg 1 Symbol.",
+                }),
+            )),
+        )
+        .await
+        .expect("SCIP evidence response");
+    assert_eq!(scip.is_error, Some(false));
+    assert_eq!(
+        scip.structured_content
+            .as_ref()
+            .and_then(|value| value.get("resolution"))
+            .and_then(serde_json::Value::as_str),
+        Some("not_produced")
+    );
     for (tool, arguments) in graph::tool_requests() {
         let response = client
             .call_tool(CallToolRequestParams::new(tool).with_arguments(json_object(arguments)))
@@ -463,9 +529,11 @@ async fn initialized_client_lists_and_calls_all_tools() {
     }
     assert_eq!(service.search_calls.load(Ordering::Relaxed), 1);
     assert_eq!(service.context_calls.load(Ordering::Relaxed), 1);
+    assert_eq!(service.phase2_context_calls.load(Ordering::Relaxed), 1);
     assert_eq!(service.diagnostics_calls.load(Ordering::Relaxed), 1);
     assert_eq!(service.memory_calls.load(Ordering::Relaxed), 1);
     assert_eq!(service.symbol_calls.load(Ordering::Relaxed), 1);
+    assert_eq!(service.scip_calls.load(Ordering::Relaxed), 1);
     assert_eq!(service.graph_calls.load(Ordering::Relaxed), 6);
     assert_eq!(
         service.search_request.lock().expect("lock").as_ref(),

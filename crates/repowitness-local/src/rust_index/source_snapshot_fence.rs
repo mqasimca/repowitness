@@ -11,8 +11,8 @@ use repowitness_application::{
     hash_source_manifest, hash_source_snapshot,
 };
 use repowitness_domain::{
-    SourceFileKind, SourceFileLimit, SourceManifest, SourceManifestDigest, SourceManifestEntry,
-    SourceSnapshotDigest,
+    RepositoryPath, SourceContentDigest, SourceFileKind, SourceFileLimit, SourceManifest,
+    SourceManifestEntry, SourceSnapshotDigest,
 };
 
 use crate::{
@@ -46,6 +46,30 @@ pub(crate) struct LocalSourceSnapshotFenceRequest<'a> {
     cancelled: &'a AtomicBool,
     deadline: Instant,
     excluded_identity: Option<&'a FileIdentity>,
+}
+
+/// Complete immutable source bytes captured by one confirmed local fence.
+///
+/// The values are safe to pass to analysis adapters because every byte has
+/// already been admitted below the contained source root and revalidated
+/// against the exact source-snapshot identity.
+pub(crate) struct ConfirmedLocalSourceSnapshot {
+    sources: Box<[ImmutableRustSource]>,
+    manifest: SourceManifest<RepositoryPath, SourceFileKind, SourceContentDigest>,
+}
+
+impl ConfirmedLocalSourceSnapshot {
+    /// Returns the exact captured source bytes in deterministic path order.
+    pub(crate) fn sources(&self) -> &[ImmutableRustSource] {
+        &self.sources
+    }
+
+    /// Returns the source manifest proven by the same final fence.
+    pub(crate) const fn manifest(
+        &self,
+    ) -> &SourceManifest<RepositoryPath, SourceFileKind, SourceContentDigest> {
+        &self.manifest
+    }
 }
 
 impl<'a> LocalSourceSnapshotFenceRequest<'a> {
@@ -163,6 +187,17 @@ impl Error for LocalSourceSnapshotFenceError {}
 pub(crate) fn confirm_local_source_snapshot(
     request: LocalSourceSnapshotFenceRequest<'_>,
 ) -> Result<(), LocalSourceSnapshotFenceError> {
+    capture_confirmed_local_source_snapshot(request).map(|_| ())
+}
+
+/// Captures source bytes and confirms they still form the requested snapshot.
+///
+/// This is the source-fence variant for consumers, such as the Phase 2 SCIP
+/// importer, which must validate hostile claims against exactly the bytes that
+/// were revalidated at the final fence. It performs no parsing or analysis.
+pub(crate) fn capture_confirmed_local_source_snapshot(
+    request: LocalSourceSnapshotFenceRequest<'_>,
+) -> Result<ConfirmedLocalSourceSnapshot, LocalSourceSnapshotFenceError> {
     check_control(request.cancelled, request.deadline).map_err(map_local_error)?;
     let worktree_root =
         discovered_worktree_root(request.requested_root).map_err(|_| fence_capture_failed())?;
@@ -211,12 +246,13 @@ pub(crate) fn confirm_local_source_snapshot(
         request.deadline,
     )
     .map_err(map_local_error)?;
-    let manifest = manifest_digest(
+    let manifest = source_manifest(
         &selected.sources,
         request.limits,
         request.cancelled,
         request.deadline,
     )?;
+    let manifest_digest = hash_source_manifest(&manifest);
 
     revalidate_path_set(
         &worktree_root,
@@ -245,20 +281,27 @@ pub(crate) fn confirm_local_source_snapshot(
     .map_err(map_local_error)?;
     if source_state_after != source_state_before
         || source_state_after.git_state() != request.identity.git_state()
-        || source_state_after.source_worktree_state(manifest) != request.identity.worktree_state()
-        || hash_source_snapshot(request.identity, manifest) != request.expected_snapshot
+        || source_state_after.source_worktree_state(manifest_digest)
+            != request.identity.worktree_state()
+        || hash_source_snapshot(request.identity, manifest_digest) != request.expected_snapshot
     {
         return Err(LocalSourceSnapshotFenceError::SourceChanged);
     }
-    Ok(())
+    Ok(ConfirmedLocalSourceSnapshot {
+        sources: selected.sources.into_boxed_slice(),
+        manifest,
+    })
 }
 
-fn manifest_digest(
+fn source_manifest(
     sources: &[ImmutableRustSource],
     limits: LocalRustIndexLimits,
     cancelled: &AtomicBool,
     deadline: Instant,
-) -> Result<SourceManifestDigest, LocalSourceSnapshotFenceError> {
+) -> Result<
+    SourceManifest<RepositoryPath, SourceFileKind, SourceContentDigest>,
+    LocalSourceSnapshotFenceError,
+> {
     let mut entries = Vec::with_capacity(sources.len());
     for source in sources {
         check_control(cancelled, deadline).map_err(map_local_error)?;
@@ -268,12 +311,11 @@ fn manifest_digest(
             hash_source_content(source.content()),
         ));
     }
-    let manifest = SourceManifest::try_from_vec(
+    SourceManifest::try_from_vec(
         entries,
         SourceFileLimit::new(limits.preparation().max_files()),
     )
-    .map_err(|_| fence_capture_failed())?;
-    Ok(hash_source_manifest(&manifest))
+    .map_err(|_| fence_capture_failed())
 }
 
 fn revalidate_selected_content(

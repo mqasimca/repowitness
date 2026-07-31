@@ -23,7 +23,7 @@ use repowitness_domain::{
 
 use super::{
     CheckpointOutcome, GenerationCoverage, GenerationId, GenerationRetentionPolicy,
-    PinnedWorkspaceView, PreparedRustGraphGeneration, ProjectionRebuildLimits,
+    PinnedWorkspaceView, PreparedRustGraphGeneration, PreparedScipOverlay, ProjectionRebuildLimits,
     ProjectionRebuildOutcome, RetentionApplyOutcome, RetentionApplyRequest, RetentionPlan,
     RetentionPlanDigest, RetentionPlanRequest, SourceSlotState, SqliteStoreError,
     WorkspaceSourceSlot, WorkspaceViewId, WorkspaceViewMember, canonical_database_path,
@@ -52,6 +52,7 @@ use crate::{
 type Reply<T> = SyncSender<Result<T, SqliteStoreError>>;
 
 include!("worker/commands.rs");
+include!("worker/scip_overlay_commands.rs");
 
 /// Startup facts from deterministic recovery on the owned writer thread.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

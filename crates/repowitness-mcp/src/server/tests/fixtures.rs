@@ -3,7 +3,8 @@ use crate::{
     GraphArchitectureOutput, GraphEvidenceOutput, GraphImpactOutput, GraphReadServiceOutput,
     GraphReadServiceRequest, GraphSearchOutput, GraphStatusOutput, GraphTraceOutput,
     McpConfigurationIdentity, McpDiagnosticsMemoryProjection, McpGraphContext, McpGraphPublication,
-    McpGraphTrace, McpGraphTraceCoverage, McpGraphTraceTruncation,
+    McpGraphTrace, McpGraphTraceCoverage, McpGraphTraceTruncation, McpPhase2ContextScope,
+    Phase2ContextBuildOutput,
 };
 use rmcp::model::JsonObject;
 
@@ -46,6 +47,23 @@ pub(super) fn search_output() -> CodeSearchOutput {
             name_span: McpSpan { start: 7, end: 10 },
             declaration_span: McpSpan { start: 0, end: 13 },
         }],
+    }
+}
+
+pub(super) fn scip_evidence_output() -> ScipEvidenceOutput {
+    ScipEvidenceOutput {
+        schema_version: 1,
+        connected_workspace: "cwi1:h:00".to_owned(),
+        workspace_view: 1,
+        source_slot: "ssi1:h:00".to_owned(),
+        resolution: "not_produced".to_owned(),
+        overlay: None,
+        package_scope_sha256: None,
+        occurrences_truncated: false,
+        relationships_truncated: false,
+        output_bytes: 0,
+        occurrences: Vec::new(),
+        relationships: Vec::new(),
     }
 }
 
@@ -103,6 +121,30 @@ pub(super) fn context_output() -> ContextBuildOutput {
             memory_budget_omitted: 0,
             memory_included: 0,
         },
+        omissions: Vec::new(),
+        items: Vec::new(),
+    }
+}
+
+pub(super) fn phase2_context_output() -> Phase2ContextBuildOutput {
+    Phase2ContextBuildOutput {
+        schema_version: 1,
+        profile_id: "phase2-evidence-balanced-v1".to_owned(),
+        profile_version: 1,
+        budget_estimator: "utf8_bytes_upper_bound_v1".to_owned(),
+        budget_units: 4096,
+        used_units: 0,
+        scope: McpPhase2ContextScope {
+            repository_sha256: "11".repeat(32),
+            connected_workspace_sha256: "22".repeat(32),
+            workspace_view: 1,
+            source_slot_sha256: "33".repeat(32),
+            source_epoch: 2,
+            generation: 9,
+            snapshot_sha256: "44".repeat(32),
+            manifest_sha256: "55".repeat(32),
+        },
+        provider_coverage: Vec::new(),
         omissions: Vec::new(),
         items: Vec::new(),
     }

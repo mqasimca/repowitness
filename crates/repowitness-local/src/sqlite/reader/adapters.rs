@@ -123,15 +123,37 @@ fn run_reader(connection: &mut Connection, receiver: Receiver<ReaderCommand>) {
 fn execute_reader_command(connection: &mut Connection, command: ReaderCommand) -> bool {
     match command {
         ReaderCommand::Search(command) => execute_search_command(connection, *command),
+        ReaderCommand::WorkspaceSearch(command) => {
+            execute_workspace_search_command(connection, *command)
+        }
         ReaderCommand::GetSymbol(command) => execute_symbol_command(connection, *command),
         ReaderCommand::LoadArtifacts(command) => execute_artifact_command(connection, *command),
         ReaderCommand::LoadGraphArtifacts(command) => {
             execute_graph_artifact_command(connection, *command);
         }
         ReaderCommand::RecallMemory(command) => execute_memory_recall_command(connection, *command),
+        ReaderCommand::HistoryEvidence(command) => {
+            execute_history_evidence_command(connection, *command)
+        }
         ReaderCommand::Diagnostics(command) => execute_diagnostics_command(connection, *command),
         ReaderCommand::WorkspaceView(command) => {
             let result = execute_workspace_view_command(connection, &command);
+            let _ = command.reply.try_send(result);
+        }
+        ReaderCommand::ScipOverlayStatus(command) => {
+            let result = execute_scip_overlay_status_command(connection, &command);
+            let _ = command.reply.try_send(result);
+        }
+        ReaderCommand::ScipSymbolEvidence(command) => {
+            let result = execute_scip_symbol_evidence_command(connection, &command);
+            let _ = command.reply.try_send(result);
+        }
+        ReaderCommand::ScipSyntaxSymbol(command) => {
+            let result = execute_scip_syntax_symbol_command(connection, &command);
+            let _ = command.reply.try_send(result);
+        }
+        ReaderCommand::ScipImportScope(command) => {
+            let result = execute_scip_import_scope_command(connection, &command);
             let _ = command.reply.try_send(result);
         }
         ReaderCommand::Graph(command) => {
@@ -156,6 +178,28 @@ fn execute_search_command(connection: &mut Connection, command: SearchCommand) {
         reply,
     } = command;
     let result = search_active(connection, repository, &query, limits, cancelled, deadline);
+    let _ = reply.try_send(result);
+}
+
+fn execute_workspace_search_command(connection: &mut Connection, command: WorkspaceSearchCommand) {
+    let WorkspaceSearchCommand {
+        view,
+        source_slot,
+        query,
+        limits,
+        cancelled,
+        deadline,
+        reply,
+    } = command;
+    let result = search_workspace_member(
+        connection,
+        &view,
+        source_slot,
+        &query,
+        limits,
+        cancelled,
+        deadline,
+    );
     let _ = reply.try_send(result);
 }
 
@@ -245,6 +289,33 @@ fn execute_memory_recall_command(connection: &mut Connection, command: MemoryRec
     let _ = reply.try_send(result);
 }
 
+fn execute_history_evidence_command(
+    connection: &mut Connection,
+    command: HistoryEvidenceCommand,
+) {
+    let HistoryEvidenceCommand {
+        repository,
+        expected_snapshot,
+        expected_generation,
+        expected_source_epoch,
+        max_results,
+        cancelled,
+        deadline,
+        reply,
+    } = command;
+    let result = read_trusted_git_history_evidence(
+        connection,
+        repository,
+        expected_snapshot,
+        expected_generation,
+        expected_source_epoch,
+        max_results,
+        cancelled,
+        deadline,
+    );
+    let _ = reply.try_send(result);
+}
+
 fn execute_diagnostics_command(connection: &mut Connection, command: DiagnosticsCommand) {
     let DiagnosticsCommand {
         repository,
@@ -273,6 +344,41 @@ fn search_active(
         )
         .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
     let result = search_transaction(connection, repository, query, limits);
+    connection
+        .progress_handler(0, None::<fn() -> bool>)
+        .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
+    match result {
+        Ok(results) => {
+            check_control(&cancelled, deadline)?;
+            Ok(results)
+        }
+        Err(SearchFailure::Sqlite(error)) if is_interrupted(&error) => {
+            check_control(&cancelled, deadline)?;
+            Err(SqliteStoreError::DatabaseOperationFailed)
+        }
+        Err(SearchFailure::Sqlite(_)) => Err(SqliteStoreError::DatabaseOperationFailed),
+        Err(SearchFailure::Store(error)) => Err(error),
+    }
+}
+
+fn search_workspace_member(
+    connection: &mut Connection,
+    view: &PinnedWorkspaceView,
+    source_slot: repowitness_domain::SourceSlotId,
+    query: &str,
+    limits: SearchLimits,
+    cancelled: Arc<AtomicBool>,
+    deadline: Instant,
+) -> Result<SearchResults, SqliteStoreError> {
+    check_control(&cancelled, deadline)?;
+    let progress_cancelled = Arc::clone(&cancelled);
+    connection
+        .progress_handler(
+            PROGRESS_OPCODES,
+            Some(move || progress_cancelled.load(Ordering::Acquire) || Instant::now() >= deadline),
+        )
+        .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
+    let result = workspace_search_transaction(connection, view, source_slot, query, limits);
     connection
         .progress_handler(0, None::<fn() -> bool>)
         .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;

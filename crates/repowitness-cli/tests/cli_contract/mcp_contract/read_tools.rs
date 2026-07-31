@@ -26,6 +26,8 @@ fn assert_mcp_tools(input: &mut ChildStdin, output: &mut BufReader<ChildStdout>)
             "graph_trace",
             "impact_analyze",
             "memory_recall",
+            "phase2_context_build",
+            "scip_evidence",
             "symbol_get"
         ]
     );
@@ -38,6 +40,28 @@ fn assert_mcp_tools(input: &mut ChildStdin, output: &mut BufReader<ChildStdout>)
         .expect("diagnostics output properties");
     assert!(output_properties.contains_key("syntax_error_nodes"));
     assert!(output_properties.contains_key("known_parser_limitation_nodes"));
+}
+
+fn assert_mcp_scip_not_produced(input: &mut ChildStdin, output: &mut BufReader<ChildStdout>) {
+    let response = mcp_request(
+        input,
+        output,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 17,
+            "method": "tools/call",
+            "params": {
+                "name": "scip_evidence",
+                "arguments": {"symbol": "scip-rust pkg 1 Widget#"}
+            }
+        }),
+    );
+    let content = &response["result"]["structuredContent"];
+    assert_eq!(content["schema_version"], serde_json::json!(1));
+    assert_eq!(content["resolution"], serde_json::json!("not_produced"));
+    assert!(content["overlay"].is_null());
+    assert!(content["occurrences"].as_array().is_some_and(Vec::is_empty));
+    assert!(content["relationships"].as_array().is_some_and(Vec::is_empty));
 }
 
 fn mcp_search_selector(
@@ -176,6 +200,60 @@ fn assert_mcp_context(
         serde_json::json!(declaration_encoding)
     );
     assert_eq!(source["declaration"], serde_json::json!(declaration));
+}
+
+fn assert_mcp_phase2_context(
+    input: &mut ChildStdin,
+    output: &mut BufReader<ChildStdout>,
+    request_id: usize,
+    intent: &str,
+    declaration: &str,
+) {
+    let context = mcp_request(
+        input,
+        output,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": "tools/call",
+            "params": {
+                "name": "phase2_context_build",
+                "arguments": {
+                    "intent": intent,
+                    "budget_units": 4096,
+                    "max_provider_results": 5
+                }
+            }
+        }),
+    );
+    assert_eq!(context["result"]["isError"], serde_json::json!(false));
+    let context = &context["result"]["structuredContent"];
+    assert_eq!(context["schema_version"], serde_json::json!(1));
+    assert_eq!(
+        context["profile_id"],
+        serde_json::json!("phase2-evidence-balanced-v1")
+    );
+    assert!(context["scope"]["workspace_view"]
+        .as_i64()
+        .is_some_and(|view| view > 0));
+    assert!(context["scope"]["source_epoch"]
+        .as_u64()
+        .is_some_and(|epoch| epoch > 0));
+    assert!(context["provider_coverage"]
+        .as_array()
+        .is_some_and(|coverage| coverage.iter().any(|item| {
+            item["tier"] == "syntax" && item["availability"] == "available"
+        })));
+    let source = context["items"]
+        .as_array()
+        .and_then(|items| items.iter().find(|item| item["payload"]["kind"] == "syntax"))
+        .expect("Phase 2 context must include exact syntax evidence");
+    assert_eq!(source["tier"], serde_json::json!("syntax"));
+    assert_eq!(source["payload"]["declaration"], serde_json::json!(declaration));
+    assert_eq!(
+        source["providers"][0]["tier"],
+        serde_json::json!("syntax")
+    );
 }
 
 fn assert_mcp_go_round_trip(input: &mut ChildStdin, output: &mut BufReader<ChildStdout>) {

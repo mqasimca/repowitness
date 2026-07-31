@@ -21,6 +21,7 @@ enum WriterCommand {
     Stage(Box<StageCommand>),
     StageSourceSlot(Box<StageSourceSlotCommand>),
     StageGraph(Box<StageGraphCommand>),
+    StageScipOverlay(Box<StageScipOverlayCommand>),
     ImportMemory(Box<MemoryImportCommand>),
     ImportObservedMemoryHistory(Box<ObservedMemoryHistoryCommand>),
     AppendMemoryCorrespondenceReview(Box<AppendMemoryCorrespondenceReviewCommand>),
@@ -81,6 +82,7 @@ impl WriterCommand {
             | Self::Stage(_)
             | Self::StageSourceSlot(_)
             | Self::StageGraph(_)
+            | Self::StageScipOverlay(_)
             | Self::ImportMemory(_)
             | Self::ImportObservedMemoryHistory(_)
             | Self::AppendMemoryCorrespondenceReview(_)
@@ -113,6 +115,7 @@ impl WriterCommand {
             Self::Stage(command) => reject_unresolved_reply(command.reply),
             Self::StageSourceSlot(command) => reject_unresolved_reply(command.reply),
             Self::StageGraph(command) => reject_unresolved_reply(command.reply),
+            Self::StageScipOverlay(command) => reject_unresolved_reply(command.reply),
             Self::ImportMemory(command) => reject_unresolved_reply(command.reply),
             Self::ImportObservedMemoryHistory(command) => reject_unresolved_reply(command.reply),
             Self::AppendMemoryCorrespondenceReview(command) => {
@@ -172,6 +175,17 @@ struct StageGraphCommand {
     cancelled: Arc<AtomicBool>,
     deadline: Instant,
     reply: Reply<()>,
+}
+
+struct StageScipOverlayCommand {
+    connected_workspace: ConnectedWorkspaceId,
+    workspace_view: WorkspaceViewId,
+    source_slot: SourceSlotId,
+    require_active_view: bool,
+    prepared: PreparedScipOverlay,
+    cancelled: Arc<AtomicBool>,
+    deadline: Instant,
+    reply: Reply<repowitness_domain::ScipOverlayDigest>,
 }
 
 struct MemoryImportCommand {

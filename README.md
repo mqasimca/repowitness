@@ -80,11 +80,18 @@ They test SQLite persistence, repeat indexing, safe error output, mixed-language
 reuse and invalidation, generation replacement, exact declaration retrieval,
 and rejection of stale generations and changed source files.
 
-The CLI provides memory revalidation and recall, context compilation,
-repository diagnostics, and pinned Rust graph reads. The local stdio MCP server
-has eleven read-only tools: `code_search`, `context_build`, `diagnostics`,
+The CLI provides memory revalidation and recall, Phase 0 and separately versioned
+Phase 2 context compilation,
+repository diagnostics, pinned Rust graph reads, contained `scip-import`, and
+package-scoped `scip-evidence` reads. `scip-import` accepts one explicit local
+artifact for one connected-workspace source slot, validates it against the
+current exact source view, and leaves the preceding overlay readable if any
+admission, source fence, or publication step fails. The local stdio MCP server
+has thirteen read-only tools:
+`code_search`, `context_build`, `phase2_context_build`, `diagnostics`,
 `graph_architecture`, `graph_evidence`, `graph_search`, `graph_status`,
-`graph_trace`, `impact_analyze`, `memory_recall`, and `symbol_get`. At startup,
+`graph_trace`, `impact_analyze`, `memory_recall`, `scip_evidence`, and
+`symbol_get`. At startup,
 it fixes the repository ID, root, and database. It limits input, output,
 concurrency, time, and cancellation. It writes only protocol data to standard
 output. Protocol and installed-binary tests cover startup, schemas, all tools,
@@ -110,9 +117,11 @@ Recall returns the pinned projection with freshness and coverage states. Context
 compilation combines exact declaration bytes with eligible current memory under
 a conservative byte limit. Diagnostics reports the matching source and
 projection state, parser-error coverage, recognized limits, and capabilities.
-Diagnostics profile 3 identifies the bounded Rust syntax graph. The
-graph uses Rust syntax only. It does not provide package-aware resolution, macro
-expansion, SCIP, dynamic dispatch, or cross-language edges.
+Diagnostics profile 3 identifies the bounded Rust syntax graph. That graph uses
+Rust syntax only and does not provide package-aware resolution, macro
+expansion, dynamic dispatch, or cross-language edges. A separately selected
+Phase 2 SCIP overlay can expose imported package-scoped evidence without
+changing or hiding the syntax graph.
 
 RepoWitness returns a declaration as UTF-8 when it is valid and safe to display.
 Otherwise, it returns a labeled lowercase hexadecimal value. CLI output
@@ -452,6 +461,37 @@ use labeled display-safe `utf8` or exact `lowercase_hex` representations; the
 CLI puts their data in one JSON-escaped field so source text cannot forge
 report lines.
 
+The separately versioned Phase 2 profile preserves that Phase 0 contract. Its
+initial local providers are exact syntax, unique pinned native-graph structural
+or reference targets, current memory, and the Git observations of locally
+approved current memory revisions, allocated through
+the named `phase2-evidence-balanced-v1` profile with a single pinned source
+scope, deterministic tiers, complete provider attribution, and whole-item
+omissions. Every response also reports each active provider as `available` or
+`unavailable` before allocation, so absence is not misreported as a budget
+decision. An already-imported overlay is considered automatically only when
+one of its occurrences exactly matches a searched syntax identifier span in
+the selected source member. `--scip-symbol` can select an exact opaque symbol
+explicitly. Historical observations retain the exact commit receipt without
+claiming that it remains reachable or that historical source was re-read.
+Absent, ambiguous, or truncated overlay evidence remains out of the precision
+tier rather than changing syntax results:
+
+```text
+target/debug/repowitness phase2-context-build \
+  --repository-id rwi1:h:0000000000000000000000000000000000000000000000000000000000000001 \
+  --database /path/outside/the/worktree/repowitness.sqlite3 \
+  --root ../repository \
+  --intent Widget \
+  --budget 32768 \
+  --limit 20
+```
+
+For a member of a connected workspace, provide both its canonical
+`--connected-workspace-id` and `--source-slot-id`. The command pins that exact
+member for both lexical search and declaration expansion; it never falls back
+to a repository-global active generation.
+
 Inspect the exact active generation, optional matching memory projection, raw
 and recognized parser diagnostics, coverage, capabilities, limitations, and
 the path-free resolved configuration digest/schema/resolver/profile without
@@ -509,7 +549,7 @@ target/debug/repowitness mcp-serve \
 The repository must be indexed first. To expose the mutation tool, the
 operator must add both `--enable-memory-writes` and one fixed
 `--memory-actor <local-actor>` to `mcp-serve`. Without both options, the server
-lists only read tools. The default canonical profile lists eleven. A user-owned
+lists only read tools. The default canonical profile lists thirteen. A user-owned
 configuration may opt into the incumbent-compatible profile, which adds seven
 bounded read-only aliases. Their receipts currently claim only name
 compatibility: request shapes are incompatible with the pinned public
@@ -526,9 +566,9 @@ the final identity is changed or unconfirmed.
 
 When the database contains a connected workspace, add
 `--connected-workspace-id <cwi1:h:...>` and `--source-slot-id <ssi1:h:...>`
-together at `mcp-serve` startup to select the graph source. The graph tools
-then read that exact source slot; the other MCP tools retain the configured
-repository context.
+together at `mcp-serve` startup to select the graph and SCIP-overlay source.
+Those tools then read that exact source slot; the other MCP tools retain the
+configured repository context.
 
 Register the default read-only built binary with Codex:
 
@@ -562,13 +602,15 @@ Restart the Codex client after changing configuration, then use `/mcp` in the
 terminal UI to inspect the connection. Codex CLI, the IDE extension, and the
 ChatGPT desktop app share the local Codex MCP configuration; see the current
 [Codex MCP documentation](https://learn.chatgpt.com/docs/extend/mcp). The
-server exposes the read-only `code_search`, `context_build`, `diagnostics`,
+server exposes the read-only `code_search`, `context_build`, `phase2_context_build`, `diagnostics`,
 `graph_architecture`, `graph_evidence`, `graph_search`, `graph_status`,
-`graph_trace`, `impact_analyze`, `memory_recall`, and `symbol_get` tools by
+`graph_trace`, `impact_analyze`, `memory_recall`, `scip_evidence`, and
+`symbol_get` tools by
 default. Call `code_search` first and pass its complete exact selector unchanged
 to `symbol_get` when retrieving a declaration directly. Call `graph_search`
 before graph trace or impact so its exact selector and immutable context can be
-reused unchanged. Enable mutation only in a trusted local configuration whose
+reused unchanged. Call `scip_evidence` only with an already imported SCIP
+symbol and use its immutable view context unchanged. Enable mutation only in a trusted local configuration whose
 operator intends to grant that capability.
 
 To inspect only aggregate repository-path discovery facts without indexing:

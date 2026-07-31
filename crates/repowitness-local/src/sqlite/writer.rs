@@ -473,6 +473,7 @@ include!("writer/staging.rs");
 include!("writer/verification.rs");
 include!("writer/graph.rs");
 include!("writer/graph_artifact_verification.rs");
+include!("writer/scip_overlay.rs");
 include!("writer/retention.rs");
 
 include!("writer/memory.rs");

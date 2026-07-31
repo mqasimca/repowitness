@@ -296,16 +296,18 @@ The MCP server contract is tested at three levels: wire DTO and bounded-line
 unit tests; in-process SDK initialization, schema, tool, semaphore,
 cancellation, and encoded-output tests; and an installed-binary stdio
 round-trip. The black-box test indexes a temporary five-language worktree,
-negotiates MCP `2025-11-25`, and lists exactly eleven read-only tools:
-`code_search`, `context_build`, `diagnostics`, `graph_architecture`,
+negotiates MCP `2025-11-25`, and lists exactly thirteen read-only tools:
+`code_search`, `context_build`, `phase2_context_build`, `diagnostics`, `graph_architecture`,
 `graph_evidence`, `graph_search`, `graph_status`, `graph_trace`,
-`impact_analyze`, `memory_recall`, and `symbol_get`. It retrieves exact
-declarations from every language, builds one exact UTF-8 source context,
+`impact_analyze`, `memory_recall`, `scip_evidence`, and `symbol_get`. It retrieves exact
+declarations from every language, builds exact UTF-8 source contexts through
+both the preserved Phase 0 and the separately versioned Phase 2 profiles,
 round-trips Rust graph status/search/evidence/architecture/trace/impact,
 reindexes, and proves the old generation selector fails.
-Focused protocol tests cover context, memory, diagnostics, graph schemas,
-read-only annotations, exact view/generation pinning, categorical evidence,
-coverage, truncation, cancellation, backpressure, and encoded-output bounds.
+Focused protocol tests cover context, memory, diagnostics, graph and SCIP schemas,
+contained SCIP import, read-only annotations, exact view/generation pinning,
+categorical evidence, coverage, truncation, cancellation, backpressure, and
+encoded-output bounds.
 Stdout is parsed only as JSON-RPC and shutdown must leave stderr empty. A
 durable ignored variant exercises the same index-to-exact-retrieval-and-context
 path against a configured real supported-language worktree:

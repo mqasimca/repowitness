@@ -34,7 +34,8 @@ use graph_preparation::{
 mod source_snapshot_fence;
 pub use source_snapshot_fence::LocalSourceSnapshotFenceError;
 pub(crate) use source_snapshot_fence::{
-    LocalSourceSnapshotFenceRequest, confirm_local_source_snapshot,
+    LocalSourceSnapshotFenceRequest, capture_confirmed_local_source_snapshot,
+    confirm_local_source_snapshot,
 };
 
 /// Default wall-clock deadline for complete local source index preparation.

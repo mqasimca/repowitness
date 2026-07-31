@@ -20,16 +20,16 @@ use repowitness_analysis::{
 };
 use repowitness_application::{
     CodeSearchCandidate, CodeSearchLimits, CodeSearchPort, CodeSearchPortResult, CodeSearchQuery,
-    MemoryRecallLimits, MemoryRecallPort, MemoryRecallPortResult, MemoryRecallQuery,
+    MemoryRecallLimits, MemoryRecallPort, MemoryRecallPortResult, MemoryRecallQuery, PackageScope,
     RepositoryDiagnosticsPort, RepositoryDiagnosticsPortResult, RustArtifactIdentity,
     RustIndexCoverage, RustIndexLimits, RustSymbolOccurrence, SourceArtifactEvidence,
     SourceLanguage, SymbolGetSelector, hash_analysis_artifact_key, hash_analysis_artifact_payload,
 };
 use repowitness_domain::{
     AnalysisArtifactDigest, AnalysisArtifactKey, AnalysisArtifactPayloadDigest, ByteOffset,
-    ByteSpan, CorrespondenceFingerprintDigest, DeclarationDigest, ProducerManifestDigest,
-    RepositoryIdentityDigest, RepositoryPath, RepositoryPathLimits, SourceContentDigest,
-    SourceSnapshotDigest,
+    ByteSpan, CanonicalMemoryDigest, CorrespondenceFingerprintDigest, DeclarationDigest,
+    MemoryCommitId, MemoryRecordId, ProducerManifestDigest, RepositoryIdentityDigest,
+    RepositoryPath, RepositoryPathLimits, ScipSymbol, SourceContentDigest, SourceSnapshotDigest,
 };
 use rusqlite::{
     Connection, ErrorCode, OptionalExtension, Transaction, TransactionBehavior, params,
@@ -63,15 +63,26 @@ type MemoryRecallReply =
 type DiagnosticsReply =
     SyncSender<Result<RepositoryDiagnosticsPortResult<GenerationId, i64>, SqliteStoreError>>;
 type WorkspaceViewReply = SyncSender<Result<Option<PinnedWorkspaceView>, SqliteStoreError>>;
+type ScipOverlayReply = SyncSender<Result<ScipOverlayAvailability, SqliteStoreError>>;
+type ScipEvidenceReply = SyncSender<Result<ScipSymbolEvidenceResult, SqliteStoreError>>;
+type ScipSyntaxSymbolReply = SyncSender<Result<ScipSyntaxSymbolResolution, SqliteStoreError>>;
+type ScipImportScopeReply = SyncSender<Result<ScipOverlayImportScope, SqliteStoreError>>;
+type HistoryEvidenceReply = SyncSender<Result<Vec<GitHistoryEvidence>, SqliteStoreError>>;
 
 enum ReaderCommand {
     Search(Box<SearchCommand>),
+    WorkspaceSearch(Box<WorkspaceSearchCommand>),
     GetSymbol(Box<SymbolCommand>),
     LoadArtifacts(Box<ArtifactCommand>),
     LoadGraphArtifacts(Box<GraphArtifactCommand>),
     RecallMemory(Box<MemoryRecallCommand>),
+    HistoryEvidence(Box<HistoryEvidenceCommand>),
     Diagnostics(Box<DiagnosticsCommand>),
     WorkspaceView(Box<WorkspaceViewCommand>),
+    ScipOverlayStatus(Box<ScipOverlayStatusCommand>),
+    ScipSymbolEvidence(Box<ScipSymbolEvidenceCommand>),
+    ScipSyntaxSymbol(Box<ScipSyntaxSymbolCommand>),
+    ScipImportScope(Box<ScipImportScopeCommand>),
     Graph(Box<GraphCommand>),
     Shutdown {
         reply: SyncSender<Result<(), SqliteStoreError>>,
@@ -80,6 +91,16 @@ enum ReaderCommand {
 
 struct SearchCommand {
     repository: RepositoryIdentityDigest,
+    query: String,
+    limits: SearchLimits,
+    cancelled: Arc<AtomicBool>,
+    deadline: Instant,
+    reply: SearchReply,
+}
+
+struct WorkspaceSearchCommand {
+    view: PinnedWorkspaceView,
+    source_slot: repowitness_domain::SourceSlotId,
     query: String,
     limits: SearchLimits,
     cancelled: Arc<AtomicBool>,
@@ -126,6 +147,60 @@ struct MemoryRecallCommand {
     reply: MemoryRecallReply,
 }
 
+struct HistoryEvidenceCommand {
+    repository: RepositoryIdentityDigest,
+    expected_snapshot: SourceSnapshotDigest,
+    expected_generation: GenerationId,
+    expected_source_epoch: u64,
+    max_results: u16,
+    cancelled: Arc<AtomicBool>,
+    deadline: Instant,
+    reply: HistoryEvidenceReply,
+}
+
+/// One immutable Git observation for a locally approved current-memory version.
+///
+/// The commit identifies historical provenance only; it does not assert that the
+/// commit remains reachable or that its source contents have been re-read.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GitHistoryEvidence {
+    record_id: MemoryRecordId,
+    revision: CanonicalMemoryDigest,
+    commit: MemoryCommitId,
+}
+
+impl GitHistoryEvidence {
+    const fn new(
+        record_id: MemoryRecordId,
+        revision: CanonicalMemoryDigest,
+        commit: MemoryCommitId,
+    ) -> Self {
+        Self {
+            record_id,
+            revision,
+            commit,
+        }
+    }
+
+    /// Returns the exact locally approved memory record identity.
+    #[must_use]
+    pub const fn record_id(self) -> MemoryRecordId {
+        self.record_id
+    }
+
+    /// Returns the exact immutable memory revision observed at the commit.
+    #[must_use]
+    pub const fn revision(self) -> CanonicalMemoryDigest {
+        self.revision
+    }
+
+    /// Returns the immutable Git observation receipt.
+    #[must_use]
+    pub const fn commit(self) -> MemoryCommitId {
+        self.commit
+    }
+}
+
 struct DiagnosticsCommand {
     repository: RepositoryIdentityDigest,
     cancelled: Arc<AtomicBool>,
@@ -139,6 +214,44 @@ struct WorkspaceViewCommand {
     cancelled: Arc<AtomicBool>,
     deadline: Instant,
     reply: WorkspaceViewReply,
+}
+
+struct ScipOverlayStatusCommand {
+    view: PinnedWorkspaceView,
+    source_slot: repowitness_domain::SourceSlotId,
+    cancelled: Arc<AtomicBool>,
+    deadline: Instant,
+    reply: ScipOverlayReply,
+}
+
+struct ScipSymbolEvidenceCommand {
+    view: PinnedWorkspaceView,
+    source_slot: repowitness_domain::SourceSlotId,
+    package_scope: PackageScope,
+    symbol: ScipSymbol,
+    limits: ScipEvidenceReadLimits,
+    cancelled: Arc<AtomicBool>,
+    deadline: Instant,
+    reply: ScipEvidenceReply,
+}
+
+struct ScipSyntaxSymbolCommand {
+    view: PinnedWorkspaceView,
+    source_slot: repowitness_domain::SourceSlotId,
+    path: RepositoryPath,
+    content: SourceContentDigest,
+    name_span: ByteSpan,
+    cancelled: Arc<AtomicBool>,
+    deadline: Instant,
+    reply: ScipSyntaxSymbolReply,
+}
+
+struct ScipImportScopeCommand {
+    view: PinnedWorkspaceView,
+    source_slot: repowitness_domain::SourceSlotId,
+    cancelled: Arc<AtomicBool>,
+    deadline: Instant,
+    reply: ScipImportScopeReply,
 }
 
 /// Inclusive row and encoded-output limits for one lexical search.
@@ -498,6 +611,46 @@ impl OwnedSqliteReader {
         }
     }
 
+    /// Searches one exact source-slot member of a pinned active workspace view.
+    pub fn search_workspace_member(
+        &self,
+        view: &PinnedWorkspaceView,
+        source_slot: repowitness_domain::SourceSlotId,
+        query: &str,
+        limits: SearchLimits,
+        cancelled: Arc<AtomicBool>,
+        deadline: Instant,
+    ) -> Result<SearchResults, SqliteStoreError> {
+        if !view
+            .members()
+            .iter()
+            .any(|member| member.source_slot() == source_slot)
+        {
+            return Err(SqliteStoreError::InvalidWorkspaceView);
+        }
+        let canonical_query = literal_fts_query(query)?;
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.send(
+            ReaderCommand::WorkspaceSearch(Box::new(WorkspaceSearchCommand {
+                view: view.clone(),
+                source_slot,
+                query: canonical_query,
+                limits,
+                cancelled: Arc::clone(&cancelled),
+                deadline,
+                reply,
+            })),
+            deadline,
+        )?;
+        match receive_reply(&receiver, deadline) {
+            Ok(results) => Ok(results),
+            Err(error) => {
+                cancelled.store(true, Ordering::Release);
+                Err(error)
+            }
+        }
+    }
+
     /// Resolves one exact occurrence only if the requested context remains active.
     pub fn get_symbol(
         &self,
@@ -553,6 +706,53 @@ impl OwnedSqliteReader {
         )?;
         match receive_reply(&receiver, deadline) {
             Ok(results) => Ok(results),
+            Err(SqliteStoreError::MemoryProjectionUnavailable) => {
+                Err(SqliteStoreError::MemoryProjectionUnavailable)
+            }
+            Err(error) => {
+                cancelled.store(true, Ordering::Release);
+                Err(error)
+            }
+        }
+    }
+
+    /// Reads bounded immutable Git observations only for current memory versions
+    /// that were locally approved in the active projection matching the exact
+    /// requested source fence.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the projection source fence, bound, and controls are independent trust inputs"
+    )]
+    pub fn trusted_git_history_evidence(
+        &self,
+        repository: RepositoryIdentityDigest,
+        expected_snapshot: SourceSnapshotDigest,
+        expected_generation: GenerationId,
+        expected_source_epoch: u64,
+        max_results: u16,
+        cancelled: Arc<AtomicBool>,
+        deadline: Instant,
+    ) -> Result<Vec<GitHistoryEvidence>, SqliteStoreError> {
+        if max_results == 0 || max_results > MAX_RESULTS {
+            return Err(SqliteStoreError::InvalidSearchLimits);
+        }
+        check_control(&cancelled, deadline)?;
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.send(
+            ReaderCommand::HistoryEvidence(Box::new(HistoryEvidenceCommand {
+                repository,
+                expected_snapshot,
+                expected_generation,
+                expected_source_epoch,
+                max_results,
+                cancelled: Arc::clone(&cancelled),
+                deadline,
+                reply,
+            })),
+            deadline,
+        )?;
+        match receive_reply(&receiver, deadline) {
+            Ok(result) => Ok(result),
             Err(SqliteStoreError::MemoryProjectionUnavailable) => {
                 Err(SqliteStoreError::MemoryProjectionUnavailable)
             }
@@ -629,6 +829,8 @@ include!("reader/graph_query.rs");
 include!("reader/graph_relationships.rs");
 include!("reader/graph_traversal.rs");
 include!("reader/query.rs");
+include!("reader/history.rs");
+include!("reader/scip_overlay.rs");
 include!("reader/workspace.rs");
 
 #[cfg(test)]

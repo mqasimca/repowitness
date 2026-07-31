@@ -31,6 +31,40 @@ fn search_transaction(
     })
 }
 
+fn workspace_search_transaction(
+    connection: &mut Connection,
+    view: &PinnedWorkspaceView,
+    source_slot: repowitness_domain::SourceSlotId,
+    query: &str,
+    limits: SearchLimits,
+) -> Result<SearchResults, SearchFailure> {
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Deferred)?;
+    let state = workspace_search_state(&transaction, view, source_slot)?;
+    let total_matches = transaction.query_row(
+        state.sql.count,
+        params![query, state.generation.get()],
+        |row| row.get::<_, i64>(0),
+    )?;
+    let total_matches = persisted_count(total_matches)?;
+    let (hits, output_bytes) = search_hits(
+        &transaction,
+        state.sql.search,
+        query,
+        state.generation,
+        limits,
+    )?;
+    transaction.commit()?;
+    Ok(SearchResults {
+        snapshot: state.snapshot,
+        generation: state.generation,
+        producer_manifest: state.producer_manifest,
+        index_coverage: state.index_coverage,
+        hits,
+        total_matches,
+        output_bytes,
+    })
+}
+
 fn symbol_transaction(
     connection: &mut Connection,
     repository: RepositoryIdentityDigest,
@@ -117,6 +151,40 @@ fn active_search_state(
     })
 }
 
+fn workspace_search_state(
+    transaction: &Transaction<'_>,
+    view: &PinnedWorkspaceView,
+    source_slot: repowitness_domain::SourceSlotId,
+) -> Result<ActiveSearchState, SearchFailure> {
+    let state = workspace_generation_state(transaction, view, source_slot)?;
+    let projection_slot = transaction
+        .query_row(
+            "SELECT active_slot FROM search_projection_state WHERE singleton = 1",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?
+        .ok_or(SearchFailure::Store(SqliteStoreError::IntegrityCheckFailed))?;
+    let sql = match projection_slot {
+        0 => SearchProjectionSql {
+            search: PRIMARY_SEARCH_SQL,
+            count: PRIMARY_COUNT_SQL,
+        },
+        1 => SearchProjectionSql {
+            search: REBUILD_SEARCH_SQL,
+            count: REBUILD_COUNT_SQL,
+        },
+        _ => return Err(SearchFailure::Store(SqliteStoreError::IntegrityCheckFailed)),
+    };
+    Ok(ActiveSearchState {
+        snapshot: state.snapshot,
+        generation: state.generation,
+        producer_manifest: state.producer_manifest,
+        index_coverage: state.index_coverage,
+        sql,
+    })
+}
+
 fn active_generation_state(
     transaction: &Transaction<'_>,
     repository: RepositoryIdentityDigest,
@@ -156,6 +224,88 @@ fn active_generation_state(
         .ok_or(SearchFailure::Store(
             SqliteStoreError::GenerationUnavailable,
         ))?;
+    let (
+        generation,
+        snapshot,
+        source_epoch,
+        producer_manifest,
+        searched,
+        skipped,
+        unresolved,
+        truncated,
+    ) = persisted;
+    let snapshot = SourceSnapshotDigest::try_from_slice(&snapshot)
+        .map_err(|_| SearchFailure::Store(SqliteStoreError::IntegrityCheckFailed))?;
+    let producer_manifest = ProducerManifestDigest::try_from_slice(&producer_manifest)
+        .map_err(|_| SearchFailure::Store(SqliteStoreError::IntegrityCheckFailed))?;
+    Ok(ActiveGenerationState {
+        snapshot,
+        generation: GenerationId::from_database(generation),
+        source_epoch: persisted_count(source_epoch)?,
+        producer_manifest,
+        index_coverage: RustIndexCoverage::new(
+            persisted_count(searched)?,
+            persisted_count(skipped)?,
+            persisted_count(unresolved)?,
+            persisted_count(truncated)?,
+        ),
+    })
+}
+
+fn workspace_generation_state(
+    transaction: &Transaction<'_>,
+    view: &PinnedWorkspaceView,
+    source_slot: repowitness_domain::SourceSlotId,
+) -> Result<ActiveGenerationState, SearchFailure> {
+    let member = view
+        .members()
+        .iter()
+        .find(|member| member.source_slot() == source_slot)
+        .ok_or(SearchFailure::Store(SqliteStoreError::InvalidWorkspaceView))?;
+    let persisted = transaction
+        .query_row(
+            "SELECT generation.generation_id, generation.snapshot_digest,
+                    generation.source_epoch, snapshot.producer_manifest_digest,
+                    generation.searched_count, generation.skipped_count,
+                    generation.unresolved_count, generation.truncated_count
+             FROM workspace_view_members AS member
+             JOIN active_workspace_views AS active
+               ON active.connected_workspace_id = member.connected_workspace_id
+              AND active.workspace_view_id = member.workspace_view_id
+             JOIN index_generations AS generation
+               ON generation.workspace_id = member.generation_workspace_id
+              AND generation.generation_id = member.generation_id
+             JOIN source_snapshots AS snapshot
+               ON snapshot.snapshot_digest = generation.snapshot_digest
+              AND snapshot.lifecycle_state = 'complete'
+             WHERE member.workspace_view_id = ?1
+               AND member.connected_workspace_id = ?2
+               AND member.source_slot_id = ?3
+               AND member.source_epoch = ?4
+               AND member.generation_id = ?5",
+            params![
+                view.view().get(),
+                view.connected_workspace().as_bytes().as_slice(),
+                source_slot.as_bytes().as_slice(),
+                i64::try_from(member.source_epoch().get())
+                    .map_err(|_| SearchFailure::Store(SqliteStoreError::IntegrityCheckFailed))?,
+                member.generation().get(),
+            ],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, Vec<u8>>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, Vec<u8>>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, i64>(5)?,
+                    row.get::<_, i64>(6)?,
+                    row.get::<_, i64>(7)?,
+                ))
+            },
+        )
+        .optional()?
+        .ok_or(SearchFailure::Store(SqliteStoreError::GenerationUnavailable))?;
     let (
         generation,
         snapshot,

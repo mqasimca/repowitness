@@ -73,6 +73,9 @@ passed, so maintainers accepted ADR-0018 and then ADR-0021.
 | [0032](0032-explicit-connected-workspace-manifest.md) | Admit connected workspaces through an explicit manifest | Accepted |
 | [0033](0033-bounded-mutation-outcome-resolution.md) | Resolve mutation outcomes without denying committed work | Accepted |
 | [0034](0034-phase1-codex-graph-evaluation.md) | Evaluate bounded Phase 1 graph packets through an evidence envelope | Accepted |
+| [0035](0035-phase2-scip-precision-overlay.md) | Import SCIP as a bounded precision overlay | Accepted |
+| [0036](0036-phase2-context-ranking-profiles.md) | Compile Phase 2 context through named evidence-ranking profiles | Accepted |
+| [0037](0037-phase2-scip-overlay-source-slot-scope.md) | Scope each SCIP overlay to one source slot in a pinned workspace view | Accepted |
 
 Use [0000-template.md](0000-template.md) for a new decision.
 

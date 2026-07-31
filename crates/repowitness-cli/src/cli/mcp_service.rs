@@ -50,6 +50,47 @@ impl RepositoryService for LocalMcpRepositoryService {
             })
     }
 
+    fn phase2_context_build(
+        &self,
+        request: Phase2ContextBuildServiceRequest,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<Phase2ContextBuildOutput, RepositoryServiceError> {
+        let local_request = match &self.graph_workspace {
+            GraphWorkspaceContext::SingleRepository(_) => LocalPhase2ContextBuildRequest::new(
+                &self.root,
+                &self.database,
+                &self.repository_identity,
+                request.intent(),
+            ),
+            GraphWorkspaceContext::ConnectedWorkspace {
+                connected_workspace,
+                source_slot,
+            } => LocalPhase2ContextBuildRequest::for_connected_workspace(
+                &self.root,
+                &self.database,
+                &self.repository_identity,
+                connected_workspace,
+                source_slot,
+                request.intent(),
+            ),
+        };
+        let local_request = match request.scip_symbol() {
+            Some(scip_symbol) => local_request.with_scip_symbol(scip_symbol),
+            None => local_request,
+        }
+        .with_budget_units(request.budget_units())
+        .map_err(|_| RepositoryServiceError::Phase2ContextBuild)?
+        .with_max_provider_results(request.max_provider_results())
+        .map_err(|_| RepositoryServiceError::Phase2ContextBuild)?
+        .with_deadline(request.timeout());
+        build_local_phase2_context(local_request, cancelled)
+            .map_err(|_| RepositoryServiceError::Phase2ContextBuild)
+            .and_then(|result| {
+                mcp_phase2_context_output(result)
+                    .map_err(|_| RepositoryServiceError::Phase2ContextBuild)
+            })
+    }
+
     fn diagnostics(
         &self,
         request: DiagnosticsServiceRequest,
@@ -76,6 +117,15 @@ impl RepositoryService for LocalMcpRepositoryService {
             cancelled,
         )
         .map_err(|_| RepositoryServiceError::GraphRead)
+    }
+
+    fn scip_evidence(
+        &self,
+        request: ScipEvidenceServiceRequest,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<ScipEvidenceOutput, RepositoryServiceError> {
+        read_local_scip_evidence_service(&self.database, &self.graph_workspace, request, cancelled)
+            .map_err(|_| RepositoryServiceError::ScipEvidence)
     }
 
     fn memory_recall(

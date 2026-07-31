@@ -18,7 +18,10 @@ mod local_graph_read;
 mod local_identity;
 mod local_index;
 mod local_memory_recall;
+mod local_phase2_context_build;
 mod local_retention;
+mod local_scip_evidence_read;
+mod local_scip_overlay_import;
 mod local_search;
 mod local_symbol_get;
 mod local_watch;
@@ -94,12 +97,26 @@ pub use local_memory_recall::{
     DEFAULT_LOCAL_MEMORY_RECALL_DEADLINE, LocalMemoryRecallError, LocalMemoryRecallRequest,
     LocalMemoryRecallResult, LocalMemoryRecallSelection, recall_local_memory,
 };
+pub use local_phase2_context_build::{
+    DEFAULT_LOCAL_PHASE2_CONTEXT_BUILD_DEADLINE, LocalPhase2ContextBuildError,
+    LocalPhase2ContextBuildRequest, LocalPhase2ContextBuildResult, LocalPhase2ContextItem,
+    LocalPhase2ContextWorkspace, LocalPhase2HistoryItem, build_local_phase2_context,
+};
 pub use local_retention::{
     DEFAULT_LOCAL_RETENTION_TIMEOUT, LOCAL_RETENTION_PROFILE_VERSION, LocalRetentionApplyReport,
     LocalRetentionApplyRequest, LocalRetentionError, LocalRetentionErrorKind, LocalRetentionPins,
     LocalRetentionPlanReport, LocalRetentionPlanRequest, LocalRetentionPolicySummary,
     LocalRetentionRequestError, MAX_LOCAL_RETENTION_TIMEOUT, apply_local_retention,
     plan_local_retention,
+};
+pub use local_scip_evidence_read::{
+    DEFAULT_LOCAL_SCIP_EVIDENCE_READ_DEADLINE, LocalScipEvidencePortError,
+    LocalScipEvidenceReadError, LocalScipEvidenceReadRequest, LocalScipEvidenceReadResult,
+    LocalScipEvidenceWorkspace, read_local_scip_evidence,
+};
+pub use local_scip_overlay_import::{
+    DEFAULT_LOCAL_SCIP_IMPORT_DEADLINE, LocalScipOverlayImportError, LocalScipOverlayImportRequest,
+    LocalScipOverlayImportResult, MAX_LOCAL_SCIP_IMPORT_INPUT_BYTES, import_local_scip_overlay,
 };
 pub use local_search::{
     DEFAULT_LOCAL_CODE_SEARCH_DEADLINE, LocalCodeSearchError, LocalCodeSearchRequest,
@@ -173,10 +190,11 @@ pub use repowitness_application::{
     SYMBOL_GET_PROFILE_VERSION, SourceLanguage, SourceSlotIdTextV1, WorkspaceIdentityTextError,
     resolve_configuration,
 };
+pub use repowitness_application::{Phase2ContextCandidate, Phase2ContextTier};
 pub use repowitness_domain::{
     ConfigurationDigest, ConnectedWorkspaceId, EvidenceLocation, MemoryAssurance, MemoryCommitId,
     MemoryCorrespondenceReviewOperation, MemoryKind, MemoryLifecycle, MemoryObjectFormat,
-    MemoryRevalidationTarget, ResolutionStatus, SourceSlotId,
+    MemoryRevalidationTarget, Phase2ContextProviderAvailability, ResolutionStatus, SourceSlotId,
 };
 pub use rust_index::{
     DEFAULT_LOCAL_RUST_INDEX_DEADLINE, LocalRustIndexError, LocalRustIndexLimits,
@@ -194,19 +212,24 @@ pub use sqlite::{
     GenerationCoverage, GenerationId, GenerationRetentionPolicy, IndexStoreStartup,
     MAX_CONNECTED_WORKSPACE_SOURCE_SLOTS, MAX_RETAINED_GENERATIONS_PER_SOURCE_SLOT,
     MAX_RETENTION_BYTES, MAX_RETENTION_GENERATION_CANDIDATES, MAX_RETENTION_GENERATION_PINS,
-    MAX_RETENTION_ROWS, MAX_RETENTION_VIEW_PINS, OwnedSqliteIndex, OwnedSqliteReader,
-    PinnedWorkspaceView, PinnedWorkspaceViewMember, PreparedRustGraphArtifact,
-    PreparedRustGraphGeneration, ProjectionRebuildLimits, ProjectionRebuildOutcome,
-    RETENTION_POLICY_VERSION, RetentionApplyOutcome, RetentionApplyRequest, RetentionLimits,
-    RetentionPins, RetentionPlan, RetentionPlanDigest, RetentionPlanRequest, RetentionPolicyDigest,
-    RustGraphArchitectureSummary, RustGraphAvailability, RustGraphCandidateRecord,
-    RustGraphDefinitionRecord, RustGraphDirection, RustGraphEdgeKind, RustGraphEdgeKinds,
-    RustGraphEdgeRecord, RustGraphEvidenceResult, RustGraphImpactClass, RustGraphImpactResult,
-    RustGraphImpactedDefinition, RustGraphOutcomeRecord, RustGraphPreparationControl,
-    RustGraphPreparationError, RustGraphPublicationSummary, RustGraphReadError,
-    RustGraphReadLimits, RustGraphRelationshipCardinality, RustGraphSiteSelector, RustGraphSource,
+    MAX_RETENTION_ROWS, MAX_RETENTION_VIEW_PINS, MAX_SCIP_OVERLAY_DOCUMENTS, OwnedSqliteIndex,
+    OwnedSqliteReader, PinnedWorkspaceView, PinnedWorkspaceViewMember, PreparedRustGraphArtifact,
+    PreparedRustGraphGeneration, PreparedScipOverlay, ProjectionRebuildLimits,
+    ProjectionRebuildOutcome, RETENTION_POLICY_VERSION, RetentionApplyOutcome,
+    RetentionApplyRequest, RetentionLimits, RetentionPins, RetentionPlan, RetentionPlanDigest,
+    RetentionPlanRequest, RetentionPolicyDigest, RustGraphArchitectureSummary,
+    RustGraphAvailability, RustGraphCandidateRecord, RustGraphDefinitionRecord, RustGraphDirection,
+    RustGraphEdgeKind, RustGraphEdgeKinds, RustGraphEdgeRecord, RustGraphEvidenceResult,
+    RustGraphImpactClass, RustGraphImpactResult, RustGraphImpactedDefinition,
+    RustGraphOutcomeRecord, RustGraphPreparationControl, RustGraphPreparationError,
+    RustGraphPublicationSummary, RustGraphReadError, RustGraphReadLimits,
+    RustGraphRelationshipCardinality, RustGraphSiteSelector, RustGraphSource,
     RustGraphSymbolSearchResult, RustGraphTraceCoverage, RustGraphTraceResult, RustGraphTraceStart,
-    RustGraphTraceTruncation, SearchHit, SearchLimits, SearchResults, SourceSlotEpoch,
+    RustGraphTraceTruncation, ScipEvidenceReadLimits, ScipEvidenceReadLimitsError,
+    ScipOccurrenceEvidence, ScipOverlayAvailability, ScipOverlayImportScope,
+    ScipOverlayPreparationError, ScipOverlaySummary, ScipRelationshipDirection,
+    ScipRelationshipEvidence, ScipSymbolEvidence, ScipSymbolEvidenceResult,
+    ScipSyntaxSymbolResolution, SearchHit, SearchLimits, SearchResults, SourceSlotEpoch,
     SourceSlotGeneration, SourceSlotState, SqliteStoreError, SymbolLookupResults,
     WorkspaceSourceSlot, WorkspaceViewId, WorkspaceViewMember, create_online_backup,
     prepare_rust_graph_generation,

@@ -15,12 +15,16 @@ use super::super::{
     validate_timeout,
 };
 
-const DEFAULT_INPUT_EDGES: u64 = 50_000;
+// Traversal loads the complete immutable relationship set before applying its
+// output and frontier bounds. Keep the default high enough for RepoWitness's
+// own complete graph, otherwise a small requested trace fails before the
+// traversal can report its bounded result.
+const DEFAULT_INPUT_EDGES: u64 = 200_000;
 const DEFAULT_INPUT_BYTES: u64 = 64 * 1024 * 1024;
 const DEFAULT_DEPTH: u32 = 8;
 const DEFAULT_RESULTS: u32 = 100;
 const DEFAULT_VISITED_NODES: u64 = 10_000;
-const DEFAULT_VISITED_EDGES: u64 = 50_000;
+const DEFAULT_VISITED_EDGES: u64 = 200_000;
 const DEFAULT_FRONTIER: u64 = 10_000;
 const DEFAULT_OUTPUT_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_REQUESTED_OUTPUT_BYTES: u64 = 16 * 1024 * 1024;
@@ -607,6 +611,12 @@ mod tests {
         )
         .expect("wire shape");
         assert!(oversized_output.validate().is_err());
+
+        let defaults = GraphLimitsInput::default()
+            .validate()
+            .expect("compiled graph defaults");
+        assert_eq!(defaults.max_input_edges(), DEFAULT_INPUT_EDGES);
+        assert_eq!(defaults.max_visited_edges(), DEFAULT_VISITED_EDGES);
     }
 
     #[test]

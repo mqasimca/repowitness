@@ -2,7 +2,7 @@ use serde_json::{Value, json};
 
 use super::*;
 
-pub(super) const fn native_tool_names() -> [&'static str; 11] {
+pub(super) const fn native_tool_names() -> [&'static str; 13] {
     [
         CODE_SEARCH_TOOL_NAME,
         CONTEXT_BUILD_TOOL_NAME,
@@ -14,6 +14,8 @@ pub(super) const fn native_tool_names() -> [&'static str; 11] {
         GRAPH_TRACE_TOOL_NAME,
         IMPACT_ANALYZE_TOOL_NAME,
         MEMORY_RECALL_TOOL_NAME,
+        PHASE2_CONTEXT_BUILD_TOOL_NAME,
+        SCIP_EVIDENCE_TOOL_NAME,
         SYMBOL_GET_TOOL_NAME,
     ]
 }

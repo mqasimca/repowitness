@@ -22,6 +22,9 @@ mod rust_graph_profile;
 mod rust_graph_read;
 mod rust_index;
 mod rust_profile;
+mod scip_evidence_read;
+mod scip_overlay_identity;
+mod scip_overlay_import;
 mod source_profile;
 mod source_slot_publication;
 mod source_snapshot;
@@ -125,6 +128,14 @@ pub use repository_path_text::{
     RepositoryPathLimits, RepositoryPathTextByteCount, RepositoryPathTextByteLimit,
     RepositoryPathTextError, RepositoryPathTextV1, RepositoryPathTextVersion,
 };
+pub use repowitness_analysis::{
+    MAX_PHASE2_CONTEXT_BUDGET_UNITS, MAX_PHASE2_CONTEXT_CANDIDATES,
+    PHASE2_EVIDENCE_BALANCED_PROFILE_ID, PHASE2_EVIDENCE_BALANCED_PROFILE_VERSION,
+    Phase2ContextBudget, Phase2ContextCandidate, Phase2ContextCandidateId, Phase2ContextError,
+    Phase2ContextInput, Phase2ContextOmission, Phase2ContextProfile,
+    Phase2ContextProviderAttribution, Phase2ContextProviderId, Phase2ContextResult,
+    Phase2ContextScope, Phase2ContextScopeError, Phase2ContextTier, compile_phase2_context,
+};
 pub use rust_graph_profile::{
     PHASE1_RUST_GRAPH_ANALYSIS_SCHEMA_VERSION, PHASE1_RUST_GRAPH_CANONICALIZATION_VERSION,
     PHASE1_RUST_GRAPH_CONFIGURATION_VERSION, PHASE1_RUST_GRAPH_PRODUCER_MANIFEST_VERSION,
@@ -152,6 +163,20 @@ pub use rust_profile::{
     PHASE0_RUST_ANALYSIS_SCHEMA_VERSION, PHASE0_RUST_CANONICALIZATION_VERSION,
     PHASE0_RUST_CONFIGURATION_VERSION, PHASE0_RUST_PRODUCER_MANIFEST_VERSION,
     phase0_rust_artifact_identity, phase0_rust_correspondence_profile_digest,
+};
+pub use scip_evidence_read::{
+    ScipEvidenceReadError, ScipEvidenceReadPort, ScipEvidenceReadPortResult,
+    ScipEvidenceReadRequest, ScipEvidenceReadResult, ScipEvidenceReadSelection,
+    ScipEvidenceReadSelectionError, ScipSymbol, scip_evidence_read,
+};
+pub use scip_overlay_identity::{
+    SCIP_OVERLAY_IDENTITY_VERSION, ScipOverlayIdentityInput, ScipOverlayScopeIdentity,
+    ScipOverlayScopeIdentityError, bounded_scip_importer_digest, hash_scip_input,
+    hash_scip_overlay_identity, reviewed_scip_schema_digest,
+};
+pub use scip_overlay_import::{
+    PreparedScipOverlayImport, ScipOverlayImportError, ScipOverlayImportRequest,
+    prepare_scip_overlay_import,
 };
 pub use source_profile::{
     PHASE0_SOURCE_CANONICALIZATION_VERSION, PHASE0_SOURCE_SNAPSHOT_PROFILE_VERSION,

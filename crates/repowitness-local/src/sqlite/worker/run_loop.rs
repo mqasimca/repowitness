@@ -91,6 +91,30 @@ fn run_writer(
                 );
                 send_mutation_reply(reply, result, hooks, unresolved_mutation);
             }
+            WriterCommand::StageScipOverlay(command) => {
+                let StageScipOverlayCommand {
+                    connected_workspace,
+                    workspace_view,
+                    source_slot,
+                    require_active_view,
+                    prepared,
+                    cancelled,
+                    deadline,
+                    reply,
+                } = *command;
+                let result = state.stage_scip_overlay(
+                    connected_workspace,
+                    workspace_view,
+                    source_slot,
+                    &prepared,
+                    require_active_view,
+                    WriteControl {
+                        cancelled: &cancelled,
+                        deadline,
+                    },
+                );
+                send_mutation_reply(reply, result, hooks, unresolved_mutation);
+            }
             WriterCommand::StageSourceSlot(command) => {
                 let StageSourceSlotCommand {
                     connected_workspace,

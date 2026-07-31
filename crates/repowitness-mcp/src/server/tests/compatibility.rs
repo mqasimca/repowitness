@@ -8,7 +8,7 @@ use crate::{
     SEARCH_GRAPH_ALIAS_TOOL_NAME, TRACE_PATH_ALIAS_TOOL_NAME,
 };
 
-const COMPATIBILITY_TOOL_NAMES: [&str; 18] = [
+const COMPATIBILITY_TOOL_NAMES: [&str; 20] = [
     CODE_SEARCH_TOOL_NAME,
     CONTEXT_BUILD_TOOL_NAME,
     DIAGNOSTICS_TOOL_NAME,
@@ -23,6 +23,8 @@ const COMPATIBILITY_TOOL_NAMES: [&str; 18] = [
     IMPACT_ANALYZE_TOOL_NAME,
     INDEX_STATUS_ALIAS_TOOL_NAME,
     MEMORY_RECALL_TOOL_NAME,
+    PHASE2_CONTEXT_BUILD_TOOL_NAME,
+    SCIP_EVIDENCE_TOOL_NAME,
     SEARCH_CODE_ALIAS_TOOL_NAME,
     SEARCH_GRAPH_ALIAS_TOOL_NAME,
     SYMBOL_GET_TOOL_NAME,
@@ -111,8 +113,10 @@ fn name_only_tools_list_contract(server: &RepoWitnessMcpServer) -> Value {
 fn service_call_count(service: &FakeService) -> usize {
     service.search_calls.load(Ordering::Relaxed)
         + service.context_calls.load(Ordering::Relaxed)
+        + service.phase2_context_calls.load(Ordering::Relaxed)
         + service.diagnostics_calls.load(Ordering::Relaxed)
         + service.graph_calls.load(Ordering::Relaxed)
+        + service.scip_calls.load(Ordering::Relaxed)
         + service.manage_calls.load(Ordering::Relaxed)
         + service.memory_calls.load(Ordering::Relaxed)
         + service.symbol_calls.load(Ordering::Relaxed)
@@ -286,7 +290,7 @@ fn memory_capability_adds_only_the_canonical_mutation_tool() {
         .iter()
         .map(|tool| tool.name.as_ref())
         .collect::<Vec<_>>();
-    assert_eq!(names.len(), 19);
+    assert_eq!(names.len(), 21);
     assert!(names.windows(2).all(|pair| pair[0] < pair[1]));
     assert_eq!(
         names

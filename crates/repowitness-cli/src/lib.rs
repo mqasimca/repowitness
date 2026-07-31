@@ -20,30 +20,34 @@ use repowitness_local::{
     LocalMemoryManageError, LocalMemoryMutation, LocalMemoryRecallRequest, LocalMemoryRecallResult,
     LocalMemoryRecallSelection, LocalMemoryRevalidationError, LocalMemoryRevalidationMutation,
     LocalMemoryRevalidationReport, LocalMemoryRevalidationRequest, LocalMemoryWriteRequest,
-    LocalRepositoryDiagnosticsRequest, LocalRepositoryDiagnosticsResult, LocalRetentionApplyReport,
-    LocalRetentionApplyRequest, LocalRetentionPins, LocalRetentionPlanReport,
-    LocalRetentionPlanRequest, LocalRustGraphReadOutput, LocalRustGraphReadRequest,
-    LocalRustGraphReadResult, LocalSymbolGetRequest, LocalSymbolGetResult, LocalSymbolSelectorText,
-    LocalWatchExit, LocalWatchReconciliation, LocalWatchReport, LocalWatchRequest,
-    MAX_CONFIGURATION_FILE_BYTES, MAX_CONTEXT_BUILD_BUDGET_UNITS, McpToolProfile, MemoryAssurance,
-    MemoryCommitId, MemoryCorrespondenceReviewOperation, MemoryEffectiveState,
-    MemoryFileIdentityStatus, MemoryFilePublicationStepStatus, MemoryKind, MemoryLifecycle,
-    MemoryObjectFormat, MemoryProjectionValidityState, MemoryRecallCandidateRelation,
-    MemoryRecallEvidence, MemoryRecallEvidenceAssurance, MemoryRecallEvidenceOutcome,
-    MemoryRecallEvidenceState, MemoryRecallOccurrence, MemoryRecallReason, MemoryRecallRecord,
-    MemoryRecordIdTextV1, MemoryRevalidationTarget, PolicyValue, RepositoryIdentityTextV1,
+    LocalPhase2ContextBuildRequest, LocalPhase2ContextItem, LocalRepositoryDiagnosticsRequest,
+    LocalRepositoryDiagnosticsResult, LocalRetentionApplyReport, LocalRetentionApplyRequest,
+    LocalRetentionPins, LocalRetentionPlanReport, LocalRetentionPlanRequest,
+    LocalRustGraphReadOutput, LocalRustGraphReadRequest, LocalRustGraphReadResult,
+    LocalScipEvidenceReadRequest, LocalSymbolGetRequest, LocalSymbolGetResult,
+    LocalSymbolSelectorText, LocalWatchExit, LocalWatchReconciliation, LocalWatchReport,
+    LocalWatchRequest, MAX_CONFIGURATION_FILE_BYTES, MAX_CONTEXT_BUILD_BUDGET_UNITS,
+    McpToolProfile, MemoryAssurance, MemoryCommitId, MemoryCorrespondenceReviewOperation,
+    MemoryEffectiveState, MemoryFileIdentityStatus, MemoryFilePublicationStepStatus, MemoryKind,
+    MemoryLifecycle, MemoryObjectFormat, MemoryProjectionValidityState,
+    MemoryRecallCandidateRelation, MemoryRecallEvidence, MemoryRecallEvidenceAssurance,
+    MemoryRecallEvidenceOutcome, MemoryRecallEvidenceState, MemoryRecallOccurrence,
+    MemoryRecallReason, MemoryRecallRecord, MemoryRecordIdTextV1, MemoryRevalidationTarget,
+    Phase2ContextCandidate, Phase2ContextTier, PolicyValue, RepositoryIdentityTextV1,
     RepositoryPathTextByteLimit, RepositoryPathTextV1, ResolutionStatus, ResolvedConfiguration,
     ResolvedPreference, ResolvedToolProfilePreference, RustGraphAvailability,
     RustGraphCandidateRecord, RustGraphDefinitionRecord, RustGraphEvidenceResult,
     RustGraphImpactClass, RustGraphOutcomeRecord, RustGraphPublicationSummary,
-    RustGraphSiteSelector, RustGraphTraceResult, SYMBOL_GET_PROFILE_VERSION, SourceLanguage,
-    SourceSlotIdTextV1, apply_local_retention, approve_local_memory, build_local_context,
+    RustGraphSiteSelector, RustGraphTraceResult, SYMBOL_GET_PROFILE_VERSION,
+    ScipRelationshipDirection, ScipSymbolEvidenceResult, SourceLanguage, SourceSlotIdTextV1,
+    apply_local_retention, approve_local_memory, build_local_context, build_local_phase2_context,
     diagnose_local_repository, discover_repository_paths, generate_local_identity,
     get_local_symbol, import_local_memory_history, index_local_connected_workspace,
     index_local_repository, inspect_local_doctor, parse_configuration_file, plan_local_retention,
-    read_bounded_regular_file_with_parent, read_local_rust_graph, recall_local_memory,
-    resolve_configuration, revalidate_local_memory, review_local_memory_correspondence,
-    search_local_index, validate_local_memory_actor, watch_local_repository, write_local_memory,
+    read_bounded_regular_file_with_parent, read_local_rust_graph, read_local_scip_evidence,
+    recall_local_memory, resolve_configuration, revalidate_local_memory,
+    review_local_memory_correspondence, search_local_index, validate_local_memory_actor,
+    watch_local_repository, write_local_memory,
 };
 use repowitness_mcp::{
     CodeSearchOutput, CodeSearchServiceRequest, ContextBuildOutput, ContextBuildServiceRequest,
@@ -58,15 +62,18 @@ use repowitness_mcp::{
     McpGraphDefinition, McpGraphEdge, McpGraphEvidence, McpGraphImpact, McpGraphPublication,
     McpGraphSite, McpGraphTrace, McpGraphTraceCoverage, McpGraphTraceTruncation,
     McpMemoryCandidate, McpMemoryCoverage, McpMemoryEvidence, McpMemoryOccurrence,
-    McpMemoryProducer, McpMemoryRecord, McpMemoryTarget, McpSearchMatch, McpSelectedMemory,
-    McpSpan, McpSymbol, McpToolSurface, MemoryManageDatabaseIdentityStatus,
-    MemoryManageFileIdentityStatus, MemoryManageMaintenanceStatus,
-    MemoryManageMaintenanceStepStatus, MemoryManageOutput, MemoryManagePublicationStatus,
-    MemoryManagePublicationStepStatus, MemoryManageReviewDecision, MemoryManageServiceRequest,
-    MemoryMutationOperation, MemoryMutationRequestScope, MemoryRecallOutput,
-    MemoryRecallServiceRequest, MemoryRecallServiceSelection, RepositoryService,
-    RepositoryServiceError, SymbolGetOutput, SymbolGetServiceRequest, SymbolSelectorOutput,
-    serve_stdio_with_surface,
+    McpMemoryProducer, McpMemoryRecord, McpMemoryTarget, McpPhase2ContextAttribution,
+    McpPhase2ContextItem, McpPhase2ContextOmission, McpPhase2ContextPayload,
+    McpPhase2ContextProviderCoverage, McpPhase2ContextScope, McpScipOccurrence, McpScipOverlay,
+    McpScipRelationship, McpSearchMatch, McpSelectedMemory, McpSpan, McpSymbol, McpToolSurface,
+    MemoryManageDatabaseIdentityStatus, MemoryManageFileIdentityStatus,
+    MemoryManageMaintenanceStatus, MemoryManageMaintenanceStepStatus, MemoryManageOutput,
+    MemoryManagePublicationStatus, MemoryManagePublicationStepStatus, MemoryManageReviewDecision,
+    MemoryManageServiceRequest, MemoryMutationOperation, MemoryMutationRequestScope,
+    MemoryRecallOutput, MemoryRecallServiceRequest, MemoryRecallServiceSelection,
+    Phase2ContextBuildOutput, Phase2ContextBuildServiceRequest, RepositoryService,
+    RepositoryServiceError, ScipEvidenceInput, ScipEvidenceOutput, ScipEvidenceServiceRequest,
+    SymbolGetOutput, SymbolGetServiceRequest, SymbolSelectorOutput, serve_stdio_with_surface,
 };
 
 const EXIT_SUCCESS: u8 = 0;
@@ -75,9 +82,11 @@ const EXIT_SOFTWARE: u8 = 70;
 const EXIT_IO: u8 = 74;
 const CONFIGURATION_LAYER_ARGUMENTS: usize = 6;
 const MAX_CONTEXT_BUILD_ARGUMENTS: usize = 12 + CONFIGURATION_LAYER_ARGUMENTS;
+const MAX_PHASE2_CONTEXT_BUILD_ARGUMENTS: usize = 18;
 const MAX_CONFIG_EXPLAIN_ARGUMENTS: usize = 7;
 const MAX_DOCTOR_ARGUMENTS: usize = 10;
 const MAX_GRAPH_ARGUMENTS: usize = 52;
+const MAX_SCIP_EVIDENCE_ARGUMENTS: usize = 16;
 const MAX_DIAGNOSTICS_ARGUMENTS: usize = 4 + CONFIGURATION_LAYER_ARGUMENTS;
 const MAX_INDEX_ARGUMENTS: usize = 7 + CONFIGURATION_LAYER_ARGUMENTS;
 const MAX_WORKSPACE_INDEX_ARGUMENTS: usize = 5 + CONFIGURATION_LAYER_ARGUMENTS;
@@ -139,6 +148,7 @@ const HELP: &str = concat!(
     "  watch          Reconcile and atomically activate source changes in the foreground.\n",
     "  gc             Plan or explicitly apply bounded generation retention.\n",
     "  context-build  Compile bounded exact source and current-memory context.\n",
+    "  phase2-context-build  Compile the separate evidence-balanced Phase 2 context.\n",
     "  diagnostics    Inspect active source/memory state, coverage, and limitations.\n",
     "  graph          Read the native immutable Rust syntax graph with exact evidence.\n",
     "  search         Search active Rust, Go, TypeScript, TSX, and Python symbols.\n",
@@ -161,6 +171,20 @@ const CONTEXT_BUILD_HELP: &str = concat!(
     "The budget uses the labeled utf8_bytes_upper_bound_v1 estimator, not an exact\n",
     "model token count. Results expose exact generation/projection identities,\n",
     "component ranks, evidence, coverage, and every unsupported or omitted source.\n",
+);
+
+const PHASE2_CONTEXT_BUILD_HELP: &str = concat!(
+    "Compile the versioned Phase 2 evidence-balanced context.\n\n",
+    "Usage:\n",
+    "  repowitness phase2-context-build --repository-id <id> --database <path> --root <path>\n",
+    "      --intent <literal terms> [--budget <1-1048576>] [--limit <1-100>]\n",
+    "      [--connected-workspace-id <cwi1:h:...> --source-slot-id <ssi1:h:...>]\n",
+    "      [--scip-symbol <opaque-symbol>]\n\n",
+    "This separate profile preserves the Phase 0 context-build behavior. It pins one\n",
+    "single-repository workspace view by default, or one explicit connected source slot, and\n",
+    "exposes typed scope, evidence tier, provider\n",
+    "attribution, whole-item omissions, and bounded source or current-memory content. An optional\n",
+    "exact SCIP symbol adds one source-verified, unambiguous precision-overlay provider result.\n",
 );
 
 const CONFIG_EXPLAIN_HELP: &str = concat!(
@@ -333,12 +357,40 @@ const SYMBOL_GET_HELP: &str = concat!(
     "JSON-escaped report field so source bytes cannot forge report lines.\n",
 );
 
+const SCIP_EVIDENCE_HELP: &str = concat!(
+    "Read exact package-scoped evidence from one imported SCIP overlay.\n\n",
+    "Usage:\n",
+    "  repowitness scip-evidence --repository-id <id> --database <path> --symbol <scip-symbol>\n",
+    "      [--package-root <rwp1:h:text>]... [--workspace-view <positive-id>]\n",
+    "      [--timeout-ms <1-30000>]\n",
+    "  repowitness scip-evidence --connected-workspace-id <id> --source-slot-id <id>\n",
+    "      --database <path> --symbol <scip-symbol> [same optional bounds]\n\n",
+    "The command is read-only. It selects an active or exact immutable workspace view and\n",
+    "returns categorical `not_produced`, `no_match`, or `found` evidence. Package roots are\n",
+    "canonical byte-preserving repository paths; no package manager or host path is used.\n",
+);
+
+const MAX_SCIP_IMPORT_ARGUMENTS: usize = 14;
+const SCIP_IMPORT_HELP: &str = concat!(
+    "Import one bounded SCIP file as an immutable source-slot precision overlay.\n\n",
+    "Usage:\n",
+    "  repowitness scip-import --database <path> --root <repository-root> --scip-file <path>\n",
+    "      --connected-workspace-id <cwi1:h:text> --source-slot-id <ssi1:h:text>\n",
+    "      [--workspace-view <positive-id>] [--timeout-ms <1-30000>]\n\n",
+    "The file is read once through a no-follow regular-file boundary. Its claims are\n",
+    "validated only against the exact current source slot and source snapshot. A failed,\n",
+    "changed, stale, or cancelled import leaves the prior active overlay readable.\n",
+);
+
 include!("cli/adapters.rs");
 include!("cli/mcp_graph.rs");
+include!("cli/mcp_scip_evidence.rs");
 include!("cli/mcp_service.rs");
 include!("cli/graph_arguments.rs");
 include!("cli/graph_commands.rs");
 include!("cli/graph_output.rs");
+include!("cli/scip_evidence_commands.rs");
+include!("cli/scip_import_commands.rs");
 include!("cli/identity_commands.rs");
 include!("cli/identity_output.rs");
 include!("cli/bounded_file.rs");
@@ -352,6 +404,8 @@ include!("cli/doctor_output.rs");
 include!("cli/context.rs");
 include!("cli/context_commands.rs");
 include!("cli/context_output.rs");
+include!("cli/phase2_context_commands.rs");
+include!("cli/mcp_phase2_context.rs");
 include!("cli/diagnostics.rs");
 include!("cli/diagnostics_commands.rs");
 include!("cli/diagnostics_output.rs");

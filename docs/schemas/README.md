@@ -10,6 +10,9 @@ accepted or explicitly proposed ADRs.
   production domain, parser, canonicalizer, generated-YAML format, and
   worktree-import/write boundary; bounded observation-only Git-tree history
   import is implemented without changing the record format
+- [Phase 2 SQLite schema version 4](phase2-sqlite-provisional-v4.md) — accepted
+  immutable SCIP overlay receipts, source-slot/view-scoped activation, and the
+  version-3 Phase 1 foundation under ADR-0035 and ADR-0037
 - [Phase 1 SQLite schema version 3](phase1-sqlite-provisional-v3.md) — accepted
   read/write format with connected-workspace source slots, immutable views,
   generation-scoped Rust graph publication, and deterministic bounded retention
@@ -20,8 +23,8 @@ accepted or explicitly proposed ADRs.
 - [Phase 0 SQLite baseline migration version 1](phase0-sqlite-baseline-v1.md) —
   immutable supported baseline and version-2 upgrade source
 
-The owned production adapter creates version-3 databases and upgrades exact
-accepted version-1 and version-2 databases. It
+The owned production adapter creates version-4 databases and upgrades exact
+accepted version-1, version-2, and version-3 databases. It
 accepts only the RepoWitness application ID and an exact migration ledger
 through the declared schema version. Retired development versions 1 through 8
 are rejected without mutation and require an explicit rebuild. Automated tests
@@ -29,7 +32,8 @@ cover fresh creation, version-1 and populated version-2 upgrade,
 legacy rejection, idempotent reopen, immutable generation publication, exact
 artifact reuse, FTS5 rebuild, bounded/cancellable recovery, memory-journal
 import/rollback/immutability, review-event idempotency, atomic
-memory-projection activation, connected-workspace view publication,
+memory-projection activation, connected-workspace view publication, immutable
+SCIP-overlay receipt/activation guards,
 backup/restore, and file-identity races.
 
 The retired development schema documents remain available only as design

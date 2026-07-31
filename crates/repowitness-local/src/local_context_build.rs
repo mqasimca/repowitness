@@ -339,7 +339,7 @@ fn build_with_reader(
     clippy::too_many_arguments,
     reason = "exact expansion retains repository, generation, controls, and source ownership"
 )]
-fn expand_source_candidates(
+pub(crate) fn expand_source_candidates(
     reader: &OwnedSqliteReader,
     root: &ContainedSourceRoot,
     repository: repowitness_domain::RepositoryIdentityDigest,

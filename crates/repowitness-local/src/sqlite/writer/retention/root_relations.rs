@@ -146,6 +146,25 @@ const ENFORCED_RETENTION_ROOT_QUERIES: &[RetentionRootQuery] = &[
               ORDER BY workspace_id, record_id, revision_digest,
                        evidence_ordinal, ordinal, target_artifact_digest",
     },
+    RetentionRootQuery {
+        domain: b"scip-overlay-receipt",
+        sql: "SELECT overlay_digest, connected_workspace_id, workspace_view_id,
+                     source_slot_id, source_epoch, generation_workspace_id,
+                     generation_id, source_snapshot_digest,
+                     source_manifest_digest, configuration_digest,
+                     producer_digest, schema_digest, importer_digest,
+                     input_digest, document_count,
+                     occurrence_count, relationship_count
+              FROM scip_overlay_receipts
+              ORDER BY overlay_digest",
+    },
+    RetentionRootQuery {
+        domain: b"active-scip-overlay",
+        sql: "SELECT connected_workspace_id, source_slot_id, workspace_view_id,
+                     overlay_digest
+              FROM active_scip_overlays
+              ORDER BY connected_workspace_id, source_slot_id",
+    },
 ];
 
 fn hash_enforced_retention_root_relations(

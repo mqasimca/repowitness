@@ -1,4 +1,8 @@
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "the migration fixture keeps its complete version-one artifact and upgraded schema assertions together"
+)]
 fn version_one_database_upgrades_without_losing_immutable_artifacts() {
     let directory = TempDirectory::new();
     let database = directory.database();
@@ -61,7 +65,7 @@ fn version_one_database_upgrades_without_losing_immutable_artifacts() {
         )
         .expect("upgraded artifact should remain readable");
 
-    assert_eq!(user_version, 3);
+    assert_eq!(user_version, 4);
     assert_eq!(
         ledger,
         vec![
@@ -81,6 +85,12 @@ fn version_one_database_upgrades_without_losing_immutable_artifacts() {
                 3,
                 MIGRATION_3_NAME.to_owned(),
                 migration_checksum(MIGRATION_3).to_vec(),
+                222,
+            ),
+            (
+                4,
+                MIGRATION_4_NAME.to_owned(),
+                migration_checksum(MIGRATION_4).to_vec(),
                 222,
             ),
         ]
@@ -150,7 +160,7 @@ fn reopening_current_version_is_idempotent() {
     let directory = TempDirectory::new();
     let database = directory.database();
     drop(open_index_writer(&database, 111).expect("fresh database should migrate"));
-    drop(open_index_writer(&database, 222).expect("version three should reopen"));
+    drop(open_index_writer(&database, 222).expect("version four should reopen"));
 
     let connection = raw_connection(&database);
     let ledger_rows: i64 = connection
@@ -160,12 +170,12 @@ fn reopening_current_version_is_idempotent() {
         .expect("migration ledger count should be readable");
     let latest_timestamp: i64 = connection
         .query_row(
-            "SELECT applied_at_unix_ms FROM schema_migrations WHERE version = 3",
+            "SELECT applied_at_unix_ms FROM schema_migrations WHERE version = 4",
             [],
             |row| row.get(0),
         )
-        .expect("migration-three timestamp should be readable");
+        .expect("migration-four timestamp should be readable");
 
-    assert_eq!(ledger_rows, 3);
+    assert_eq!(ledger_rows, 4);
     assert_eq!(latest_timestamp, 111);
 }

@@ -9,6 +9,7 @@ mod reader;
 mod retention;
 mod retention_read;
 mod schema;
+mod scip_overlay;
 mod worker;
 mod workspace;
 mod writer;
@@ -56,7 +57,14 @@ pub(crate) use self::retention_read::load_retention_apply_outcome_read_only;
 pub use self::retention_read::plan_generation_retention_read_only;
 use self::schema::{
     APPLICATION_ID, MIGRATION_1, MIGRATION_1_NAME, MIGRATION_2, MIGRATION_2_NAME, MIGRATION_3,
-    MIGRATION_3_NAME, SCHEMA_VERSION,
+    MIGRATION_3_NAME, MIGRATION_4, MIGRATION_4_NAME, SCHEMA_VERSION,
+};
+pub use self::scip_overlay::{
+    MAX_SCIP_OVERLAY_DOCUMENTS, PreparedScipOverlay, ScipEvidenceReadLimits,
+    ScipEvidenceReadLimitsError, ScipOccurrenceEvidence, ScipOverlayAvailability,
+    ScipOverlayImportScope, ScipOverlayPreparationError, ScipOverlaySummary,
+    ScipRelationshipDirection, ScipRelationshipEvidence, ScipSymbolEvidence,
+    ScipSymbolEvidenceResult, ScipSyntaxSymbolResolution,
 };
 pub(crate) use self::worker::ObservedMemoryHistoryItem;
 pub(crate) use self::worker::{CompletedWorkspaceSource, SqliteMutationLease};
@@ -589,11 +597,12 @@ fn validate_migration_ledger_through(
     Ok(())
 }
 
-const fn migrations() -> [(i64, &'static str, &'static str); 3] {
+const fn migrations() -> [(i64, &'static str, &'static str); 4] {
     [
         (1, MIGRATION_1_NAME, MIGRATION_1),
         (2, MIGRATION_2_NAME, MIGRATION_2),
         (3, MIGRATION_3_NAME, MIGRATION_3),
+        (4, MIGRATION_4_NAME, MIGRATION_4),
     ]
 }
 

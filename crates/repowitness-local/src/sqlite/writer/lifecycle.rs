@@ -285,11 +285,8 @@ impl WriterState {
     ) -> Result<Box<[MemoryImportReceipt]>, SqliteStoreError> {
         check_control(control)?;
         let transaction = self.transaction()?;
-        let (workspace_id, source_epoch) =
+        let (workspace_id, _source_epoch) =
             ensure_workspace_in_transaction(&transaction, repository, 0)?;
-        if source_epoch.get() != 0 {
-            return Err(SqliteStoreError::StaleSourceEpoch);
-        }
         let mut receipts = Vec::with_capacity(prepared.len());
         for import in prepared {
             check_control(control)?;
@@ -640,6 +637,7 @@ fn clear_uncommitted_retention_marks(
         "DELETE FROM retention_artifact_garbage",
         "DELETE FROM retention_workspace_view_garbage",
         "DELETE FROM retention_source_slot_receipt_garbage",
+        "DELETE FROM retention_scip_overlay_garbage",
     ] {
         check_recovery_control(cancelled, deadline)?;
         transaction

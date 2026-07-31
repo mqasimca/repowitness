@@ -43,6 +43,10 @@ pub enum SqliteStoreError {
     InvalidWorkspaceView,
     /// A prepared Rust graph projection violates the persistence contract.
     InvalidGraphPublication,
+    /// A prepared SCIP precision overlay violates the persistence contract.
+    InvalidScipOverlay,
+    /// SCIP evidence results exceeded their declared encoded-output bound.
+    ScipEvidenceOutputLimitExceeded,
     /// Supplied memory import values failed adapter-boundary validation.
     InvalidMemoryImport,
     /// A correspondence review selector or target was not exact and current.
@@ -144,6 +148,10 @@ impl fmt::Display for SqliteStoreError {
             Self::ConnectedWorkspaceUnavailable => "SQLite connected workspace is unavailable",
             Self::InvalidWorkspaceView => "SQLite workspace view is invalid",
             Self::InvalidGraphPublication => "SQLite Rust graph publication is invalid",
+            Self::InvalidScipOverlay => "SQLite SCIP overlay publication is invalid",
+            Self::ScipEvidenceOutputLimitExceeded => {
+                "SCIP evidence results exceeded the configured output limit"
+            }
             Self::InvalidMemoryImport => "memory import input is invalid",
             Self::InvalidMemoryCorrespondenceReview => {
                 "memory correspondence review input is invalid"

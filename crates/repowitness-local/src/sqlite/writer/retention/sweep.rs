@@ -187,6 +187,8 @@ fn ensure_retention_marks_empty(
                  SELECT 1 FROM retention_workspace_view_garbage
                  UNION ALL
                  SELECT 1 FROM retention_source_slot_receipt_garbage
+                 UNION ALL
+                 SELECT 1 FROM retention_scip_overlay_garbage
              )",
             [],
             |row| row.get::<_, bool>(0),
@@ -242,6 +244,7 @@ fn verify_retention_marks_consumed(
         "retention_artifact_garbage",
         "retention_workspace_view_garbage",
         "retention_source_slot_receipt_garbage",
+        "retention_scip_overlay_garbage",
     ] {
         if count_retention_marks(transaction, relation, plan_digest)? != 0 {
             return Err(SqliteStoreError::IntegrityCheckFailed);
@@ -280,6 +283,15 @@ fn retention_sweep_error(
 }
 
 const RETENTION_MARK_DEPENDENTS: &[&str] = &[
+    "INSERT INTO retention_scip_overlay_garbage(
+         overlay_digest, plan_digest, lifecycle_state
+     )
+     SELECT receipt.overlay_digest, ?1, 'garbage'
+     FROM scip_overlay_receipts AS receipt
+     JOIN retention_generation_garbage AS garbage
+       ON garbage.generation_id = receipt.generation_id
+      AND garbage.plan_digest = ?1
+     WHERE receipt.lifecycle_state = 'complete'",
     "INSERT INTO retention_workspace_view_garbage(
          workspace_view_id, plan_digest, lifecycle_state
      )
@@ -445,6 +457,31 @@ const RETENTION_MARK_DEPENDENTS: &[&str] = &[
 ];
 
 const RETENTION_DELETE_ORDER: &[&str] = &[
+    "DELETE FROM active_scip_overlays
+     WHERE overlay_digest IN (
+         SELECT overlay_digest FROM retention_scip_overlay_garbage
+         WHERE plan_digest = ?1
+     )",
+    "DELETE FROM scip_overlay_occurrences
+     WHERE overlay_digest IN (
+         SELECT overlay_digest FROM retention_scip_overlay_garbage
+         WHERE plan_digest = ?1
+     )",
+    "DELETE FROM scip_overlay_relationships
+     WHERE overlay_digest IN (
+         SELECT overlay_digest FROM retention_scip_overlay_garbage
+         WHERE plan_digest = ?1
+     )",
+    "DELETE FROM scip_overlay_documents
+     WHERE overlay_digest IN (
+         SELECT overlay_digest FROM retention_scip_overlay_garbage
+         WHERE plan_digest = ?1
+     )",
+    "DELETE FROM scip_overlay_receipts
+     WHERE overlay_digest IN (
+         SELECT overlay_digest FROM retention_scip_overlay_garbage
+         WHERE plan_digest = ?1
+     )",
     "DELETE FROM workspace_view_members
      WHERE workspace_view_id IN (
          SELECT workspace_view_id FROM retention_workspace_view_garbage

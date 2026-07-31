@@ -32,7 +32,8 @@ pub fn run(args: impl IntoIterator<Item = OsString>, stdout: impl Write, stderr:
 
 #[allow(
     clippy::too_many_arguments,
-    reason = "each independently testable CLI boundary adapter remains explicit"
+    clippy::too_many_lines,
+    reason = "each independently testable CLI boundary adapter remains explicit; dispatch remains intentionally flat"
 )]
 fn run_with_adapters(
     args: impl IntoIterator<Item = OsString>,
@@ -96,6 +97,9 @@ fn run_with_adapters(
             configuration_loader,
         );
     }
+    if command == OsStr::new("phase2-context-build") {
+        return run_phase2_context_build(args, &mut stdout, &mut stderr);
+    }
     if command == OsStr::new("diagnostics") {
         return run_diagnostics(
             args,
@@ -113,6 +117,12 @@ fn run_with_adapters(
             &LocalRepositoryGraphReader,
             configuration_loader,
         );
+    }
+    if command == OsStr::new("scip-evidence") {
+        return run_scip_evidence(args, &mut stdout, &mut stderr);
+    }
+    if command == OsStr::new("scip-import") {
+        return run_scip_import(args, &mut stdout, &mut stderr);
     }
     if command == OsStr::new("search") {
         return run_search(

@@ -95,6 +95,230 @@ fn workspace_index_admits_one_explicit_relative_source_without_leaking_inputs() 
     let fixture = index_workspace_fixture(&directory);
     assert_workspace_graph_cli(&fixture);
     assert_workspace_graph_mcp(&fixture);
+    assert_workspace_phase2_context_mcp(&fixture);
+}
+
+#[test]
+fn phase2_context_build_pins_single_repository_scope_and_labels_evidence() {
+    let directory = TempDirectory::new();
+    let repository = fixture_repository(&directory);
+    let database = directory.database();
+    let indexed = index(&repository, &database, REPOSITORY_ID);
+    assert!(
+        indexed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&indexed.stderr)
+    );
+
+    let output = repowitness_os([
+        OsStr::new("phase2-context-build"),
+        OsStr::new("--repository-id"),
+        OsStr::new(REPOSITORY_ID),
+        OsStr::new("--database"),
+        database.as_os_str(),
+        OsStr::new("--root"),
+        repository.as_os_str(),
+        OsStr::new("--intent"),
+        OsStr::new("Widget"),
+        OsStr::new("--budget"),
+        OsStr::new("4096"),
+        OsStr::new("--limit"),
+        OsStr::new("7"),
+    ]);
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let report = String::from_utf8(output.stdout).expect("Phase 2 context report");
+    assert_eq!(report_value(&report, "operation"), "phase2-context-build");
+    assert_eq!(
+        report_value(&report, "profile_id"),
+        "phase2-evidence-balanced-v1"
+    );
+    assert_eq!(report_value(&report, "profile_version"), "1");
+    assert!(report_value(&report, "workspace_view")
+        .parse::<i64>()
+        .is_ok_and(|view| view > 0));
+    assert!(report_value(&report, "source_epoch")
+        .parse::<i64>()
+        .is_ok_and(|epoch| epoch > 0));
+    assert!(report.contains("context_item_0_tier=syntax\n"));
+    assert!(report.contains("context_item_0_kind=syntax\n"));
+    assert!(report.contains("context_item_0_provider_0_tier=syntax\n"));
+    assert_eq!(report_value(&report, "provider_coverage"), "6");
+    assert!(report.contains("provider_coverage_0_tier=precise_overlay\n"));
+    assert!(report.contains("provider_coverage_0_availability=unavailable\n"));
+    assert!(report.contains("provider_coverage_1_tier=syntax\n"));
+    assert!(report.contains("provider_coverage_1_availability=available\n"));
+    for sensitive in [
+        repository.to_string_lossy().as_ref(),
+        database.to_string_lossy().as_ref(),
+        REPOSITORY_ID,
+    ] {
+        assert!(!report.contains(sensitive));
+    }
+}
+
+#[test]
+fn phase2_context_build_accepts_one_explicit_connected_source_slot() {
+    let directory = TempDirectory::new();
+    let fixture = index_workspace_fixture(&directory);
+    let output = repowitness_os([
+        OsStr::new("phase2-context-build"),
+        OsStr::new("--repository-id"),
+        OsStr::new(REPOSITORY_ID),
+        OsStr::new("--database"),
+        fixture.database.as_os_str(),
+        OsStr::new("--root"),
+        fixture.repository.as_os_str(),
+        OsStr::new("--intent"),
+        OsStr::new("Widget"),
+        OsStr::new("--connected-workspace-id"),
+        OsStr::new(CONNECTED_WORKSPACE_ID),
+        OsStr::new("--source-slot-id"),
+        OsStr::new(SOURCE_SLOT_ID),
+    ]);
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report = String::from_utf8(output.stdout).expect("Phase 2 context report");
+    assert_eq!(report_value(&report, "operation"), "phase2-context-build");
+    assert!(report.contains("context_item_0_kind=syntax\n"));
+    for sensitive in [
+        fixture.repository.to_string_lossy().as_ref(),
+        fixture.database.to_string_lossy().as_ref(),
+        REPOSITORY_ID,
+        CONNECTED_WORKSPACE_ID,
+        SOURCE_SLOT_ID,
+    ] {
+        assert!(!report.contains(sensitive));
+    }
+}
+
+#[test]
+fn scip_import_admits_one_contained_file_and_publishes_an_exact_active_overlay() {
+    let directory = TempDirectory::new();
+    let fixture = index_workspace_fixture(&directory);
+    let scip_file = directory.0.join("producer.scip");
+    fs::write(&scip_file, valid_scip_index()).expect("SCIP fixture should be written");
+
+    let imported = repowitness_os([
+        OsStr::new("scip-import"),
+        OsStr::new("--database"),
+        fixture.database.as_os_str(),
+        OsStr::new("--root"),
+        fixture.repository.as_os_str(),
+        OsStr::new("--scip-file"),
+        scip_file.as_os_str(),
+        OsStr::new("--connected-workspace-id"),
+        OsStr::new(CONNECTED_WORKSPACE_ID),
+        OsStr::new("--source-slot-id"),
+        OsStr::new(SOURCE_SLOT_ID),
+    ]);
+    assert!(
+        imported.status.success(),
+        "{}",
+        String::from_utf8_lossy(&imported.stderr)
+    );
+    assert!(imported.stderr.is_empty());
+    let receipt: serde_json::Value =
+        serde_json::from_slice(&imported.stdout).expect("SCIP import receipt JSON");
+    assert_eq!(
+        receipt["connected_workspace"],
+        serde_json::json!(CONNECTED_WORKSPACE_ID)
+    );
+    assert_eq!(receipt["source_slot"], serde_json::json!(SOURCE_SLOT_ID));
+    assert!(receipt["workspace_view"].as_i64().is_some_and(|view| view > 0));
+    assert_eq!(receipt["documents"], serde_json::json!(1));
+    assert_eq!(receipt["occurrences"], serde_json::json!(1));
+    assert_eq!(receipt["relationships"], serde_json::json!(1));
+
+    let evidence = repowitness_os([
+        OsStr::new("scip-evidence"),
+        OsStr::new("--connected-workspace-id"),
+        OsStr::new(CONNECTED_WORKSPACE_ID),
+        OsStr::new("--source-slot-id"),
+        OsStr::new(SOURCE_SLOT_ID),
+        OsStr::new("--database"),
+        fixture.database.as_os_str(),
+        OsStr::new("--symbol"),
+        OsStr::new("scip-rust pkg 0/Widget#"),
+    ]);
+    assert!(
+        evidence.status.success(),
+        "{}",
+        String::from_utf8_lossy(&evidence.stderr)
+    );
+    let evidence: serde_json::Value =
+        serde_json::from_slice(&evidence.stdout).expect("SCIP evidence JSON");
+    assert_eq!(evidence["resolution"], serde_json::json!("found"));
+    assert_eq!(evidence["overlay"]["documents"], serde_json::json!(1));
+    assert_eq!(evidence["occurrences"].as_array().map(Vec::len), Some(1));
+    assert_eq!(evidence["relationships"].as_array().map(Vec::len), Some(1));
+
+    let context = repowitness_os([
+        OsStr::new("phase2-context-build"),
+        OsStr::new("--repository-id"),
+        OsStr::new(REPOSITORY_ID),
+        OsStr::new("--database"),
+        fixture.database.as_os_str(),
+        OsStr::new("--root"),
+        fixture.repository.as_os_str(),
+        OsStr::new("--intent"),
+        OsStr::new("Widget"),
+        OsStr::new("--connected-workspace-id"),
+        OsStr::new(CONNECTED_WORKSPACE_ID),
+        OsStr::new("--source-slot-id"),
+        OsStr::new(SOURCE_SLOT_ID),
+    ]);
+    assert!(
+        context.status.success(),
+        "{}",
+        String::from_utf8_lossy(&context.stderr)
+    );
+    let context = String::from_utf8(context.stdout).expect("Phase 2 context report");
+    assert!(context.contains("context_item_0_tier=precise_overlay\n"));
+    assert!(context.contains("context_item_0_kind=precise_overlay\n"));
+    assert!(context.contains("context_item_0_relationship_count=1\n"));
+    assert_workspace_phase2_context_mcp_with_scip(&fixture);
+}
+
+fn valid_scip_index() -> Vec<u8> {
+    let symbol = b"scip-rust pkg 0/Widget#";
+    let relationship_target = b"scip-rust pkg 0/Base#";
+    let range = [0_u8, 11, 17];
+    let mut occurrence = scip_field(1, 2, &range);
+    occurrence.extend(scip_field(2, 2, symbol));
+    occurrence.extend(scip_field(3, 0, &[1]));
+    let mut relationship = scip_field(1, 2, relationship_target);
+    relationship.extend(scip_field(3, 0, &[1]));
+    let mut symbol_information = scip_field(1, 2, symbol);
+    symbol_information.extend(scip_field(4, 2, &relationship));
+    let mut document = scip_field(1, 2, b"src/lib.rs");
+    document.extend(scip_field(2, 2, &occurrence));
+    document.extend(scip_field(3, 2, &symbol_information));
+    document.extend(scip_field(6, 0, &[1]));
+    let mut metadata = scip_field(1, 0, &[0]);
+    metadata.extend(scip_field(4, 0, &[1]));
+    let mut index = scip_field(1, 2, &metadata);
+    index.extend(scip_field(2, 2, &document));
+    index
+}
+
+fn scip_field(number: u8, wire_type: u8, payload: &[u8]) -> Vec<u8> {
+    assert!(number < 16 && wire_type < 8 && payload.len() < 128);
+    let mut field = vec![(number << 3) | wire_type];
+    if wire_type == 2 {
+        field.push(u8::try_from(payload.len()).expect("small test payload"));
+    }
+    field.extend(payload);
+    field
 }
 
 #[test]
@@ -551,5 +775,76 @@ fn assert_workspace_graph_mcp(fixture: &WorkspaceGraphFixture) {
             .as_i64()
             .is_some_and(|generation| generation > 0)
     );
+    stop_mcp(child, input, output);
+}
+
+fn assert_workspace_phase2_context_mcp(fixture: &WorkspaceGraphFixture) {
+    let (child, mut input, mut output) = start_mcp_with_graph_workspace(
+        &fixture.repository,
+        &fixture.database,
+        CONNECTED_WORKSPACE_ID,
+        SOURCE_SLOT_ID,
+    );
+    initialize_mcp(&mut input, &mut output);
+    let response = mcp_request(
+        &mut input,
+        &mut output,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 61,
+            "method": "tools/call",
+            "params": {
+                "name": "phase2_context_build",
+                "arguments": {"intent": "Widget", "budget_units": 4096}
+            }
+        }),
+    );
+    assert_eq!(response["result"]["isError"], serde_json::json!(false));
+    let context = &response["result"]["structuredContent"];
+    assert_eq!(context["schema_version"], serde_json::json!(1));
+    assert!(context["scope"]["workspace_view"]
+        .as_i64()
+        .is_some_and(|view| view > 0));
+    assert!(context["items"].as_array().is_some_and(|items| {
+        items
+            .iter()
+            .any(|item| item["payload"]["kind"] == "syntax")
+    }));
+    stop_mcp(child, input, output);
+}
+
+fn assert_workspace_phase2_context_mcp_with_scip(fixture: &WorkspaceGraphFixture) {
+    let (child, mut input, mut output) = start_mcp_with_graph_workspace(
+        &fixture.repository,
+        &fixture.database,
+        CONNECTED_WORKSPACE_ID,
+        SOURCE_SLOT_ID,
+    );
+    initialize_mcp(&mut input, &mut output);
+    let response = mcp_request(
+        &mut input,
+        &mut output,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 62,
+            "method": "tools/call",
+            "params": {
+                "name": "phase2_context_build",
+                "arguments": {
+                    "intent": "Widget",
+                    "budget_units": 4096
+                }
+            }
+        }),
+    );
+    assert_eq!(response["result"]["isError"], serde_json::json!(false));
+    let context = &response["result"]["structuredContent"];
+    let item = context["items"]
+        .as_array()
+        .and_then(|items| items.first())
+        .expect("precise Phase 2 item");
+    assert_eq!(item["tier"], serde_json::json!("precise_overlay"));
+    assert_eq!(item["payload"]["kind"], serde_json::json!("precise_overlay"));
+    assert_eq!(item["payload"]["relationship_count"], serde_json::json!(1));
     stop_mcp(child, input, output);
 }

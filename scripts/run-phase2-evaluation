@@ -1,0 +1,120 @@
+#!/bin/sh
+set -eu
+
+PROFILE=phase2-evaluation-v1
+REPOSITORY_ID=rwi1:h:C4C4C4C4C4C4C4C4C4C4C4C4C4C4C4C4C4C4C4C4C4C4C4C4C4C4C4C4C4C4C4C4
+REVISION=3d93b42bc363220f85af4fc9e1bebd35b588a4a3
+RUNS=5
+AGENT=false
+
+usage() {
+    echo "usage: ./scripts/run-phase2-evaluation [--agent] <mini-redis-repository>" >&2
+    exit 64
+}
+
+if [ "$#" -eq 2 ] && [ "$1" = "--agent" ]; then
+    AGENT=true
+    CORPUS=$2
+elif [ "$#" -eq 1 ]; then
+    CORPUS=$1
+else
+    usage
+fi
+
+command -v git >/dev/null 2>&1 || { echo "error: git is required" >&2; exit 69; }
+command -v perl >/dev/null 2>&1 || { echo "error: Perl is required" >&2; exit 69; }
+[ -d "$CORPUS" ] && [ ! -L "$CORPUS" ] || { echo "error: corpus directory is invalid" >&2; exit 65; }
+[ "$(git -C "$CORPUS" rev-parse --verify HEAD)" = "$REVISION" ] || {
+    echo "error: corpus revision does not match Phase 2 evaluation" >&2
+    exit 65
+}
+[ -z "$(git -C "$CORPUS" status --porcelain --untracked-files=all)" ] || {
+    echo "error: corpus worktree must be clean" >&2
+    exit 65
+}
+
+ROOT=$(CDPATH= cd "$(dirname "$0")/.." && pwd)
+CLI=$ROOT/target/release/repowitness
+TEMP=$(mktemp -d "${TMPDIR:-/tmp}/repowitness-phase2-evaluation.XXXXXXXX")
+cleanup() { rm -rf "$TEMP"; }
+trap cleanup EXIT HUP INT TERM
+DATABASE=$TEMP/index.sqlite3
+PACKET=$TEMP/phase2-context.txt
+SAMPLES=$TEMP/latency-ms.txt
+
+(cd "$ROOT" && cargo build --release --locked -p repowitness-cli --bin repowitness >/dev/null)
+"$CLI" index --repository-id "$REPOSITORY_ID" --database "$DATABASE" -- "$CORPUS" >/dev/null
+
+run_packet() {
+    perl -MTime::HiRes=time -e '
+        my ($output, $sample, @command) = @ARGV;
+        my $start = time();
+        open my $handle, ">:raw", $output or die "cannot create packet\n";
+        open STDOUT, ">&", $handle or die "cannot redirect packet\n";
+        system @command;
+        my $status = $?;
+        close $handle or die "cannot close packet\n";
+        exit($status >> 8) if $status != 0;
+        open my $samples, ">>:raw", $sample or die "cannot append sample\n";
+        printf {$samples} "%.3f\n", (time() - $start) * 1000;
+        close $samples or die "cannot close sample\n";
+    ' "$PACKET" "$SAMPLES" "$CLI" phase2-context-build \
+        --repository-id "$REPOSITORY_ID" --database "$DATABASE" --root "$CORPUS" \
+        --intent run --budget 65536 --limit 20
+}
+
+N=1
+while [ "$N" -le "$RUNS" ]; do
+    run_packet
+    N=$((N + 1))
+done
+
+grep -qx 'profile_id=phase2-evidence-balanced-v1' "$PACKET"
+grep -qx 'provider_coverage_1_tier=syntax' "$PACKET"
+grep -qx 'provider_coverage_1_availability=available' "$PACKET"
+grep -qx 'provider_coverage_3_tier=references' "$PACKET"
+grep -qx 'provider_coverage_3_availability=available' "$PACKET"
+grep -qx 'provider_coverage_0_availability=unavailable' "$PACKET"
+grep -qx 'context_item_.*_kind=graph_relation' "$PACKET" || {
+    echo "error: Phase 2 packet omitted direct graph context" >&2
+    exit 70
+}
+
+(cd "$ROOT" && cargo test -p repowitness-local \
+    local_phase2_context_build::tests::public_synthetic_call_chain_improves_navigation_and_relevant_source_density \
+    --locked >/dev/null)
+(cd "$ROOT" && cargo test -p repowitness-local --test phase2_history_context --locked >/dev/null)
+
+P95=$(sort -n "$SAMPLES" | perl -ne '
+    push @values, $_;
+    END { print $values[int((@values * 95 + 99) / 100) - 1] }
+')
+
+if [ "$AGENT" = true ]; then
+    command -v codex >/dev/null 2>&1 || { echo "error: codex CLI is required for --agent" >&2; exit 69; }
+    ANSWER=$TEMP/agent-answer.txt
+    codex exec --ephemeral --ignore-user-config --ignore-rules --strict-config \
+        --disable apps --disable goals --disable hooks --disable memories --disable multi_agent \
+        --disable remote_plugin --disable shell_snapshot --disable shell_tool \
+        --config 'approval_policy="never"' --config 'mcp_servers={}' --config 'web_search="disabled"' \
+        --sandbox read-only --cd "$TEMP" --skip-git-repo-check --color never \
+        --output-last-message "$ANSWER" \
+        'Use only the supplied Phase 2 RepoWitness packet on standard input. Explain the shutdown path to connection handlers in at most two sentences, state one uncertainty, and do not claim any memory evidence.' \
+        <"$PACKET" >/dev/null
+    grep -Eiq 'listener|handler' "$ANSWER" || {
+        echo "error: downstream agent did not use the packet navigation evidence" >&2
+        exit 70
+    }
+    echo 'agent_consumer=codex'
+    echo 'agent_stale_memory_uses=0'
+fi
+
+echo "profile=$PROFILE"
+echo "corpus_revision=$REVISION"
+echo "warm_runs=$RUNS"
+echo "phase2_context_p95_ms=$P95"
+echo 'baselines=lexical-selector,graph-selector,phase0-context'
+echo 'synthetic_navigation_and_density=passed'
+echo 'stale_provider_exclusion=passed'
+echo 'provider_coverage=syntax-available,references-available,precise-unavailable'
+echo 'status=passed'

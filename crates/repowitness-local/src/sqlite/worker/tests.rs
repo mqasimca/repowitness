@@ -12,16 +12,19 @@ use std::{
 
 use repowitness_application::{
     ImmutableRustSource, ImportMemoryRecordRequest, MemoryEvidenceOutcome, MemoryImportApproval,
-    PublishSourceSlotIndexError, PublishSourceSlotIndexRequest, RustArtifactIdentity,
-    RustIndexLimits, RustSourceSnapshotIdentity, SourceSlotFinalFence, evaluate_memory_projection,
+    PackageScope, PublishSourceSlotIndexError, PublishSourceSlotIndexRequest,
+    RepositoryIdentityTextV1, RustArtifactIdentity, RustIndexLimits, RustSourceSnapshotIdentity,
+    ScipOverlayIdentityInput, ScipOverlayScopeIdentity, SourceSlotFinalFence,
+    bounded_scip_importer_digest, evaluate_memory_projection, hash_scip_input,
     hash_source_snapshot, import_memory_record, prepare_rust_index, publish_source_slot_index,
+    reviewed_scip_schema_digest,
 };
 use repowitness_domain::{
     AnalysisSchemaDigest, CanonicalMemoryDigest, ConfigurationDigest, ConnectedWorkspaceId,
     GitStateDigest, MemoryAuditActorId, MemoryCommitId, MemoryCorrespondenceReviewOperation,
     MemoryEvidence, MemoryObservationSource, MemoryPresentationDigest, MemoryProjectValidity,
     MemoryRecord, MemoryRecordedAtUnixMillis, MemoryRevalidationTarget, ProducerManifestDigest,
-    RepositoryIdentityDigest, RepositoryPath, RepositoryPathLimits, SourceSlotId,
+    RepositoryIdentityDigest, RepositoryPath, RepositoryPathLimits, ScipSymbol, SourceSlotId,
     SourceSnapshotDigest, WorktreeStateDigest,
 };
 use rusqlite::{Connection, TransactionBehavior, params};
@@ -29,9 +32,9 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     BackupLimits, GenerationRetentionPolicy, MAX_CONNECTED_WORKSPACE_SOURCE_SLOTS,
-    MemoryFormatControl, OwnedSqliteReader, ProjectionRebuildLimits, RetentionApplyRequest,
-    RetentionLimits, RetentionPins, RetentionPlanRequest, SearchLimits, create_online_backup,
-    parse_memory_record,
+    MemoryFormatControl, OwnedSqliteReader, PreparedScipOverlay, ProjectionRebuildLimits,
+    RetentionApplyRequest, RetentionLimits, RetentionPins, RetentionPlanRequest, SearchLimits,
+    create_online_backup, parse_memory_record,
 };
 
 use super::{
@@ -135,3 +138,4 @@ include!("tests/retention_roots.rs");
 include!("tests/retention_views.rs");
 include!("tests/graph.rs");
 include!("tests/graph_adversarial.rs");
+include!("tests/scip_overlay.rs");

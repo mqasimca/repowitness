@@ -140,6 +140,22 @@ define_sha256_digest!(
     CorrespondenceProfileDigest,
     "A SHA-256 identity for one complete versioned correspondence profile."
 );
+define_sha256_digest!(
+    ScipOverlayDigest,
+    "A SHA-256 identity for one immutable validated SCIP precision overlay."
+);
+define_sha256_digest!(
+    ScipInputDigest,
+    "A SHA-256 identity for one exact hostile SCIP input artifact."
+);
+define_sha256_digest!(
+    ScipSchemaDigest,
+    "A SHA-256 identity for one reviewed exact SCIP schema."
+);
+define_sha256_digest!(
+    ScipImporterDigest,
+    "A SHA-256 identity for one bounded SCIP importer implementation."
+);
 
 #[cfg(test)]
 mod tests {

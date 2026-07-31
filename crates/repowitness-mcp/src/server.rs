@@ -37,11 +37,14 @@ use crate::{
     IMPACT_ANALYZE_TOOL_NAME, MAX_MCP_INPUT_LINE_BYTES, MEMORY_MANAGE_TOOL_NAME,
     MEMORY_RECALL_TOOL_NAME, MemoryManageInput, MemoryManageOutput, MemoryManageServiceRequest,
     MemoryMutationRequestScope, MemoryRecallInput, MemoryRecallOutput, MemoryRecallServiceRequest,
-    RepositoryService, RepositoryServiceError, SYMBOL_GET_TOOL_NAME, SymbolGetInput,
-    SymbolGetOutput, SymbolGetServiceRequest,
+    PHASE2_CONTEXT_BUILD_TOOL_NAME, Phase2ContextBuildInput, Phase2ContextBuildOutput,
+    Phase2ContextBuildServiceRequest, RepositoryService, RepositoryServiceError,
+    SCIP_EVIDENCE_TOOL_NAME, SYMBOL_GET_TOOL_NAME, ScipEvidenceInput, ScipEvidenceOutput,
+    ScipEvidenceServiceRequest, SymbolGetInput, SymbolGetOutput, SymbolGetServiceRequest,
     wire::{
         MAX_MCP_CONTEXT_OUTPUT_BYTES, MAX_MCP_DIAGNOSTICS_OUTPUT_BYTES, MAX_MCP_GRAPH_OUTPUT_BYTES,
         MAX_MCP_MEMORY_MANAGE_OUTPUT_BYTES, MAX_MCP_MEMORY_RECALL_OUTPUT_BYTES,
+        MAX_MCP_PHASE2_CONTEXT_OUTPUT_BYTES, MAX_MCP_SCIP_EVIDENCE_OUTPUT_BYTES,
         MAX_MCP_SEARCH_OUTPUT_BYTES, MAX_MCP_SYMBOL_OUTPUT_BYTES,
     },
 };
@@ -213,6 +216,21 @@ impl RepoWitnessMcpServer {
         operation_result(output, MAX_MCP_CONTEXT_OUTPUT_BYTES)
     }
 
+    async fn call_phase2_context_build(
+        &self,
+        request: Phase2ContextBuildServiceRequest,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let service = Arc::clone(&self.service);
+        let timeout = request.timeout();
+        let output = self
+            .run_blocking(timeout, context, move |remaining, cancelled| {
+                service.phase2_context_build(request.with_timeout(remaining), cancelled)
+            })
+            .await?;
+        operation_result(output, MAX_MCP_PHASE2_CONTEXT_OUTPUT_BYTES)
+    }
+
     async fn call_memory_recall(
         &self,
         request: MemoryRecallServiceRequest,
@@ -270,6 +288,21 @@ impl RepoWitnessMcpServer {
         });
         operation_result(output, MAX_MCP_DIAGNOSTICS_OUTPUT_BYTES)
     }
+
+    async fn call_scip_evidence(
+        &self,
+        request: ScipEvidenceServiceRequest,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let service = Arc::clone(&self.service);
+        let timeout = request.timeout();
+        let output = self
+            .run_blocking(timeout, context, move |remaining, cancelled| {
+                service.scip_evidence(request.with_timeout(remaining), cancelled)
+            })
+            .await?;
+        operation_result(output, MAX_MCP_SCIP_EVIDENCE_OUTPUT_BYTES)
+    }
 }
 
 include!("server/operation_supervisor.rs");
@@ -301,6 +334,10 @@ impl ServerHandler for RepoWitnessMcpServer {
         })
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the complete versioned tool dispatch is intentionally one auditable closed match over fixed capabilities"
+    )]
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
@@ -320,6 +357,13 @@ impl ServerHandler for RepoWitnessMcpServer {
                     .validate()
                     .map_err(|message| McpError::invalid_params(message, None))?;
                 self.call_context_build(request, context).await
+            }
+            PHASE2_CONTEXT_BUILD_TOOL_NAME => {
+                let input = parse_arguments::<Phase2ContextBuildInput>(request.arguments)?;
+                let request = input
+                    .validate()
+                    .map_err(|message| McpError::invalid_params(message, None))?;
+                self.call_phase2_context_build(request, context).await
             }
             DIAGNOSTICS_TOOL_NAME => {
                 let input = parse_arguments::<DiagnosticsInput>(request.arguments)?;
@@ -384,6 +428,13 @@ impl ServerHandler for RepoWitnessMcpServer {
                     .map_err(|message| McpError::invalid_params(message, None))?;
                 self.call_memory_manage(request, context).await
             }
+            SCIP_EVIDENCE_TOOL_NAME => {
+                let input = parse_arguments::<ScipEvidenceInput>(request.arguments)?;
+                let request = input
+                    .validate()
+                    .map_err(|message| McpError::invalid_params(message, None))?;
+                self.call_scip_evidence(request, context).await
+            }
             SYMBOL_GET_TOOL_NAME => {
                 let input = parse_arguments::<SymbolGetInput>(request.arguments)?;
                 let request = input
@@ -443,6 +494,10 @@ async fn serve_stdio_configured(
     Ok(())
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "one fixed capability constructor makes the complete advertised MCP surface directly auditable"
+)]
 fn tools(memory_writes_enabled: bool, surface: McpToolSurface) -> Vec<Tool> {
     let annotations = ToolAnnotations::new()
         .read_only(true)
@@ -466,6 +521,15 @@ fn tools(memory_writes_enabled: bool, surface: McpToolSurface) -> Vec<Tool> {
     )
     .with_input_schema::<ContextBuildInput>()
     .with_output_schema::<ContextBuildOutput>()
+    .annotate(annotations.clone());
+    let phase2_context_build = Tool::new(
+        PHASE2_CONTEXT_BUILD_TOOL_NAME,
+        "Compile the separately versioned evidence-balanced Phase 2 context pack from pinned \
+         exact source and current-memory evidence under a labeled conservative content budget.",
+        JsonObject::new(),
+    )
+    .with_input_schema::<Phase2ContextBuildInput>()
+    .with_output_schema::<Phase2ContextBuildOutput>()
     .annotate(annotations.clone());
     let diagnostics = Tool::new(
         DIAGNOSTICS_TOOL_NAME,
@@ -503,9 +567,18 @@ fn tools(memory_writes_enabled: bool, surface: McpToolSurface) -> Vec<Tool> {
     let mut tools = vec![
         code_search,
         context_build,
+        phase2_context_build,
         diagnostics,
         memory_recall,
         symbol_get,
+        Tool::new(
+            SCIP_EVIDENCE_TOOL_NAME,
+            "Read bounded exact package-scoped evidence for one imported SCIP symbol from the active or selected immutable overlay.",
+            JsonObject::new(),
+        )
+        .with_input_schema::<ScipEvidenceInput>()
+        .with_output_schema::<ScipEvidenceOutput>()
+        .annotate(annotations.clone()),
     ];
     tools.extend(graph_tools(&annotations));
     if surface.includes_compatibility_aliases() {
