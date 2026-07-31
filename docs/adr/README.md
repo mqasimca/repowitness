@@ -72,6 +72,7 @@ passed, so maintainers accepted ADR-0018 and then ADR-0021.
 | [0031](0031-source-slot-selectors-and-package-scopes.md) | Resolve source-slot selectors in caller-provided worktrees | Proposed |
 | [0032](0032-explicit-connected-workspace-manifest.md) | Admit connected workspaces through an explicit manifest | Proposed |
 | [0033](0033-bounded-mutation-outcome-resolution.md) | Resolve mutation outcomes without denying committed work | Proposed |
+| [0034](0034-phase1-codex-graph-evaluation.md) | Evaluate bounded Phase 1 graph packets through an evidence envelope | Proposed |
 
 Use [0000-template.md](0000-template.md) for a new decision.
 

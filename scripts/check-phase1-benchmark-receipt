@@ -55,6 +55,9 @@ sub required_keys {
       silent_truncations
       mixed_generation_reads
       false_automatic_relinks
+      phase1_adversarial_matrix_profile
+      phase1_adversarial_matrix_cases
+      phase1_adversarial_matrix_failures
       retention_runs
       retention_plan_p95_us
       retention_apply_p95_us
@@ -423,6 +426,24 @@ sub validate_receipt {
             \@errors
         );
     }
+    exact(
+        \%values,
+        'phase1_adversarial_matrix_profile',
+        'v1',
+        \@errors
+    );
+    exact(
+        \%values,
+        'phase1_adversarial_matrix_cases',
+        12,
+        \@errors
+    );
+    exact(
+        \%values,
+        'phase1_adversarial_matrix_failures',
+        0,
+        \@errors
+    );
     for my $key (
         qw(
         quiet_poll_publications
@@ -548,6 +569,9 @@ sub self_test_receipt {
     for my $key (keys %correctness_receipt) {
         $values{$key} = $correctness->{$correctness_receipt{$key}};
     }
+    $values{phase1_adversarial_matrix_profile} = 'v1';
+    $values{phase1_adversarial_matrix_cases} = 12;
+    $values{phase1_adversarial_matrix_failures} = 0;
     for my $key (
         qw(
         quiet_poll_publications unchanged_generation_delta

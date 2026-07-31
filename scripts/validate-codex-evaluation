@@ -4,6 +4,7 @@ use strict;
 use warnings;
 
 use JSON::PP;
+use Digest::SHA qw(sha256_hex);
 
 my $MAX_EVENTS_BYTES = 8 * 1024 * 1024;
 my $MAX_EVENT_BYTES  = 2 * 1024 * 1024;
@@ -21,7 +22,7 @@ if (@ARGV == 1 && $ARGV[0] eq '--self-test') {
 
 my ($events_path, $answer_path, $packet_path, $phase, $expected, $expect_current) =
   @ARGV;
-$phase =~ /\A(?:base|changed)\z/
+$phase =~ /\A(?:(?:phase1-)?(?:base|changed))\z/
   or die "invalid evaluation phase\n";
 $expected =~ /\A(?:bug-present|bug-fixed|indeterminate)\z/
   or die "invalid expected decision\n";
@@ -174,7 +175,7 @@ sub validate_answer {
       or die "Codex answer omitted bounded evidence identifiers\n";
 
     my %seen;
-    my ($source_count, $memory_count) = (0, 0);
+    my ($source_count, $graph_count, $memory_count) = (0, 0, 0);
     for my $id (@{$ids}) {
         defined $id && !ref($id) && length($id) <= 256
           or die "Codex evidence identifier is invalid\n";
@@ -184,6 +185,9 @@ sub validate_answer {
           or die "Codex cited evidence outside the supplied packet\n";
         if ($item->{kind} eq 'source') {
             $source_count++;
+        }
+        elsif ($item->{kind} eq 'graph') {
+            $graph_count++;
         }
         else {
             $memory_count++;
@@ -196,8 +200,10 @@ sub validate_answer {
       or die "Codex decision mismatch\n";
     JSON::PP::is_bool($answer->{source_grounded})
       && $answer->{source_grounded}
-      && $source_count >= 1
-      or die "Codex answer was not grounded in cited packet source\n";
+      && ($source_count + $graph_count) >= 1
+      or die "Codex answer was not grounded in cited packet evidence\n";
+    ($phase !~ /\Aphase1-/ || $graph_count >= 1)
+      or die "Phase 1 Codex answer omitted cited graph evidence\n";
     JSON::PP::is_bool($answer->{current_memory_used})
       or die "Codex current-memory use is invalid\n";
     (!!$answer->{current_memory_used}) == ($memory_count > 0)
@@ -222,6 +228,9 @@ sub validate_answer {
         "codex_packet_usefulness=$answer->{packet_usefulness}\n",
         'codex_cited_source_items=',
         $source_count,
+        "\n",
+        'codex_cited_graph_items=',
+        $graph_count,
         "\n",
         'codex_cited_memory_items=',
         $memory_count,
@@ -269,6 +278,31 @@ sub packet_evidence {
             defined $effective_state && !ref($effective_state)
               or die "RepoWitness memory state is invalid\n";
             $expected_id = "memory/$record_id/$revision";
+        }
+        elsif (defined $kind && $kind eq 'graph') {
+            defined($packet->{envelope_version})
+              && !ref($packet->{envelope_version})
+              && $packet->{envelope_version} == 1
+              or die "RepoWitness graph envelope version is invalid\n";
+            my $context = $item->{context};
+            my $evidence = $item->{evidence};
+            ref($context) eq 'HASH' && ref($evidence) eq 'HASH'
+              or die "RepoWitness graph evidence is invalid\n";
+            for my $field (qw(connected_workspace workspace_view graph_generation)) {
+                defined $context->{$field} && !ref($context->{$field})
+                  or die "RepoWitness graph context is invalid\n";
+            }
+            $context->{connected_workspace} =~ /\Acwi1:h:[0-9A-F]{64}\z/
+              && $context->{workspace_view} =~ /\A[1-9][0-9]*\z/
+              && $context->{graph_generation} =~ /\A[1-9][0-9]*\z/
+              or die "RepoWitness graph context is invalid\n";
+            my $canonical = JSON::PP->new->canonical(1)->encode({
+                envelope_version => 1,
+                kind => 'graph',
+                context => $context,
+                evidence => $evidence,
+            });
+            $expected_id = 'graph/' . sha256_hex($canonical);
         }
         else {
             die "RepoWitness packet item kind is invalid\n";
@@ -349,6 +383,58 @@ sub self_test {
         'base',
         'bug-present',
         1,
+    );
+
+    my $graph_context = {
+        connected_workspace => 'cwi1:h:' . ('D' x 64),
+        workspace_view => 1,
+        graph_generation => 2,
+    };
+    my $graph_evidence = {
+        outcome => 'unique',
+        coverage => { ambiguous_sites => 0, truncated_sites => 0 },
+    };
+    my $graph_canonical = JSON::PP->new->canonical(1)->encode({
+        envelope_version => 1,
+        kind => 'graph',
+        context => $graph_context,
+        evidence => $graph_evidence,
+    });
+    my $graph_id = 'graph/' . sha256_hex($graph_canonical);
+    my $graph_packet = {
+        envelope_version => 1,
+        items => [
+            {
+                kind => 'graph',
+                context => $graph_context,
+                evidence => $graph_evidence,
+                evaluation_evidence_id => $graph_id,
+            },
+            $packet->{items}->[1],
+        ],
+    };
+    my $graph_answer = {
+        %{$answer},
+        evidence_ids => [$graph_id, $packet->{items}->[1]->{evaluation_evidence_id}],
+    };
+    validate_answer(
+        encode_json($graph_answer),
+        encode_json($graph_packet),
+        'phase1-base',
+        'bug-present',
+        1,
+    );
+    $graph_packet->{items}->[0]->{evidence}->{outcome} = 'ambiguous';
+    must_fail(
+        sub {
+            validate_answer(
+                encode_json($graph_answer),
+                encode_json($graph_packet),
+                'phase1-base',
+                'bug-present',
+                1,
+            );
+        }
     );
 
     my $tool_events = $events;

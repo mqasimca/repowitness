@@ -29,7 +29,7 @@
         "type": "string",
         "minLength": 1,
         "maxLength": 256,
-        "pattern": "^(source|memory)/[A-Za-z0-9_.:-]+/[A-Za-z0-9_.:-]+$"
+        "pattern": "^(?:source|memory)/[A-Za-z0-9_.:-]+/[A-Za-z0-9_.:-]+$|^graph/[0-9a-f]{64}$"
       }
     },
     "source_grounded": {

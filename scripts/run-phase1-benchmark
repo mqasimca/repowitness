@@ -794,6 +794,10 @@ if ! run_trustworthiness_suite; then
     echo "error: Phase 1 trustworthiness regressions failed" >&2
     exit 1
 fi
+if ! run_adversarial_release_matrix; then
+    echo "error: Phase 1 adversarial release matrix failed" >&2
+    exit 1
+fi
 if ! run_operation_probe; then
     exit 1
 fi

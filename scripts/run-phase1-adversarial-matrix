@@ -1,0 +1,15 @@
+#!/bin/sh
+set -eu
+
+PROJECT_ROOT=$(CDPATH= cd "$(dirname "$0")/.." && pwd)
+BENCHMARK_TEMP=$(mktemp -d "${TMPDIR:-/tmp}/repowitness-phase1-adversarial.XXXXXXXX")
+cleanup() {
+    rm -rf "$BENCHMARK_TEMP"
+}
+trap cleanup EXIT HUP INT TERM
+
+cd "$PROJECT_ROOT"
+. ./scripts/phase1-benchmark-support
+. ./scripts/phase1-benchmark-suites
+
+run_adversarial_release_matrix
