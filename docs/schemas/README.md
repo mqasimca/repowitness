@@ -5,23 +5,23 @@ accepted or explicitly proposed ADRs.
 
 - [Local configuration version 1](configuration-v1.md) — strict bounded TOML
   admission, deterministic preference provenance, monotonic policy resolution,
-  and canonical semantic identity under proposed ADR-0025
+  and canonical semantic identity under accepted ADR-0025
 - [Phase 0 engineering-memory record version 1](phase0-memory-v1.md) — accepted
   production domain, parser, canonicalizer, generated-YAML format, and
   worktree-import/write boundary; bounded observation-only Git-tree history
   import is implemented without changing the record format
-- [Phase 1 SQLite provisional schema version 3](phase1-sqlite-provisional-v3.md)
-  — implemented development read/write format with connected-workspace source
-  slots, immutable views, generation-scoped Rust graph publication, and
-  deterministic bounded retention plan/apply under proposed ADR-0029
+- [Phase 1 SQLite schema version 3](phase1-sqlite-provisional-v3.md) — accepted
+  read/write format with connected-workspace source slots, immutable views,
+  generation-scoped Rust graph publication, and deterministic bounded retention
+  plan/apply under ADR-0029
 - [Phase 0 SQLite schema version 2](phase0-sqlite-current-v2.md) — accepted
   predecessor with two exact migrations and ledger rows, governed by accepted
   ADR-0022 and ADR-0024
 - [Phase 0 SQLite baseline migration version 1](phase0-sqlite-baseline-v1.md) —
   immutable supported baseline and version-2 upgrade source
 
-The owned production adapter currently creates provisional version-3
-databases and upgrades exact accepted version-1 and version-2 databases. It
+The owned production adapter creates version-3 databases and upgrades exact
+accepted version-1 and version-2 databases. It
 accepts only the RepoWitness application ID and an exact migration ledger
 through the declared schema version. Retired development versions 1 through 8
 are rejected without mutation and require an explicit rebuild. Automated tests

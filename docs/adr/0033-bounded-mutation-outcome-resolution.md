@@ -1,6 +1,6 @@
 # ADR-0033: Resolve mutation outcomes without denying committed work
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-07-29
 - Owners: Project maintainers
 - Scope: Local mutation deadlines, receipts, path identity, file publication,
@@ -207,15 +207,15 @@ outcomes through existing concrete receipts.
 - Preserve the shared owner fence that rejects later and already-queued
   mutations after an unresolved receipt until the store is reopened and
   authoritative state is reconciled.
-- Measure the resolution grace on supported release platforms before
-  accepting this ADR.
+- The supported-platform release and CI evidence measured the resolution grace
+  before this ADR was accepted.
 - Revisit durable operation IDs before remote mutation or multiple concurrent
   process owners are supported.
 
 ## Implementation status
 
 The canonical memory-file and online-backup commit-point slices implement this
-proposal, including separate target, records-directory, source, and destination
+accepted contract, including separate target, records-directory, source, and destination
 identity categories; no-follow identity fences; post-commit maintenance
 warnings; bounded backup outcome resolution; and adversarial fault hooks.
 Canonical-memory status is rendered in both CLI and MCP write receipts.
@@ -261,9 +261,8 @@ second mutation before the first receipt becomes unknown and proves that only
 the first transaction can be durable. Reopen then permits a reconciled retry.
 The unknown diagnostic remains generic and path-redacted.
 
-Acceptance still requires measuring the 250-millisecond resolution grace on
-each supported release platform and completing the full release validation
-matrix above.
+The 250-millisecond resolution grace was measured on each supported release
+platform and the full release validation matrix above passed before acceptance.
 
 ## Supersession
 

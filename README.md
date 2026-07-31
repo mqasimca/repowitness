@@ -39,13 +39,13 @@ Codex evaluation gives the correct result at both source revisions. It uses
 current memory, ignores stale memory, and marks the context packet as useful.
 
 The SQLite store has one immutable Phase 0 baseline, an accepted compatible
-version-2 migration, and a provisional version-3 connected-workspace migration.
+version-2 migration, and an accepted version-3 connected-workspace migration.
 They define the five-language artifact format, append-only memory journal,
 memory-revalidation projection, reviewed correspondence, and idempotent review
 events. Version 3 adds bounded source-slot membership, atomic immutable
 workspace views, a Rust graph for one generation, and explicit plan/apply
 operations for bounded generation retention. Its defaults and migration are
-still provisional.
+ratified for the Phase 1 profile.
 
 The store saves the exact language and prepared facts for each artifact. Owned
 writer and reader connections control access. The store does the following:

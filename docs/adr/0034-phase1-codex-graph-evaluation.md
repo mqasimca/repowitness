@@ -1,6 +1,6 @@
 # ADR-0034: Evaluate Phase 1 graph packets through a bounded evidence envelope
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-07-30
 - Owners: Project maintainers
 - Scope: Phase 1 opt-in Codex evaluation, MCP graph evidence presentation, and
@@ -150,12 +150,13 @@ be ambiguous, redacted, truncated, or reused across source slots.
 
 ## Follow-up
 
-- Completed locally: add the version-2 envelope schema, canonical golden
-  fixture, hostile-input self-tests, runner, and manifest contract checks. The
-  retained version-1 fixture is historical only: it lacked the trace selector
-  binding required for a trustworthy graph-evidence claim.
-- Add a dated research report only after successful repeated evaluations; do
-  not ratify Phase 1 budgets or ADRs from this proposal alone.
+- Completed: add the version-2 envelope schema, canonical golden fixture,
+  hostile-input self-tests, runner, and manifest contract checks. The retained
+  version-1 fixture is historical only: it lacked the trace-selector binding
+  required for a trustworthy graph-evidence claim.
+- Dated research reports record the clean repeated version-2 evaluation and
+  release-platform attestation. They support this decision alongside the other
+  Phase 1 evidence; they do not independently establish Phase 1 readiness.
 - Revisit the envelope only through a new version when MCP graph evidence or
   coverage semantics change.
 

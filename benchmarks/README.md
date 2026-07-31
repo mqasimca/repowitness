@@ -32,7 +32,7 @@ and a clean checkout of the public corpus:
 ./scripts/run-phase0-codex-evaluation /path/to/mini-redis 1
 ```
 
-The proposed Phase 1 correctness runner uses a clean checkout of its
+The ratified Phase 1 correctness runner uses a clean checkout of its
 manifest-pinned public corpus. It emits aggregate workload timing only:
 
 ```text

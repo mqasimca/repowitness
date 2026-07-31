@@ -25,11 +25,12 @@ smaller documents. These documents can change with the implementation.
 | [Phase 0 preparation benchmark (2026-07-25)](research/phase0-preparation-benchmark-2026-07-25.md) | Pinned mini-redis environment, cold/warm local-preparation timings, resource use, correctness, and limitations | Provisional measurement |
 | [Phase 0 product benchmark (2026-07-28)](research/phase0-product-benchmark-2026-07-28.md) | Pinned persistence, reuse, retrieval, MCP, memory-management, source-change revalidation, context, resource, and latency results | Provisional measurement |
 | [Phase 0 clean benchmark attestation (2026-07-29)](research/phase0-clean-benchmark-attestation-2026-07-29.md) | Checksummed clean Ubuntu 24.04 benchmark evidence and budget ratification | Completed |
-| [Phase 1 clean benchmark attestation (2026-07-30)](research/phase1-clean-benchmark-attestation-2026-07-30.md) | Checksummed clean Ubuntu 24.04 Phase 1 benchmark evidence; proposed budgets remain under review | Completed |
+| [Phase 1 clean benchmark attestation (2026-07-30)](research/phase1-clean-benchmark-attestation-2026-07-30.md) | Historical checksummed clean Ubuntu 24.04 Phase 1 benchmark evidence | Completed |
 | [Phase 1 portable-core validation (2026-07-30)](research/phase1-portable-core-validation-2026-07-30.md) | Exact-revision macOS 15 and Windows 2025 full-workspace CI evidence | Completed CI evidence |
-| [Phase 1 adversarial release matrix (2026-07-31)](research/phase1-adversarial-release-matrix-2026-07-31.md) | Bounded local release-mode evidence for 12 migration, recovery, fencing, configuration, mutation, compatibility, and shutdown cases | Provisional local evidence |
-| [Phase 1 Codex graph evaluation (2026-07-30)](research/phase1-codex-graph-evaluation-2026-07-30.md) | Repeated isolated evaluation of bounded MCP graph, source, and memory packets; proposed-phase evidence only | Completed |
-| [Phase 1 ratification review (2026-07-31)](research/phase1-ratification-review-2026-07-31.md) | Evidence-based recommendation for proposed Phase 1 ADRs and budgets | Recommendation |
+| [Phase 1 release-platform attestation (2026-07-31)](research/phase1-release-platform-attestation-2026-07-31.md) | Checksummed Ubuntu 24.04 release benchmark for the current Phase 1 merge revision | Completed |
+| [Phase 1 adversarial release matrix (2026-07-31)](research/phase1-adversarial-release-matrix-2026-07-31.md) | Bounded local release-mode evidence for 12 migration, recovery, fencing, configuration, mutation, compatibility, and shutdown cases | Completed local evidence |
+| [Phase 1 Codex graph evaluation (2026-07-30)](research/phase1-codex-graph-evaluation-2026-07-30.md) | Repeated isolated evaluation of bounded MCP graph, source, and memory packets | Completed |
+| [Phase 1 ratification review (2026-07-31)](research/phase1-ratification-review-2026-07-31.md) | Evidence supporting the accepted Phase 1 ADRs and budgets | Completed |
 | [Phase 0 comparative evaluation (2026-07-28)](research/phase0-comparative-evaluation-2026-07-28.md) | Controlled before/after lexical, naive-memory, and evidence-backed memory comparison | Provisional measurement |
 | [Phase 0 Codex utility evaluation (2026-07-28)](research/phase0-codex-utility-evaluation-2026-07-28.md) | Isolated before/after Codex decision, source grounding, memory use, stale-memory avoidance, and packet presentation | Provisional measurement |
 | [Phase 0 design-partner evaluation outcome, task-01 (2026-07-30)](research/phase0-design-partner-evaluation-2026-07-30.md) | Privacy-reviewed categorical real-task outcome; correct and useful but no material decision change | Completed, non-passing outcome |
@@ -42,7 +43,7 @@ smaller documents. These documents can change with the implementation.
 
 ## Implementation snapshot
 
-As of 2026-07-30 UTC, RepoWitness implements and tests the local path from
+As of 2026-07-31 UTC, RepoWitness implements and tests the local path from
 source change to revalidated context for five languages. It includes bounded Git
 discovery, contained file reads, canonical source and artifact IDs, deterministic
 extraction and reuse, immutable SQLite generations, Rust graph publication and
@@ -52,9 +53,10 @@ stdio MCP tools. MCP is read-only by default. An operator can authorize memory
 writes explicitly.
 
 The [product](product.md), [architecture](architecture.md), and
-[roadmap](roadmap.md) identify the completed design-partner alpha and the
-remaining Phase 1 work. The adversarial release matrix passes. The benchmark
-manifest and budgets have a checksummed clean Ubuntu 24.04 attestation. The
+[roadmap](roadmap.md) identify the completed design-partner alpha, completed
+Phase 1 local core, and deferred later phases. The adversarial release matrix
+passes. The benchmark manifest and Phase 1 budgets have a checksummed clean
+Ubuntu 24.04 release attestation. The
 controlled public baseline comparison and isolated Codex utility evaluation are
 reproducible. The first privacy-reviewed real-task outcome was correct and
 useful but non-passing; the second passed the material-decision-change gate.

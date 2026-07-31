@@ -1,6 +1,6 @@
 # ADR-0031: Resolve source-slot selectors in caller-provided worktrees
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-07-29
 - Owners: Project maintainers
 - Scope: Source-slot configuration, Git selection, package scope, final fencing, and local indexing
@@ -203,21 +203,21 @@ package semantics.
 
 ## Follow-up
 
-- Implemented locally under this proposed contract: validated selectors and
+- Implemented under this accepted contract: validated selectors and
   package scopes, bounded sanitized Git resolution and final revalidation,
   explicit source-slot requests, and atomic internal multi-source
   coordination.
 - The versioned CLI surface is implemented through the explicit manifest
-  contract in still-Proposed
+  contract in accepted
   [ADR-0032](0032-explicit-connected-workspace-manifest.md).
-- Maintainer ratification of ADR-0026, this ADR, ADR-0032, migration 3, and the
-  associated cross-platform and resource budgets remains a Phase 1 gate. The
-  implementation does not make these proposed decisions accepted.
+- Maintainers accepted ADR-0026, this ADR, ADR-0032, migration 3, and the
+  associated cross-platform and resource budgets after the Phase 1 evidence
+  gates passed.
 - Revisit direct Git-object-tree reads only through a separate measured spike
   with its own containment, identity, and dirty-worktree model.
 
 ## Supersession
 
-None. This refines the still-Proposed ADR-0026 selector requirement without
+None. This refines the accepted ADR-0026 selector requirement without
 changing accepted repository, source-state, path, or temporal-validity
 decisions.

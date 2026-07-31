@@ -28,7 +28,7 @@ RepoWitness revision.
 
 ## Results
 
-| Metric | Result | Proposed ceiling |
+| Metric | Result | Ceiling at run time |
 |---|---:|---:|
 | Cold full index | 686.636 ms | 10,000 ms |
 | Peak process RSS | 18,932 KiB | 384 MiB |

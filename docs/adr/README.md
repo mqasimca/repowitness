@@ -63,16 +63,16 @@ passed, so maintainers accepted ADR-0018 and then ADR-0021.
 | [0022](0022-squash-pre-release-sqlite-schema.md) | Squash the pre-release SQLite chain into one baseline | Accepted |
 | [0023](0023-vendor-typescript-grammar-fix.md) | Vendor a reviewed TypeScript grammar fix | Accepted |
 | [0024](0024-persist-parser-diagnostics-migration.md) | Persist recognized parser diagnostics through migration 2 | Accepted |
-| [0025](0025-versioned-local-configuration-and-policy.md) | Resolve versioned local configuration with monotonic policy | Proposed |
-| [0026](0026-connected-workspace-source-slots-and-views.md) | Model connected workspaces through source slots and immutable views | Proposed |
-| [0027](0027-phase1-rust-syntax-graph.md) | Publish a bounded Rust syntax graph with explicit resolution coverage | Proposed |
-| [0028](0028-reconciliation-watching-and-source-epochs.md) | Reconcile watched source through complete state and durable epochs | Proposed |
-| [0029](0029-bounded-generation-retention-and-garbage-collection.md) | Collect unreachable generations through bounded mark-and-sweep | Proposed |
+| [0025](0025-versioned-local-configuration-and-policy.md) | Resolve versioned local configuration with monotonic policy | Accepted |
+| [0026](0026-connected-workspace-source-slots-and-views.md) | Model connected workspaces through source slots and immutable views | Accepted |
+| [0027](0027-phase1-rust-syntax-graph.md) | Publish a bounded Rust syntax graph with explicit resolution coverage | Accepted |
+| [0028](0028-reconciliation-watching-and-source-epochs.md) | Reconcile watched source through complete state and durable epochs | Accepted |
+| [0029](0029-bounded-generation-retention-and-garbage-collection.md) | Collect unreachable generations through bounded mark-and-sweep | Accepted |
 | [0030](0030-bounded-incumbent-mcp-compatibility.md) | Offer bounded incumbent-compatible MCP aliases | Proposed |
-| [0031](0031-source-slot-selectors-and-package-scopes.md) | Resolve source-slot selectors in caller-provided worktrees | Proposed |
-| [0032](0032-explicit-connected-workspace-manifest.md) | Admit connected workspaces through an explicit manifest | Proposed |
-| [0033](0033-bounded-mutation-outcome-resolution.md) | Resolve mutation outcomes without denying committed work | Proposed |
-| [0034](0034-phase1-codex-graph-evaluation.md) | Evaluate bounded Phase 1 graph packets through an evidence envelope | Proposed |
+| [0031](0031-source-slot-selectors-and-package-scopes.md) | Resolve source-slot selectors in caller-provided worktrees | Accepted |
+| [0032](0032-explicit-connected-workspace-manifest.md) | Admit connected workspaces through an explicit manifest | Accepted |
+| [0033](0033-bounded-mutation-outcome-resolution.md) | Resolve mutation outcomes without denying committed work | Accepted |
+| [0034](0034-phase1-codex-graph-evaluation.md) | Evaluate bounded Phase 1 graph packets through an evidence envelope | Accepted |
 
 Use [0000-template.md](0000-template.md) for a new decision.
 

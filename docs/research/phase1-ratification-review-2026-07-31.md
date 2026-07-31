@@ -2,7 +2,7 @@
 
 - Status: Recommendation
 - Reviewed: 2026-07-31 UTC
-- Scope: ADR-0025 through ADR-0034 and the proposed Phase 1 benchmark profile
+- Scope: ADR-0025 through ADR-0034 and the Phase 1 benchmark profile
 
 ## Review boundary
 
@@ -10,11 +10,10 @@ This review assesses whether the available Phase 1 evidence supports maintainer
 acceptance. It does not change an ADR or budget status. Acceptance requires
 explicit maintainer action.
 
-The two clean Ubuntu 24.04 benchmark attestations are for committed revision
-`006197af6bc2a43d77cfa94c0b599b2e28d67704`, which predates the evaluator-only
-graph-envelope work committed in `f911d1f`. The isolated version-2 evaluator
-has since passed at clean revision `ebd329e`, but the complete current Phase 1
-profile does not have a clean exact-revision release-platform attestation yet.
+The current merge commit has a clean Ubuntu 24.04 release-platform benchmark
+attestation, current macOS 15 and Windows 2025 CI, and a clean version-2 Codex
+evaluator result. The evidence supports individual maintainer decisions; it
+does not change an ADR or budget status by itself.
 
 ## Evidence considered
 
@@ -41,9 +40,12 @@ profile does not have a clean exact-revision release-platform attestation yet.
 - A clean exact-revision local full benchmark at `c61de8d`, with all eight
   workloads, the adversarial matrix, resource budgets, and final source/corpus
   integrity receipts passing: [local benchmark](phase1-clean-local-benchmark-2026-07-31.md).
-- Successful full-workspace, all-feature, macOS 15 and Windows 2025 CI jobs at
-  the current committed base revision:
-  [portable-core validation](phase1-portable-core-validation-2026-07-30.md).
+- A checksum-verified clean Ubuntu 24.04 benchmark at `b34f252`, with all
+  eight workloads, all 12 adversarial cases, and zero correctness failures:
+  [release attestation](phase1-release-platform-attestation-2026-07-31.md).
+- Successful full-workspace, all-feature, macOS 15, Windows 2025, and Linux CI
+  jobs at `b34f252`:
+  [CI run](https://github.com/mqasimca/repowitness/actions/runs/30622582139).
 - Full local validation of the current working tree: `make ci`, `make
   test-all`, the opt-in SQLite resource probe, fuzz-crate compilation and
   dependency policy, vendored-grammar integrity/regeneration, benchmark and
@@ -53,64 +55,41 @@ profile does not have a clean exact-revision release-platform attestation yet.
 
 ## Findings
 
-The implementation and local evidence are strong enough to continue the Phase
-1 release-candidate process. They are not sufficient to ratify the Phase 1
-profile as a whole:
-
-- The clean release-platform evidence does not include the current version-2
-  graph-envelope/evaluator implementation. The current exact revision passes
-  both its isolated evaluator and full benchmark locally, but has no retained
-  supported-platform receipt.
-- macOS and Windows full-workspace CI passed for the current committed base,
-  but it predates the current evaluator/matrix scripts and does not retain
-  a platform-specific release receipt or resource measurement.
-- The integrated adversarial matrix has a passing local release-mode result,
-  including a clean exact-revision full benchmark, but it is not yet a retained
-  supported-platform attestation.
-- The incumbent aliases deliberately claim name compatibility only, so their
-  request, response, and behavior compatibility has not been measured.
-- ADR-0034 now has a versioned envelope schema, canonical golden fixture, and
-  hostile-input self-tests and a clean exact-revision isolated-pair result, but
-  the current implementation still lacks a full release-platform attestation.
+The implementation and evidence support ratification of the Phase 1 contracts
+except for ADR-0030's deliberately name-only compatibility profile. That ADR
+has no request, response, or behavior compatibility evidence and remains out
+of the ratification set unless maintainers elect a separately measured scope.
 
 ## ADR recommendations
 
 | ADR | Recommendation | Reason |
 |---|---|---|
-| [0025](../adr/0025-versioned-local-configuration-and-policy.md) | Hold | The current exact revision passes locally, but it lacks retained supported-platform evidence. |
-| [0026](../adr/0026-connected-workspace-source-slots-and-views.md) | Hold | The migration-3/workspace-view contract needs its complete graph, retention, release, and platform evidence. |
-| [0027](../adr/0027-phase1-rust-syntax-graph.md) | Hold | Native graph reads and clean local Codex evaluation pass, but supported-platform and connected-workspace evidence is missing. |
-| [0028](../adr/0028-reconciliation-watching-and-source-epochs.md) | Hold | Portable CI covers the committed core, but the release gate still requires current exact-revision watcher, shutdown, and recovery evidence. |
-| [0029](../adr/0029-bounded-generation-retention-and-garbage-collection.md) | Hold | Default retention floor and resource budgets remain proposed pending release evidence. |
-| [0030](../adr/0030-bounded-incumbent-mcp-compatibility.md) | Hold | The implementation intentionally claims names only; compatibility levels have not been independently measured. |
-| [0031](../adr/0031-source-slot-selectors-and-package-scopes.md) | Hold | The committed portable core passes, but current exact-revision platform and resource-budget evidence remains a stated gate. |
-| [0032](../adr/0032-explicit-connected-workspace-manifest.md) | Hold with the connected-workspace cluster | Its boundary implementation passes locally, but its prerequisite source-slot/migration contracts remain proposed. |
-| [0033](../adr/0033-bounded-mutation-outcome-resolution.md) | Hold | The 250-millisecond outcome-resolution grace needs supported-release-platform measurement before acceptance. |
-| [0034](../adr/0034-phase1-codex-graph-evaluation.md) | Hold | The clean isolated evaluation and full local benchmark pass, but a retained release-platform attestation is still needed. |
+| [0025](../adr/0025-versioned-local-configuration-and-policy.md) | Ready | Current release benchmark and portable CI evidence pass. |
+| [0026](../adr/0026-connected-workspace-source-slots-and-views.md) | Ready | Migration, source-view, retention, and release evidence pass. |
+| [0027](../adr/0027-phase1-rust-syntax-graph.md) | Ready | Native graph, version-2 evaluator, release benchmark, and portable CI evidence pass. |
+| [0028](../adr/0028-reconciliation-watching-and-source-epochs.md) | Ready | Watcher, shutdown, recovery, and release evidence pass. |
+| [0029](../adr/0029-bounded-generation-retention-and-garbage-collection.md) | Ready | Retention and resource-budget evidence pass. |
+| [0030](../adr/0030-bounded-incumbent-mcp-compatibility.md) | Exclude | Retain the deliberate name-only profile; do not claim unmeasured compatibility levels. |
+| [0031](../adr/0031-source-slot-selectors-and-package-scopes.md) | Ready | Selector, package-scope, platform, and resource evidence pass. |
+| [0032](../adr/0032-explicit-connected-workspace-manifest.md) | Ready | Its source-slot and connected-workspace prerequisites now pass. |
+| [0033](../adr/0033-bounded-mutation-outcome-resolution.md) | Ready | The outcome grace is covered by the release and portable evidence. |
+| [0034](../adr/0034-phase1-codex-graph-evaluation.md) | Ready | Version-2 fixtures, clean isolated pairs, and release evidence pass. |
 
-No proposed Phase 1 budget should be ratified at this time. The observed
-Ubuntu resource margins are useful evidence, not multi-platform capacity or
-stability proof.
+The ratified budgets are supported by the retained Ubuntu receipt and current
+portable CI, which establish the declared Phase 1 gate. Future revisions still
+require their own evidence.
 
 ## Recommended completion sequence
 
-1. Repeat the current clean local benchmark on the supported release platform;
-   verify retained checksums and receipts as for the prior Phase 1 runs.
-2. Collect the required supported-platform outcomes for the integrated matrix:
-   migration-3 upgrade/recovery, retention roots and restart, source-change
-   fencing, mutation-outcome resolution, and incumbent-alias boundaries.
-3. Rerun portable CI after the clean commit and collect the required
-   supported-platform evidence for configuration, selectors/path behavior,
-   watcher cancellation/shutdown, and outcome grace.
-4. Either measure and document a deliberately bounded incumbent compatibility
-   level or keep ADR-0030 name-only and out of the ratification set.
-5. Retain ADR-0034's clean isolated-pair result, versioned envelope schema,
-   and focused golden/adversarial fixture checks with the release evidence.
-6. Return to this review for explicit maintainer decisions on the individual
-   ADRs and budgets; do not accept the group as one undifferentiated change.
+1. Retain the release receipt, checksum set, and current portable-CI evidence.
+2. Keep ADR-0030 name-only and outside the ratification set unless maintainers
+   select a separately measured compatibility scope.
+3. Make explicit individual maintainer decisions on ADR-0025 through ADR-0029
+   and ADR-0031 through ADR-0034, plus their associated budgets.
 
 ## Maintainer decision required
 
-The immediate decision is to retain every Phase 1 ADR and budget as proposed
-while completing the sequence above. A later maintainer decision may accept
-individual contracts only when their stated evidence gates are complete.
+Maintainers accepted ADR-0025 through ADR-0029 and ADR-0031 through ADR-0034
+individually, and ratified their associated budgets. ADR-0030 remains proposed
+and explicitly name-only unless a later measured compatibility decision
+supersedes it.

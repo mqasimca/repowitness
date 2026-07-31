@@ -1,12 +1,12 @@
 # Phase 0 SQLite accepted schema version 2
 
 - Status: Implemented accepted predecessor to
-  [provisional version 3](phase1-sqlite-provisional-v3.md)
+  [accepted version 3](phase1-sqlite-provisional-v3.md)
 - Governing decisions:
   [ADR-0012](../adr/0012-phase0-sqlite-schema-and-ownership.md),
   [ADR-0022](../adr/0022-squash-pre-release-sqlite-schema.md), and
   [ADR-0024](../adr/0024-persist-parser-diagnostics-migration.md)
-- Compatibility: exact supported versions 1 and 2; upgrades to provisional
+- Compatibility: exact supported versions 1 and 2; upgrades to accepted
   version 3
 
 ## Identity
