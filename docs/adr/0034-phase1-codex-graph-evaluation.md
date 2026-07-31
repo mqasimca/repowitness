@@ -39,8 +39,9 @@ The envelope contains:
 - one exact graph workspace view and graph generation shared by its search and
   trace results, while source and memory items retain their existing context
   provider provenance;
-- the admitted graph request and its declared bounds, with query text and host
-  paths omitted from normal receipts;
+- the canonical trace request, including its exact selector and declared
+  bounds; the selector must match exactly one definition returned by the
+  enclosed graph search. Query text and host paths stay out of normal receipts;
 - graph source evidence, resolution category, edge evidence class, coverage,
   omissions, and truncation exactly as returned by MCP; and
 - current or stale memory presentation with its existing effective-state and
@@ -149,8 +150,10 @@ be ambiguous, redacted, truncated, or reused across source slots.
 
 ## Follow-up
 
-- Completed locally: add the version-1 envelope schema, canonical golden
-  fixture, hostile-input self-tests, runner, and manifest contract checks.
+- Completed locally: add the version-2 envelope schema, canonical golden
+  fixture, hostile-input self-tests, runner, and manifest contract checks. The
+  retained version-1 fixture is historical only: it lacked the trace selector
+  binding required for a trustworthy graph-evidence claim.
 - Add a dated research report only after successful repeated evaluations; do
   not ratify Phase 1 budgets or ADRs from this proposal alone.
 - Revisit the envelope only through a new version when MCP graph evidence or

@@ -47,6 +47,11 @@ Run it against a clean checkout of the manifest-pinned public corpus:
 ./scripts/run-phase1-benchmark /path/to/public-corpus
 ```
 
+The runner requires an executable `/usr/bin/time` to produce the peak-RSS
+receipt: GNU `time` on Linux and the system implementation on macOS. It fails
+with the `rss_tool` diagnostic when that prerequisite is absent rather than
+silently omitting resource-budget evidence.
+
 The runner indexes two disposable worktrees through the public CLI into a new
 database for every warmup and measured publication sample, and runs a
 release-mode operation probe against a separate fresh database. The probe
@@ -108,7 +113,7 @@ release-platform evidence exists. Ratification requires the full adversarial
 test matrix plus repeated isolated Codex runs that judge the actual MCP graph
 packet useful and cite its evidence identifiers.
 The evaluator-only packet is versioned by
-[`codex-envelope-v1.schema.json`](codex-envelope-v1.schema.json); its canonical
+[`codex-envelope-v2.schema.json`](codex-envelope-v2.schema.json); its canonical
 golden input/output fixture and hostile-input self-tests are checked by
 `scripts/check-phase1-benchmarks`.
 

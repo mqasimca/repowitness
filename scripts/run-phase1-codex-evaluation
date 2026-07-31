@@ -20,10 +20,14 @@ benchmark_git() (
     unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY
     unset GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_SHALLOW_FILE GIT_COMMON_DIR
     unset GIT_CONFIG GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS GIT_NAMESPACE
-    unset GIT_IMPLICIT_WORK_TREE GIT_CEILING_DIRECTORIES GIT_EXTERNAL_DIFF
-    unset GIT_EXEC_PATH GIT_TEMPLATE_DIR GIT_TRACE GIT_TRACE2 GIT_PAGER PAGER
+    unset GIT_IMPLICIT_WORK_TREE GIT_CEILING_DIRECTORIES
+    unset GIT_DISCOVERY_ACROSS_FILESYSTEM GIT_REFERENCE_BACKEND
+    unset GIT_LITERAL_PATHSPECS GIT_GLOB_PATHSPECS GIT_NOGLOB_PATHSPECS
+    unset GIT_ICASE_PATHSPECS GIT_EXTERNAL_DIFF GIT_EXEC_PATH GIT_TEMPLATE_DIR
+    unset GIT_TRACE GIT_TRACE2 GIT_TRACE2_EVENT GIT_TRACE2_PERF
     export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
     export GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never GIT_OPTIONAL_LOCKS=0
+    export GIT_NO_REPLACE_OBJECTS=1 GIT_PAGER=cat PAGER=cat
     command git --no-pager --literal-pathspecs -c core.fsmonitor=false \
         -c core.hooksPath=/dev/null -c core.excludesFile=/dev/null \
         -c core.untrackedCache=false -c diff.external= -c protocol.file.allow=always "$@"
@@ -128,9 +132,12 @@ graph_packet() {
     ' "$TEMP/search.json" >"$TEMP/trace-arguments.json"
     mcp_call graph_trace "$TEMP/trace-arguments.json" >"$TEMP/trace.json"
     perl -MJSON::PP -e '
-      my $j=JSON::PP->new->canonical(1); for my $p (@ARGV) { open my $h,"<:raw",$p or die "graph missing\n"; local $/; my $content=<$h>; my $decoded=decode_json($content); if ($p =~ m{/search[.]json\z}) { $s=$decoded } else { $t=$decoded } }
-      ref($s) eq "HASH" && ref($t->{trace}) eq "HASH" or die "trace missing\n"; print $j->encode({search=>$s,trace=>$t});
-    ' "$TEMP/search.json" "$TEMP/trace.json" >"$1"
+      my $j=JSON::PP->new->canonical(1); for my $p (@ARGV[0,1]) { open my $h,"<:raw",$p or die "graph missing\n"; local $/; my $content=<$h>; my $decoded=decode_json($content); if ($p =~ m{/search[.]json\z}) { $s=$decoded } else { $t=$decoded } }
+      ref($s) eq "HASH" && ref($t->{trace}) eq "HASH" or die "trace missing\n";
+      open my $h,"<:raw",$ARGV[2] or die "trace request missing\n"; local $/; my $r=decode_json(<$h>);
+      ref($r) eq "HASH" or die "trace request invalid\n";
+      print $j->encode({search=>$s,trace_request=>$r,trace=>$t});
+    ' "$TEMP/search.json" "$TEMP/trace.json" "$TEMP/trace-arguments.json" >"$1"
 }
 
 run_bounded_codex() {

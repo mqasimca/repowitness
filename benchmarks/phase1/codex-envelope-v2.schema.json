@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RepoWitness Phase 1 Codex evaluation envelope v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["envelope_version", "items"],
+  "properties": {
+    "envelope_version": { "const": 2 },
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "items": {
+        "oneOf": [
+          { "$ref": "#/$defs/graph_item" },
+          { "$ref": "#/$defs/source_item" },
+          { "$ref": "#/$defs/memory_item" }
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "graph_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["connected_workspace", "workspace_view", "graph_generation"],
+      "properties": {
+        "connected_workspace": { "type": "string", "pattern": "^cwi1:h:[0-9A-F]{64}$" },
+        "workspace_view": { "type": "integer", "minimum": 1 },
+        "graph_generation": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "trace_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workspace_view", "graph_generation", "start", "direction", "edge_kinds", "max_results", "max_output_bytes", "timeout_ms"],
+      "properties": {
+        "workspace_view": { "type": "integer", "minimum": 1 },
+        "graph_generation": { "type": "integer", "minimum": 1 },
+        "start": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "definition"],
+          "properties": {
+            "type": { "const": "definition" },
+            "definition": { "type": "object" }
+          }
+        },
+        "direction": { "const": "outbound" },
+        "edge_kinds": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "enum": ["import", "reference", "call"] }
+        },
+        "max_results": { "type": "integer", "minimum": 1 },
+        "max_output_bytes": { "type": "integer", "minimum": 1 },
+        "timeout_ms": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "graph_item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "context", "evidence", "evaluation_evidence_id"],
+      "properties": {
+        "kind": { "const": "graph" },
+        "context": { "$ref": "#/$defs/graph_context" },
+        "evaluation_evidence_id": { "type": "string", "pattern": "^graph/[0-9a-f]{64}$" },
+        "evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["search", "trace"],
+          "properties": {
+            "search": {
+              "type": "object",
+              "required": ["schema_version", "matches_returned", "matches_total", "truncated", "output_bytes", "definitions"],
+              "properties": {
+                "schema_version": { "type": "integer", "minimum": 1 },
+                "matches_returned": { "type": "integer", "minimum": 0 },
+                "matches_total": { "type": "integer", "minimum": 0 },
+                "truncated": { "type": "boolean" },
+                "output_bytes": { "type": "integer", "minimum": 0 },
+                "definitions": { "type": "array", "minItems": 1 }
+              }
+            },
+            "trace": {
+              "type": "object",
+              "required": ["request", "schema_version", "trace"],
+              "properties": {
+                "request": { "$ref": "#/$defs/trace_request" },
+                "schema_version": { "type": "integer", "minimum": 1 },
+                "trace": {
+                  "type": "object",
+                  "required": ["coverage", "truncation"]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "source_item": {
+      "type": "object",
+      "required": ["kind", "artifact_sha256", "fact_ordinal", "evaluation_evidence_id"],
+      "properties": {
+        "kind": { "const": "source" },
+        "artifact_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "fact_ordinal": { "type": "integer", "minimum": 0 },
+        "evaluation_evidence_id": { "type": "string", "pattern": "^source/[0-9a-f]{64}/[0-9]+$" }
+      }
+    },
+    "memory_item": {
+      "type": "object",
+      "required": ["kind", "record", "evaluation_evidence_id"],
+      "properties": {
+        "kind": { "const": "memory" },
+        "record": { "type": "object", "required": ["record_id", "revision_sha256"] },
+        "evaluation_evidence_id": { "type": "string", "pattern": "^memory/[A-Za-z0-9_.:-]+/[0-9a-f]{64}$" }
+      }
+    }
+  }
+}

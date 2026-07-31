@@ -53,6 +53,7 @@ sub build_envelope {
     @{$context->{items}} <= $MAX_ITEMS - 1
       or die "context response has too many items\n";
     my $search = ref($graph->{search}) eq 'HASH' ? $graph->{search} : $graph;
+    my $trace_request = $graph->{trace_request};
     my $trace = $graph->{trace};
     ref($search->{context}) eq 'HASH'
       or die "graph response omitted its immutable context\n";
@@ -69,7 +70,8 @@ sub build_envelope {
       or die "graph search evidence is invalid\n";
     JSON::PP::is_bool($search->{truncated}) && !$search->{truncated}
       or die "graph response was truncated or omitted its truncation state\n";
-    ref($trace) eq 'HASH' && ref($trace->{context}) eq 'HASH'
+    ref($trace_request) eq 'HASH'
+      && ref($trace) eq 'HASH' && ref($trace->{context}) eq 'HASH'
       && ref($trace->{trace}) eq 'HASH'
       or die "graph response omitted bounded trace coverage\n";
     my $pin = graph_pin($search->{context});
@@ -77,6 +79,7 @@ sub build_envelope {
       && graph_pin($trace->{context})->{workspace_view} eq $pin->{workspace_view}
       && graph_pin($trace->{context})->{graph_generation} eq $pin->{graph_generation}
       or die "graph response mixes immutable generations\n";
+    validate_trace_request($trace_request, $search->{definitions}, $pin);
     my $truncation = $trace->{trace}->{truncation};
     ref($truncation) eq 'HASH'
       && !grep { !JSON::PP::is_bool($truncation->{$_}) } qw(depth visited_nodes visited_edges frontier results)
@@ -97,12 +100,13 @@ sub build_envelope {
             definitions => $search->{definitions},
         },
         trace => {
+            request => $trace_request,
             schema_version => $trace->{schema_version},
             trace => $trace->{trace},
         },
     };
     my $canonical = JSON::PP->new->canonical(1)->encode({
-        envelope_version => 1,
+        envelope_version => 2,
         kind => 'graph',
         context => $pin,
         evidence => $evidence,
@@ -143,7 +147,32 @@ sub build_envelope {
         $copy{evaluation_evidence_id} = $id;
         push @items, \%copy;
     }
-    return { envelope_version => 1, items => \@items };
+    return { envelope_version => 2, items => \@items };
+}
+
+sub validate_trace_request {
+    my ($request, $definitions, $pin) = @_;
+    for my $field (qw(workspace_view graph_generation max_results max_output_bytes timeout_ms)) {
+        defined($request->{$field}) && !ref($request->{$field})
+          && $request->{$field} =~ /\A[1-9][0-9]*\z/
+          or die "graph trace request is invalid\n";
+    }
+    $request->{workspace_view} eq $pin->{workspace_view}
+      && $request->{graph_generation} eq $pin->{graph_generation}
+      && defined($request->{direction}) && !ref($request->{direction})
+      && $request->{direction} eq 'outbound'
+      && ref($request->{edge_kinds}) eq 'ARRAY' && @{$request->{edge_kinds}} >= 1
+      && !(grep {
+          !defined($_) || ref($_) || $_ !~ /\A(?:import|reference|call)\z/
+      } @{$request->{edge_kinds}})
+      && ref($request->{start}) eq 'HASH'
+      && $request->{start}->{type} eq 'definition'
+      && ref($request->{start}->{definition}) eq 'HASH'
+      or die "graph trace request is invalid\n";
+    my $json = JSON::PP->new->canonical(1);
+    my $start_definition = $json->encode($request->{start}->{definition});
+    grep { $json->encode($_) eq $start_definition } @{$definitions}
+      or die "graph trace request does not select returned graph evidence\n";
 }
 
 sub graph_pin {
@@ -175,6 +204,13 @@ sub self_test {
         },
         definitions => [{}], matches_returned => 1, matches_total => 1,
         truncated => JSON::PP::false, output_bytes => 1,
+        trace_request => {
+            workspace_view => 1,
+            graph_generation => 1,
+            start => { type => 'definition', definition => {} },
+            direction => 'outbound', edge_kinds => ['import', 'reference', 'call'],
+            max_results => 20, max_output_bytes => 32_768, timeout_ms => 10_000,
+        },
         trace => {
             schema_version => 1,
             context => {
@@ -202,6 +238,11 @@ sub self_test {
     );
     $mixed_generation->{trace}->{context}->{graph_generation} = 2;
     must_fail(sub { build_envelope($context, $mixed_generation) });
+    my $mismatched_selector = decode_json(
+        JSON::PP->new->canonical(1)->encode($graph)
+    );
+    $mismatched_selector->{trace_request}->{start}->{definition} = { other => 'definition' };
+    must_fail(sub { build_envelope($context, $mismatched_selector) });
     my $missing_coverage = decode_json(
         JSON::PP->new->canonical(1)->encode($graph)
     );
@@ -232,7 +273,7 @@ sub self_test {
 }
 
 sub check_fixtures {
-    my $fixture_root = "$FindBin::Bin/../benchmarks/phase1/codex-envelope-v1";
+    my $fixture_root = "$FindBin::Bin/../benchmarks/phase1/codex-envelope-v2";
     my $context = read_json("$fixture_root/context.json", 'golden context fixture');
     my $graph = read_json("$fixture_root/graph.json", 'golden graph fixture');
     my $expected = read_json("$fixture_root/envelope.json", 'golden envelope fixture');

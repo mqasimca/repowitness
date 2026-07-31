@@ -2,7 +2,9 @@
 
 - Status: Provisional local evidence
 - Observed: 2026-07-31 UTC
-- Scope: Current uncommitted worktree on the local Linux release-test profile
+- Scope: Historical pre-merge local worktree on the local Linux release-test
+  profile; the current exact-revision local benchmark reran this matrix with
+  the same passing result
 
 ## Result
 
@@ -28,12 +30,13 @@ The runner emits only a fixed profile and aggregate counts. Every Cargo child
 uses the Phase 1 bounded-capture helper, which limits combined output and
 enforces an absolute deadline. The Phase 1 benchmark runner invokes this same
 matrix before workload measurements, and its receipt validator requires the
-exact profile, case count, and zero failure count. A later successful clean
-workflow will therefore include it in retained benchmark evidence.
+exact profile, case count, and zero failure count. The clean local benchmark at
+`c61de8d` included that matrix successfully:
+[result](phase1-clean-local-benchmark-2026-07-31.md).
 
 ## Limits
 
-This is not a release attestation: the evaluated worktree was not a committed,
-clean exact revision, and it covers only the local Linux profile. It does not
-replace the macOS and Windows path, watcher, cancellation, mutation-outcome,
-and configuration evidence required before Phase 1 ADR or budget ratification.
+The historical matrix result is not a release attestation. The later exact
+local benchmark also covers only the local Linux profile and does not replace
+the retained supported-platform evidence required before Phase 1 ADR or budget
+ratification.
