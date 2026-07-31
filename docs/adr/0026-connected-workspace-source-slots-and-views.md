@@ -1,6 +1,6 @@
 # ADR-0026: Model connected workspaces through source slots and immutable views
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-07-29
 - Owners: Project maintainers
 - Scope: Workspace identity, repository selection, generation publication, and SQLite migration 3
@@ -120,7 +120,7 @@ complete view, never a mixed set.
 View membership and source-slot mappings are immutable after the first view is
 published. Adding or removing slots then requires a new connected-workspace
 ID; changing one slot's logical meaning also requires a new source-slot ID.
-Explicit retirement and garbage collection are proposed by
+Explicit retirement and garbage collection are defined by
 [ADR-0029](0029-bounded-generation-retention-and-garbage-collection.md), but
 that lifecycle remains a separate explicit maintenance operation. Migration 3
 does not silently delete historical views during indexing.
@@ -140,9 +140,9 @@ workspace fragment adds:
 
 The graph fragment persists immutable syntax-graph sites, outcomes, and typed
 edges. The retention fragment adds typed plan-scoped garbage marks and
-aggregate collection audit state. ADR-0026 and the migration-3 checksum remain
-provisional until the complete assembled migration and its upgrade/recovery
-evidence are reviewed before either decision or migration is accepted.
+aggregate collection audit state. ADR-0026 and the migration-3 checksum are
+accepted after review of the complete assembled migration and its
+upgrade/recovery evidence.
 
 Migration 3 backfills every version-2 repository workspace with its
 byte-identical default connected workspace and source slot. If that repository
@@ -195,13 +195,12 @@ single atomic pointer switch.
 ### Negative and risks
 
 - Publication adds another immutable object and active pointer.
-- Slot membership changes require new identities and the separate, still-
-  proposed ADR-0029 retirement and garbage-collection policy. Its development
-  implementation remains release-gated pending ratification and evidence.
+- Slot membership changes require new identities and the separate accepted
+  ADR-0029 retirement and garbage-collection policy.
 - Existing per-repository queries are not automatically multi-repository; thin
   adapters must explicitly accept a pinned workspace view.
-- The provisional migration-3 checksum must not be treated as accepted until
-  the graph and retention fragments are finalized.
+- A migration-3 checksum change requires a new versioned migration after the
+  graph and retention fragments are finalized.
 
 ## Validation
 

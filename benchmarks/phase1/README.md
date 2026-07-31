@@ -1,7 +1,7 @@
 # Phase 1 trustworthy local-core benchmark
 
-- Status: Proposed
-- Last reviewed: 2026-07-29
+- Status: Ratified
+- Last reviewed: 2026-07-31
 - Manifest: [`manifest.json`](manifest.json)
 
 ## Purpose
@@ -107,11 +107,10 @@ handling without running the corpus workload.
 
 ## Budgets
 
-Correctness budgets are zero-tolerance. Resource budgets are proposed before
-the first ratification run and remain deliberately broad until repeated clean
-release-platform evidence exists. Ratification requires the full adversarial
-test matrix plus repeated isolated Codex runs that judge the actual MCP graph
-packet useful and cite its evidence identifiers.
+Correctness budgets are zero-tolerance. The resource budgets are ratified from
+the clean release-platform evidence, complete adversarial test matrix, and
+repeated isolated Codex runs that judge the actual MCP graph packet useful and
+cite its evidence identifiers.
 The evaluator-only packet is versioned by
 [`codex-envelope-v2.schema.json`](codex-envelope-v2.schema.json); its canonical
 golden input/output fixture and hostile-input self-tests are checked by

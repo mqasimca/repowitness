@@ -1,6 +1,6 @@
-# Phase 1 SQLite provisional schema version 3
+# Phase 1 SQLite schema version 3
 
-- Status: Implemented development format; migration checksum is provisional
+- Status: Accepted persistence boundary
 - Governing decisions:
   [ADR-0012](../adr/0012-phase0-sqlite-schema-and-ownership.md),
   [ADR-0024](../adr/0024-persist-parser-diagnostics-migration.md),
@@ -12,11 +12,9 @@
 - Accepted predecessor:
   [Phase 0 SQLite schema version 2](phase0-sqlite-current-v2.md)
 
-> This is a development migration, not an accepted persistence boundary.
-> Migration 3 currently contains the implemented workspace and Rust graph
-> fragments plus the implemented bounded-retention lifecycle. ADR-0029 and
-> migration 3 remain proposed development contracts until maintainers ratify
-> their defaults, budgets, and release evidence.
+> Migration 3 contains the accepted workspace and Rust graph fragments plus
+> the accepted bounded-retention lifecycle. Its exact checksum is part of the
+> supported persistence boundary.
 
 ## Identity
 
@@ -26,7 +24,7 @@ The database uses:
 - `PRAGMA user_version = 3`;
 - the byte-identical accepted migration 1 and migration 2 names, text, and
   checksums documented by the version-2 predecessor; and
-- provisional migration 3
+- accepted migration 3
   `phase1_workspace_graph_and_retention_foundation`, assembled in fixed order from
   workspace, graph tables and row guards, graph completion guards, and retention
   fragments.
@@ -34,8 +32,8 @@ The database uses:
 At the current graph-and-retention-enabled state, migration 3 has SHA-256
 checksum
 `b2cc733ce8ebd2d23e33126257ec4092b7adf4dcddb864d9201251aa2717fcd8`.
-This vector is a development corruption/reopen guard, not a promise that the
-checksum will remain stable before acceptance.
+This vector is an accepted corruption/reopen guard. A checksum change requires
+a new versioned migration and an explicit decision.
 
 Fresh creation applies all three migrations. An exact version-1 or version-2
 database upgrades in one immediate migration-3 transaction. Existing
@@ -209,7 +207,7 @@ reaches them.
 Automated validation covers:
 
 - unchanged migration-1 and migration-2 checksum vectors;
-- the provisional migration-3 checksum and complete catalog vector;
+- the accepted migration-3 checksum and complete catalog vector;
 - fresh version-3 creation, populated version-2 upgrade, exact reopen, ledger,
   integrity, and foreign-key checks;
 - two logical repositories in one connected workspace;

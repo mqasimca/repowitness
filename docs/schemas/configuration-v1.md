@@ -1,6 +1,6 @@
 # Local configuration schema version 1
 
-- Status: Implemented under proposed ADR-0025
+- Status: Implemented under accepted ADR-0025
 - Schema version: 1
 - Resolver version: 1
 - Canonical digest version: 1

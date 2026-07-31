@@ -1,6 +1,6 @@
 # Phase 1 Codex graph evaluation
 
-- Status: Clean exact-revision local evaluator evidence only; broader release attestation pending
+- Status: Clean exact-revision local evaluator evidence; release attestation recorded separately
 - Observed: 2026-07-30 and 2026-07-31 UTC
 - Corpus: `tokio-rs/mini-redis`
 - Base revision: `7295d727b82a0ef534b836b00807c15ef6c7f191`
@@ -15,7 +15,7 @@ each evaluation session. For both revisions it ran the existing comparison
 probe, requested `context_build`, requested `graph_search` for `Frame::check`,
 then traced the exact returned definition under fixed MCP limits. The runner
 wrapped the successful results in the then-current version-1 evaluator-only
-envelope from proposed [ADR-0034](../adr/0034-phase1-codex-graph-evaluation.md).
+envelope from then-proposed [ADR-0034](../adr/0034-phase1-codex-graph-evaluation.md).
 
 `codex exec` ran in an ephemeral read-only session with approval, web, MCP
 servers, apps, shell access, hooks, memories, goals, plugins, and multi-agent
@@ -94,15 +94,15 @@ usefulness as passing.
 | Total tokens | 152,604 |
 
 This closes ADR-0034's isolated-pair gate for that exact revision. It is local
-evaluator evidence, not a full release-platform benchmark attestation.
+evaluator evidence, not itself a full release-platform benchmark attestation.
 
-## Scope and remaining gate
+## Scope and completed gate
 
 The historical result demonstrates the declared `minimum_complete_runs`
 against the public pinned corpus for the version-1 envelope. Version 1 did not
 retain the canonical trace request or bind its selector to a returned
 definition, so it is not evidence for the current version-2 envelope. The
 clean version-2 repeat closes the isolated-pair requirement for ADR-0034. It
-does not ratify budgets, a public contract, or the broader Phase 1 release
-gate; those still require the full clean release-platform benchmark and
-maintainer review.
+does not independently ratify budgets or a public contract. The later
+[release-platform attestation](phase1-release-platform-attestation-2026-07-31.md)
+and maintainer decision complete the broader Phase 1 gate.

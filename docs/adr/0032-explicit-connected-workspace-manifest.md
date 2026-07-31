@@ -1,6 +1,6 @@
 # ADR-0032: Admit connected workspaces through an explicit manifest
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-07-29
 - Owners: Project maintainers
 - Scope: Connected-workspace input, hostile manifest parsing, CLI composition,

@@ -63,7 +63,7 @@ The output is a design-partner alpha, not a general public beta.
 | Rust workspace and engineering baseline | Implemented | Six packages, enforced dependency policy, pinned Rust/MSRV and dependencies, formatting, Clippy, docs, lockfile, license/advisory/source checks, Make targets, and required Ubuntu PR CI |
 | Repository and source identity | Implemented | Sanitized bounded Git discovery, canonical Git/worktree receipts, exact byte paths, capability-contained no-follow reads, final stability fence, and fail-closed sparse/gitlink scope |
 | Rust, Go, TypeScript, TSX, and Python analysis and incremental reuse | Implemented | Bounded language-specific Tree-sitter facts, one canonical mixed snapshot, five independent artifact identities and payload digests, a checksum-pinned reviewed TypeScript/TSX grammar fix, exact per-language/dialect reuse validation, and clean-versus-incremental equivalence |
-| SQLite publication and recovery | Implemented foundation | Immutable baseline-version-1, compatible accepted parser-diagnostic-version-2, and provisional connected-workspace-version-3 migrations with exact ledger rows and populated upgrade coverage; version 3 adds globally unique bounded source slots, immutable published workspace views, atomic active-view switching, pinned recovery, generation-scoped Rust graph publication, and explicit deterministic bounded retention plan/apply with root revalidation and aggregate audit; retention defaults, budgets, and the migration remain proposed pending ratification |
+| SQLite publication and recovery | Implemented | Immutable baseline-version-1, compatible accepted parser-diagnostic-version-2, and accepted connected-workspace-version-3 migrations with exact ledger rows and populated upgrade coverage; version 3 adds globally unique bounded source slots, immutable published workspace views, atomic active-view switching, pinned recovery, generation-scoped Rust graph publication, and explicit deterministic bounded retention plan/apply with root revalidation and aggregate audit |
 | Evidence retrieval | Implemented | Bounded literal `code_search`, exact digest-verified `symbol_get`, persisted language, language-specific producer attribution, and native generation-pinned Rust graph status, search, site evidence, architecture, trace, and conservative impact with explicit coverage and limits |
 | CLI and local stdio MCP | Implemented | CLI commands cover indexing, exact retrieval, six native Rust graph reads, canonical memory write/approval/history/review, memory revalidation/recall, context compilation, diagnostics, and path inspection; MCP exposes eleven deterministically ordered read-only tools by default and adds fixed-actor `memory_manage` only under explicit startup authorization |
 | Engineering-memory format | Implemented | Accepted version-1 pure domain values, strict hostile-YAML parser, bounded canonicalizer and deterministic writer, exact golden vectors, independent mutation/property oracle, release resource probes, and a coverage-guided fuzz target |
@@ -71,10 +71,10 @@ The output is a design-partner alpha, not a general public beta.
 | Correspondence and memory revalidation | Implemented | Versioned Rust fingerprints, exact/same-path-rename/exact-Git-move correspondence, explicit ambiguity and staleness, Git-DAG/worktree validity, head conflicts, idempotent approve/reject/manual-link audit events, deterministic conflict aggregation, and atomic projection activation are implemented |
 | Context compiler and read tools | Implemented | Deterministic reciprocal-rank fusion, conservative byte-budget admission, exact source expansion, current-memory exclusion rules, `context_build`, `memory_recall`, and transactionally pinned raw/recognized parser diagnostics are shared by CLI and MCP with explicit coverage, omissions, limits, cancellation, and source-only fallback |
 | Memory management | Implemented | CLI `memory-manage` writes canonical records, approves exact current revisions, records exact manual review, and imports reachable Git history as observations only; opt-in MCP shares the use case without accepting host paths, actor, repository identity, or resource policy |
-| Configuration and readiness diagnostics | Implemented under proposed ADR-0025 | Strict bounded schema-version-1 user/workspace/repository layers, deterministic monotonic resolution, path-free `config explain`, read-only `doctor`, runtime request enforcement, diagnostics identity, and pre-runtime MCP profile/write authorization |
+| Configuration and readiness diagnostics | Implemented | Strict bounded schema-version-1 user/workspace/repository layers, deterministic monotonic resolution, path-free `config explain`, read-only `doctor`, runtime request enforcement, diagnostics identity, and pre-runtime MCP profile/write authorization |
 | Phase 0 evaluation and release gate | Completed | A checksummed clean Ubuntu 24.04 product-loop attestation passes the ratified correctness and resource budgets; crash/recovery, the complete adversarial release matrix, a controlled lexical/naive-memory comparison, and three repeated isolated Codex utility runs pass. The first [privacy-reviewed real design-partner outcome](research/phase0-design-partner-evaluation-2026-07-30.md) was correct and useful but did not change the decision. The [second outcome](research/phase0-design-partner-evaluation-2026-07-30-task-02.md) materially changed the useful decision relative to both baselines and passed the gate. ADR-0017, ADR-0018, ADR-0019, ADR-0021, and ADR-0023 are accepted. |
 
-## Phase 1 — trustworthy local core
+## Phase 1 — trustworthy local core (completed 2026-07-31)
 
 - Complete blocking ADRs and the Rust engineering/CI baseline.
 - Support multi-repository workspaces plus explicit package scopes, branches,
@@ -91,11 +91,14 @@ The output is a design-partner alpha, not a general public beta.
   dynamic dispatch, and cross-language edges.
 - Ratify and stabilize the implemented versioned configuration, monotonic
   policy, `config explain`, and `doctor` contract.
-- Add bounded, schema-tested incumbent aliases with independently measured
-  compatibility levels; the implemented subset currently claims names only.
+- Add bounded, schema-tested incumbent aliases. The accepted Phase 1 scope is
+  deliberately name-only; request, response, and behavior compatibility remain
+  deferred until independently measured.
 - Add another language only for a named user need.
 
-Exit when crash consistency, identity precision/ambiguity, cross-platform behavior, query/resource budgets, and explicit compatibility fixtures pass.
+Exit conditions passed: crash consistency, identity precision/ambiguity,
+cross-platform behavior, query/resource budgets, and explicit name-only
+compatibility fixtures. Broader incumbent compatibility remains deferred.
 
 ## Phase 2 — precision and full context compiler
 

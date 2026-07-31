@@ -69,7 +69,7 @@ Prototype PostgreSQL only when design partners need centralized concurrent acces
 ## Implementation status
 
 Implemented for the local source index through accepted ADR-0012 and the
-provisional compatible SQLite schema version 3. Owned connections, WAL
+accepted compatible SQLite schema version 3. Owned connections, WAL
 configuration, immutable generations, atomic activation, bounded FTS5,
 checkpoints, recovery, and validated online backup have production adapters
 and regression tests. Version 3 adds the storage and owned-writer foundation

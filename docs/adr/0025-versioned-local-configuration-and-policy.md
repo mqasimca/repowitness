@@ -1,6 +1,6 @@
 # ADR-0025: Resolve versioned local configuration with monotonic policy
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-07-29
 - Owners: Project maintainers
 - Scope: Local configuration, policy resolution, diagnostics, CLI, and MCP startup
@@ -201,8 +201,7 @@ digest and bounded non-sensitive diagnostic metadata.
 
 ## Follow-up
 
-- Seek explicit maintainer ratification before treating this proposed contract
-  as a stable public API.
+- This accepted contract is the stable Phase 1 local-configuration boundary.
 - Keep the implemented strict parser, canonical resolver, path-free
   explanation, and read-only diagnostics aligned as the schema evolves.
 - Preserve explicit resolved-configuration wiring through indexing, queries,

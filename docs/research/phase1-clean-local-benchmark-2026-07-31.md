@@ -26,7 +26,7 @@ set and does not replace the required supported-platform attestation.
 
 ## Results
 
-| Metric | Result | Proposed ceiling |
+| Metric | Result | Ceiling at run time |
 |---|---:|---:|
 | Cold full index | 305.339 ms | 10,000 ms |
 | Peak process RSS | 19,068 KiB | 384 MiB |

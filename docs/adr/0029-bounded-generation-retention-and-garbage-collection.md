@@ -1,6 +1,6 @@
 # ADR-0029: Bound generation retention and garbage collection
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-07-28
 - Owners: Project maintainers
 - Scope: Local SQLite source generations, reusable analysis artifacts, source
@@ -254,7 +254,7 @@ guardrails throughout collection.
 
 ## Implementation status
 
-Implemented as a development contract while this ADR remains proposed.
+Implemented as an accepted Phase 1 contract.
 Migration 3 contains typed generation, snapshot, artifact, workspace-view, and
 source-slot-receipt garbage marks plus append-only aggregate collection audit.
 The owned writer implements deterministic read-only planning, stale-safe

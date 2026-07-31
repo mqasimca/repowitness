@@ -1,6 +1,6 @@
 # ADR-0028: Make reconciliation authoritative for watching and source epochs
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-07-29
 - Owners: Project maintainers
 - Scope: Local watching, reconciliation, source epochs, cancellation, and restart
@@ -214,16 +214,16 @@ forced process termination is tested separately.
 
 ## Follow-up
 
-- Implemented locally under this proposed contract: the bounded polling
+- Implemented under this accepted contract: the bounded polling
   supervisor, mandatory complete reconciliation schedule, durable monotonic
   source-slot epochs and completion receipts, final source fencing, and the
   CLI watch command with cooperative Unix and Windows shutdown signaling.
 - Deterministic retention planning, exact apply, root revalidation, and
-  aggregate audit are implemented under the still-Proposed
+  aggregate audit are implemented under the accepted
   [ADR-0029](0029-bounded-generation-retention-and-garbage-collection.md).
-- Maintainer ratification of the configuration, connected-workspace, watcher,
-  retention, migration, and resource-budget contracts remains a Phase 1 gate.
-  The implementation does not make these proposed decisions accepted.
+- Maintainers accepted the configuration, connected-workspace, watcher,
+  retention, migration, and resource-budget contracts after the Phase 1
+  evidence gates passed.
 - Add native watcher adapters only after measured latency or CPU evidence
   justifies them; they must continue to feed this reconciliation contract.
 

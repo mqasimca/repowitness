@@ -1,6 +1,6 @@
 # ADR-0027: Build a generation-resolved Rust syntax graph
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-07-28
 - Owners: Project maintainers
 - Scope: Phase 1 Rust analysis, graph resolution, bounded trace and impact,
@@ -27,7 +27,7 @@ profile. Its possible targets depend on the complete repository generation,
 workspace source slots, configuration, and resolver profile. Mixing those
 lifetimes would either duplicate immutable parsing work or reuse stale edges.
 
-The proposed connected-workspace/source-slot decision in
+The connected-workspace/source-slot decision in
 [ADR-0026](0026-connected-workspace-source-slots-and-views.md) defines the
 identity boundary on which generation resolution depends. Versioned local
 configuration and monotonic policy are governed by
@@ -217,7 +217,7 @@ and truncation state. Raw scores from unrelated providers are not compared.
 Migration 3 implements the reviewed relational persistence contract for raw
 sites, generation-scoped resolution outcomes, and typed edges.
 
-Under ADR-0026's provisional migration-3 assembly, graph tables replace only
+Under ADR-0026's accepted migration-3 assembly, graph tables replace only
 the graph fragment's assigned responsibility. Workspace identity remains owned
 by `0003_phase1_workspace.sql`, and retention remains owned by
 `0003_phase1_retention.sql`. The fixed-order fragments preserve
@@ -311,13 +311,13 @@ separate trust and temporal semantics.
 
 ## Follow-up
 
-- Implemented locally under this proposed contract: the bounded Rust graph-site
+- Implemented under this accepted contract: the bounded Rust graph-site
   analyzer, conservative generation resolver, migration-3 persistence and
   atomic publication, categorical evidence and coverage, architecture, trace,
   and impact use cases, and thin CLI and MCP adapters.
-- Maintainer ratification of this ADR, the connected-workspace identity
-  contract, migration 3, and the associated resource budgets remains a Phase 1
-  gate. The implementation does not make a proposed decision accepted.
+- Maintainers accepted this ADR, the connected-workspace identity contract,
+  migration 3, and the associated resource budgets after the Phase 1 evidence
+  gates passed.
 - Context profile 2 remains separate from the existing context compiler and
   requires its own proposal and evaluation without changing profile 1.
 - Package-aware resolution, macro expansion, compiler or SCIP evidence,

@@ -97,7 +97,7 @@ capability-contained worktree admission feeds a scope-checked application use
 case; and the owned SQLite writer atomically appends immutable versions,
 normalized children, observations, and trusted local approvals under the
 implemented
-[provisional version-3 schema](schemas/phase1-sqlite-provisional-v3.md). The immutable baseline
+[accepted version-3 schema](schemas/phase1-sqlite-provisional-v3.md). The immutable baseline
 and compatible migration chain contain Rust occurrence fingerprints, Git-validity and
 correspondence results, conflicts, categorical effective state, an atomically
 activated current-memory projection, Python as an exact fifth persisted
@@ -186,7 +186,7 @@ source digest, adapter/grammar/producer identity, semantics-affecting
 configuration, extraction schema, and canonicalization version as distinct
 logical inputs. Equality and persisted digest identity change when any key
 input changes. See the
-[provisional Phase 1 SQLite schema](schemas/phase1-sqlite-provisional-v3.md).
+[Phase 1 SQLite schema version 3](schemas/phase1-sqlite-provisional-v3.md).
 
 The pure analysis layer plans immutable artifact reuse from a canonical
 manifest and a verified logical-key inventory. Planning preserves manifest
@@ -452,10 +452,10 @@ RepoWitness does not promise a stable Rust dynamic-library ABI. External extensi
   opens through `cap-std`, and the accepted lossless path encoding.
 - Maintained strict YAML parser and exact canonical semantic digest implementation.
 - Whether source snapshots retain complete content-addressed blobs, selected searchable fragments, or digest-only content for excluded classes.
-- Final retention and garbage-collection defaults and budgets under proposed
-  [ADR-0029](adr/0029-bounded-generation-retention-and-garbage-collection.md).
-  Phase 0 currently uses `synchronous=FULL` and at most 256 fact rows per
-  transaction.
+- Future retention and garbage-collection changes beyond the accepted
+  [ADR-0029](adr/0029-bounded-generation-retention-and-garbage-collection.md)
+  defaults and budgets. Phase 0 currently uses `synchronous=FULL` and at most
+  256 fact rows per transaction.
 - The next additional source language and build-system integration selected
   from actual user demand.
 - Whether LSP querying adds enough precision after SCIP import.

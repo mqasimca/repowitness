@@ -154,7 +154,7 @@ implemented. Its local memory-management base is also implemented:
   high-confidence secret rejection, bounded observation-only reachable-Git
   history import, and explicit local approval;
 - an immutable SQLite baseline, compatible accepted version-2 migration, and
-  provisional version-3 connected-workspace migration containing occurrence
+  accepted version-3 connected-workspace migration containing occurrence
   fingerprints, immutable current-memory projection, idempotent manual
   correspondence review, precision-first Rust correspondence,
   Git-DAG/worktree validity, conflicts, categorical staleness and review
