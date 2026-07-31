@@ -2,7 +2,9 @@
 
 - Status: Provisional local evidence
 - Observed: 2026-07-31 UTC
-- Scope: Current uncommitted worktree on the local Linux release-test profile
+- Scope: Historical pre-merge local worktree on the local Linux release-test
+  profile; rerun against the current exact revision before using it as release
+  evidence
 
 ## Result
 

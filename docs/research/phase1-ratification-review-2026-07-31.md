@@ -11,19 +11,24 @@ acceptance. It does not change an ADR or budget status. Acceptance requires
 explicit maintainer action.
 
 The two clean Ubuntu 24.04 benchmark attestations are for committed revision
-`006197af6bc2a43d77cfa94c0b599b2e28d67704`. The current implementation and
-this review include uncommitted changes, including the evaluator-only graph
-envelope. Therefore, neither those changes nor ADR-0034 have a clean
-exact-revision release attestation yet.
+`006197af6bc2a43d77cfa94c0b599b2e28d67704`, which predates the evaluator-only
+graph-envelope work committed in `f911d1f`. Therefore, that work and ADR-0034
+do not have a clean exact-revision release attestation yet.
 
 ## Evidence considered
 
 - Two checksum-verified clean Phase 1 benchmark runs at the same committed
   revision, with all eight declared workloads and zero correctness failures:
   [attestation](phase1-clean-benchmark-attestation-2026-07-30.md).
-- Three isolated base/changed Codex pairs that cited generation-pinned graph and
-  source evidence, used current memory only at the base revision, cited no
-  memory at the changed revision, and emitted no tool events:
+- Three historical base/changed Codex pairs that cited graph and source
+  evidence, used current memory only at the base revision, cited no memory at
+  the changed revision, and emitted no tool events. They used the superseded
+  version-1 envelope and must be repeated under version 2:
+  [evaluation](phase1-codex-graph-evaluation-2026-07-30.md).
+- A subsequent local repeat of those three pairs using the version-2 envelope
+  passed every decision, source-grounding, memory-use, stale-memory, and tool
+  event check. It ran from the current dirty working tree, so it is useful
+  implementation evidence but not a clean exact-revision attestation:
   [evaluation](phase1-codex-graph-evaluation-2026-07-30.md).
 - The bounded 12-case Phase 1 adversarial matrix in release mode, covering
   migration/recovery, retention, source fencing, watcher/configuration,
@@ -45,10 +50,10 @@ The implementation and local evidence are strong enough to continue the Phase
 1 release-candidate process. They are not sufficient to ratify the Phase 1
 profile as a whole:
 
-- The clean release-platform evidence does not include the uncommitted graph
-  envelope/evaluator changes.
+- The clean release-platform evidence does not include the current version-2
+  graph-envelope/evaluator implementation.
 - macOS and Windows full-workspace CI passed for the current committed base,
-  but it predates the uncommitted evaluator/matrix scripts and does not retain
+  but it predates the current evaluator/matrix scripts and does not retain
   a platform-specific release receipt or resource measurement.
 - The integrated adversarial matrix has a passing local release-mode result,
   but it is not yet a clean exact-revision GitHub attestation or the required
@@ -57,7 +62,8 @@ profile as a whole:
   request, response, and behavior compatibility has not been measured.
 - ADR-0034 now has a versioned envelope schema, canonical golden fixture, and
   hostile-input self-tests, but the current implementation still lacks a clean
-  exact-revision release attestation.
+  exact-revision release attestation and a version-2 isolated-pair rerun from
+  that attested revision.
 
 ## ADR recommendations
 
@@ -80,9 +86,8 @@ stability proof.
 
 ## Recommended completion sequence
 
-1. Review, commit, and cleanly attest the current evaluator/envelope changes on
-   the release platform; verify checksums and receipts as for the prior Phase 1
-   runs.
+1. Cleanly attest the current evaluator/envelope changes on the release
+   platform; verify checksums and receipts as for the prior Phase 1 runs.
 2. Execute the integrated Phase 1 adversarial release matrix from the clean
    exact revision and collect the required supported-platform outcomes for
    migration-3 upgrade/recovery, retention roots and restart, source-change

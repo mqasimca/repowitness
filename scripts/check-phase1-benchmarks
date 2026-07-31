@@ -372,22 +372,27 @@ require_file_text(
     'scripts/build-phase1-codex-envelope',
     'graph_search',
     'graph_trace',
+    'GIT_NO_REPLACE_OBJECTS=1',
+    'GIT_DISCOVERY_ACROSS_FILESYSTEM',
+    'GIT_TRACE2_EVENT',
     'codex_complete_runs',
 );
 require_file_text(
     'scripts/build-phase1-codex-envelope',
-    'envelope_version => 1',
+    'envelope_version => 2',
     'graph response mixes immutable generations',
+    'graph trace request does not select returned graph evidence',
     'graph trace omitted explicit truncation coverage',
     'evaluation evidence identifiers are not unique',
     'Phase 1 Codex envelope golden fixture mismatch',
 );
 require_file_text(
-    'benchmarks/phase1/codex-envelope-v1.schema.json',
-    'RepoWitness Phase 1 Codex evaluation envelope v1',
+    'benchmarks/phase1/codex-envelope-v2.schema.json',
+    'RepoWitness Phase 1 Codex evaluation envelope v2',
     'graph_item',
     'evaluation_evidence_id',
     'connected_workspace',
+    'trace_request',
     'truncation',
 );
 require_file_text(

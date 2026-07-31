@@ -169,7 +169,7 @@ sub validate_answer {
     !$@ && ref($packet) eq 'HASH'
       or die "RepoWitness packet is invalid JSON\n";
 
-    my $evidence = packet_evidence($packet);
+    my $evidence = packet_evidence($packet, $phase);
     my $ids = $answer->{evidence_ids};
     ref($ids) eq 'ARRAY' && @{$ids} >= 1 && @{$ids} <= 8
       or die "Codex answer omitted bounded evidence identifiers\n";
@@ -239,7 +239,7 @@ sub validate_answer {
 }
 
 sub packet_evidence {
-    my ($packet) = @_;
+    my ($packet, $phase) = @_;
     ref($packet->{items}) eq 'ARRAY'
       or die "RepoWitness packet omitted context items\n";
     my %evidence;
@@ -280,9 +280,10 @@ sub packet_evidence {
             $expected_id = "memory/$record_id/$revision";
         }
         elsif (defined $kind && $kind eq 'graph') {
+            my $expected_envelope_version = $phase =~ /\Aphase1-/ ? 2 : 1;
             defined($packet->{envelope_version})
               && !ref($packet->{envelope_version})
-              && $packet->{envelope_version} == 1
+              && $packet->{envelope_version} == $expected_envelope_version
               or die "RepoWitness graph envelope version is invalid\n";
             my $context = $item->{context};
             my $evidence = $item->{evidence};
@@ -297,7 +298,7 @@ sub packet_evidence {
               && $context->{graph_generation} =~ /\A[1-9][0-9]*\z/
               or die "RepoWitness graph context is invalid\n";
             my $canonical = JSON::PP->new->canonical(1)->encode({
-                envelope_version => 1,
+                envelope_version => $expected_envelope_version,
                 kind => 'graph',
                 context => $context,
                 evidence => $evidence,
@@ -395,14 +396,14 @@ sub self_test {
         coverage => { ambiguous_sites => 0, truncated_sites => 0 },
     };
     my $graph_canonical = JSON::PP->new->canonical(1)->encode({
-        envelope_version => 1,
+        envelope_version => 2,
         kind => 'graph',
         context => $graph_context,
         evidence => $graph_evidence,
     });
     my $graph_id = 'graph/' . sha256_hex($graph_canonical);
     my $graph_packet = {
-        envelope_version => 1,
+        envelope_version => 2,
         items => [
             {
                 kind => 'graph',
