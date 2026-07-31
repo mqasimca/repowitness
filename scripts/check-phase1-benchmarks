@@ -301,6 +301,7 @@ require_file_text(
     'scripts/phase1-benchmark-suites',
     'run_operation_probe_contract_suite',
     'run_trustworthiness_suite',
+    'run_adversarial_release_matrix',
     'report_operation_probe_failure',
     'operation probe category=%s',
     'verify_final_git_state',
@@ -312,6 +313,20 @@ require_file_text(
     'coverage::tests::truncation_is_reported_even_when_other_work_is_partial',
     'cross_generation_graph_source_is_hashed_bounded_excluded_and_apply_safe',
     'dependent_delete_failure_rolls_back_rows_marks_audit_and_plan_state',
+    'phase1_adversarial_matrix_cases=12',
+    'phase1_adversarial_matrix_profile=v1',
+    'migration_committed_cancellation',
+    'retention_restart',
+    'source_final_fence',
+    'mutation_outcome_fence',
+    'compatibility_boundary',
+    'watch_shutdown',
+);
+require_file_text(
+    'scripts/run-phase1-adversarial-matrix',
+    'phase1-benchmark-support',
+    'phase1-benchmark-suites',
+    'run_adversarial_release_matrix',
 );
 require_file_text(
     'scripts/phase1-benchmark-support',
@@ -353,6 +368,29 @@ require_file_text(
     'native graph evidence did not resolve its exact selector',
 );
 require_file_text(
+    'scripts/run-phase1-codex-evaluation',
+    'scripts/build-phase1-codex-envelope',
+    'graph_search',
+    'graph_trace',
+    'codex_complete_runs',
+);
+require_file_text(
+    'scripts/build-phase1-codex-envelope',
+    'envelope_version => 1',
+    'graph response mixes immutable generations',
+    'graph trace omitted explicit truncation coverage',
+    'evaluation evidence identifiers are not unique',
+    'Phase 1 Codex envelope golden fixture mismatch',
+);
+require_file_text(
+    'benchmarks/phase1/codex-envelope-v1.schema.json',
+    'RepoWitness Phase 1 Codex evaluation envelope v1',
+    'graph_item',
+    'evaluation_evidence_id',
+    'connected_workspace',
+    'truncation',
+);
+require_file_text(
     '.github/workflows/phase1-benchmark.yml',
     'check-phase1-benchmark-receipt',
     'source_status=$(git status',
@@ -384,5 +422,7 @@ system('perl', 'scripts/check-phase1-workspace-receipt', '--self-test') == 0
   or die "Phase 1 workspace receipt self-tests failed\n";
 system('sh', 'scripts/check-phase1-benchmark-support') == 0
   or die "Phase 1 benchmark support checks failed\n";
+system('perl', 'scripts/build-phase1-codex-envelope', '--self-test') == 0
+  or die "Phase 1 Codex envelope contract checks failed\n";
 
 print "Phase 1 benchmark contract checks passed\n";

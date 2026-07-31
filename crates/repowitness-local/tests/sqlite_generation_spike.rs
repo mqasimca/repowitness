@@ -26,6 +26,7 @@ type TestResult<T = ()> = Result<T, Box<dyn Error>>;
 
 const BUSY_TIMEOUT: Duration = Duration::from_millis(250);
 const BACKUP_CANCELLATION_DEADLINE: Duration = Duration::from_secs(2);
+const BACKUP_CANCELLATION_TRIGGER_DELAY: Duration = Duration::from_millis(100);
 const BACKUP_MAX_STEPS: u32 = 4_096;
 const BACKUP_MAX_WAL_BYTES: u64 = 16 * 1024 * 1024;
 const BACKUP_WORKER_DEADLINE: Duration = Duration::from_secs(5);

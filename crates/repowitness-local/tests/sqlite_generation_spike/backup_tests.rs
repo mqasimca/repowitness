@@ -152,6 +152,17 @@ fn sustained_writes_bound_wal_and_cancellable_backup_never_publishes_partial_sta
     });
     receive_owned_worker_result(&ready_receiver)?;
 
+    let (cancellation_started_sender, cancellation_started_receiver) = mpsc::sync_channel(1);
+    let cancellation_trigger = Arc::clone(&cancelled);
+    let cancellation_worker = thread::spawn(move || {
+        thread::sleep(BACKUP_CANCELLATION_TRIGGER_DELAY);
+        let cancellation_started_at = Instant::now();
+        cancellation_trigger.store(true, Ordering::Release);
+        cancellation_started_sender
+            .send(cancellation_started_at)
+            .map_err(|_| "backup cancellation trigger receiver disconnected".to_owned())
+    });
+
     let mut max_wal_bytes = 0_u64;
     let mut final_facts = Vec::new();
     for generation_id in 2_i64..=5 {
@@ -164,10 +175,16 @@ fn sustained_writes_bound_wal_and_cancellable_backup_never_publishes_partial_sta
     }
     assert_eq!(writer.active_generation()?, Some(5));
 
-    let cancellation_started_at = Instant::now();
-    cancelled.store(true, Ordering::Release);
+    let cancellation_started_at = cancellation_started_receiver.recv_timeout(OWNED_REPLY_TIMEOUT)?;
+    require_owned_worker_success(
+        cancellation_worker
+            .join()
+            .map_err(|_| io::Error::other("backup cancellation trigger panicked"))?,
+    )?;
     let cancellation = receive_owned_worker_result(&exit_receiver)?;
-    let cancellation_acknowledgement = cancellation_started_at.elapsed();
+    let cancellation_acknowledgement = cancellation
+        .finished_at
+        .saturating_duration_since(cancellation_started_at);
     assert!(cancellation.completed_steps > 0);
     assert!(cancellation.completed_steps <= BACKUP_MAX_STEPS);
     assert!(cancellation.elapsed <= BACKUP_WORKER_DEADLINE);

@@ -19,6 +19,7 @@ enum OwnedReaderExit {
 struct BackupCancellationObservation {
     completed_steps: u32,
     elapsed: Duration,
+    finished_at: Instant,
 }
 
 enum OwnedWriterCommand {
@@ -277,6 +278,7 @@ fn run_cancellable_backup_worker(
             return Ok(BackupCancellationObservation {
                 completed_steps,
                 elapsed: started_at.elapsed(),
+                finished_at: Instant::now(),
             });
         }
         if Instant::now() >= deadline {

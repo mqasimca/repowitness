@@ -1,0 +1,255 @@
+#!/usr/bin/env perl
+
+use strict;
+use warnings;
+
+use Digest::SHA qw(sha256_hex);
+use FindBin;
+use JSON::PP qw(decode_json);
+
+my $MAX_PACKET_BYTES = 24 * 1024 * 1024;
+my $MAX_ITEMS = 32;
+
+if (@ARGV == 1 && $ARGV[0] eq '--self-test') {
+    self_test();
+    exit 0;
+}
+if (@ARGV == 1 && $ARGV[0] eq '--check-fixtures') {
+    check_fixtures();
+    exit 0;
+}
+
+die "usage: scripts/build-phase1-codex-envelope [--self-test|--check-fixtures]|<context-json> <graph-json>\n"
+  if @ARGV != 2;
+
+my ($context_path, $graph_path) = @ARGV;
+my $context = read_json($context_path, 'context response');
+my $graph = read_json($graph_path, 'graph response');
+my $envelope = build_envelope($context, $graph);
+my $encoded = JSON::PP->new->canonical(1)->encode($envelope);
+length($encoded) <= $MAX_PACKET_BYTES
+  or die "Phase 1 evaluation envelope exceeds its byte limit\n";
+print $encoded;
+
+sub read_json {
+    my ($path, $label) = @_;
+    -f $path && !-l $path or die "$label is unavailable\n";
+    my $size = -s $path;
+    defined $size && $size <= $MAX_PACKET_BYTES
+      or die "$label exceeds its byte limit\n";
+    open my $handle, '<:raw', $path or die "$label is unavailable\n";
+    local $/;
+    my $content = <$handle>;
+    close $handle or die "$label could not be closed\n";
+    my $decoded = eval { decode_json($content) };
+    !$@ && ref($decoded) eq 'HASH' or die "$label is invalid JSON\n";
+    return $decoded;
+}
+
+sub build_envelope {
+    my ($context, $graph) = @_;
+    ref($context->{items}) eq 'ARRAY'
+      or die "context response omitted items\n";
+    @{$context->{items}} <= $MAX_ITEMS - 1
+      or die "context response has too many items\n";
+    my $search = ref($graph->{search}) eq 'HASH' ? $graph->{search} : $graph;
+    my $trace = $graph->{trace};
+    ref($search->{context}) eq 'HASH'
+      or die "graph response omitted its immutable context\n";
+    ref($search->{definitions}) eq 'ARRAY' && @{$search->{definitions}} >= 1
+      or die "graph response omitted definitions\n";
+    for my $field (qw(schema_version matches_returned matches_total output_bytes)) {
+        defined($search->{$field}) && !ref($search->{$field})
+          && $search->{$field} =~ /\A(?:0|[1-9][0-9]*)\z/
+          or die "graph search evidence is invalid\n";
+    }
+    $search->{schema_version} >= 1
+      && $search->{matches_returned} <= $search->{matches_total}
+      && $search->{matches_returned} == @{$search->{definitions}}
+      or die "graph search evidence is invalid\n";
+    JSON::PP::is_bool($search->{truncated}) && !$search->{truncated}
+      or die "graph response was truncated or omitted its truncation state\n";
+    ref($trace) eq 'HASH' && ref($trace->{context}) eq 'HASH'
+      && ref($trace->{trace}) eq 'HASH'
+      or die "graph response omitted bounded trace coverage\n";
+    my $pin = graph_pin($search->{context});
+    graph_pin($trace->{context})->{connected_workspace} eq $pin->{connected_workspace}
+      && graph_pin($trace->{context})->{workspace_view} eq $pin->{workspace_view}
+      && graph_pin($trace->{context})->{graph_generation} eq $pin->{graph_generation}
+      or die "graph response mixes immutable generations\n";
+    my $truncation = $trace->{trace}->{truncation};
+    ref($truncation) eq 'HASH'
+      && !grep { !JSON::PP::is_bool($truncation->{$_}) } qw(depth visited_nodes visited_edges frontier results)
+      or die "graph trace omitted explicit truncation coverage\n";
+    ref($trace->{trace}->{coverage}) eq 'HASH'
+      or die "graph trace omitted coverage\n";
+    defined($trace->{schema_version}) && !ref($trace->{schema_version})
+      && $trace->{schema_version} =~ /\A[1-9][0-9]*\z/
+      or die "graph trace evidence is invalid\n";
+    my @items;
+    my $evidence = {
+        search => {
+            schema_version => $search->{schema_version},
+            matches_returned => $search->{matches_returned},
+            matches_total => $search->{matches_total},
+            truncated => $search->{truncated},
+            output_bytes => $search->{output_bytes},
+            definitions => $search->{definitions},
+        },
+        trace => {
+            schema_version => $trace->{schema_version},
+            trace => $trace->{trace},
+        },
+    };
+    my $canonical = JSON::PP->new->canonical(1)->encode({
+        envelope_version => 1,
+        kind => 'graph',
+        context => $pin,
+        evidence => $evidence,
+    });
+    push @items, {
+        kind => 'graph',
+        context => $pin,
+        evidence => $evidence,
+        evaluation_evidence_id => 'graph/' . sha256_hex($canonical),
+    };
+    my %seen = ($items[0]->{evaluation_evidence_id} => 1);
+    for my $item (@{$context->{items}}) {
+        ref($item) eq 'HASH' or die "context response item is invalid\n";
+        my $kind = $item->{kind};
+        my $id;
+        if (defined($kind) && $kind eq 'source') {
+            my ($artifact, $ordinal) = @{$item}{qw(artifact_sha256 fact_ordinal)};
+            defined($artifact) && !ref($artifact) && $artifact =~ /\A[0-9a-f]{64}\z/
+              && defined($ordinal) && !ref($ordinal) && $ordinal =~ /\A[0-9]+\z/
+              or die "context source evidence identity is invalid\n";
+            $id = "source/$artifact/$ordinal";
+        }
+        elsif (defined($kind) && $kind eq 'memory') {
+            my $record = $item->{record};
+            ref($record) eq 'HASH' or die "context memory evidence is invalid\n";
+            my ($record_id, $revision) = @{$record}{qw(record_id revision_sha256)};
+            defined($record_id) && !ref($record_id)
+              && $record_id =~ /\A[A-Za-z0-9_.:-]{1,128}\z/
+              && defined($revision) && !ref($revision) && $revision =~ /\A[0-9a-f]{64}\z/
+              or die "context memory evidence identity is invalid\n";
+            $id = "memory/$record_id/$revision";
+        }
+        else {
+            die "context response item kind is invalid\n";
+        }
+        !$seen{$id}++ or die "evaluation evidence identifiers are not unique\n";
+        my %copy = %{$item};
+        $copy{evaluation_evidence_id} = $id;
+        push @items, \%copy;
+    }
+    return { envelope_version => 1, items => \@items };
+}
+
+sub graph_pin {
+    my ($context) = @_;
+    my %pin;
+    for my $field (qw(connected_workspace workspace_view graph_generation)) {
+        defined($context->{$field}) && !ref($context->{$field})
+          or die "graph context is invalid\n";
+        $pin{$field} = $context->{$field};
+    }
+    $pin{connected_workspace} =~ /\Acwi1:h:[0-9A-F]{64}\z/
+      && $pin{workspace_view} =~ /\A[1-9][0-9]*\z/
+      && $pin{graph_generation} =~ /\A[1-9][0-9]*\z/
+      or die "graph context is invalid\n";
+    return \%pin;
+}
+
+sub self_test {
+    my $digest = 'a' x 64;
+    my $context = {
+        items => [{ kind => 'source', artifact_sha256 => $digest, fact_ordinal => 1 }],
+    };
+    my $graph = {
+        schema_version => 1,
+        context => {
+            connected_workspace => 'cwi1:h:' . ('C' x 64),
+            workspace_view => 1,
+            graph_generation => 1,
+        },
+        definitions => [{}], matches_returned => 1, matches_total => 1,
+        truncated => JSON::PP::false, output_bytes => 1,
+        trace => {
+            schema_version => 1,
+            context => {
+                connected_workspace => 'cwi1:h:' . ('C' x 64),
+                workspace_view => 1,
+                graph_generation => 1,
+            },
+            trace => {
+                truncation => {
+                    depth => JSON::PP::false, visited_nodes => JSON::PP::false,
+                    visited_edges => JSON::PP::false, frontier => JSON::PP::false,
+                    results => JSON::PP::false,
+                }, coverage => {}, edges => [],
+            },
+        },
+    };
+    my $envelope = build_envelope($context, $graph);
+    @{$envelope->{items}} == 2 or die "self-test envelope count failed\n";
+    $envelope->{items}[0]{evaluation_evidence_id} =~ /\Agraph\/[0-9a-f]{64}\z/
+      or die "self-test graph identity failed\n";
+    $envelope->{items}[1]{evaluation_evidence_id} eq "source/$digest/1"
+      or die "self-test source identity failed\n";
+    my $mixed_generation = decode_json(
+        JSON::PP->new->canonical(1)->encode($graph)
+    );
+    $mixed_generation->{trace}->{context}->{graph_generation} = 2;
+    must_fail(sub { build_envelope($context, $mixed_generation) });
+    my $missing_coverage = decode_json(
+        JSON::PP->new->canonical(1)->encode($graph)
+    );
+    delete $missing_coverage->{trace}->{trace}->{coverage};
+    must_fail(sub { build_envelope($context, $missing_coverage) });
+    my $truncated_search = decode_json(
+        JSON::PP->new->canonical(1)->encode($graph)
+    );
+    $truncated_search->{truncated} = JSON::PP::true;
+    must_fail(sub { build_envelope($context, $truncated_search) });
+    my $missing_search_truncation = decode_json(
+        JSON::PP->new->canonical(1)->encode($graph)
+    );
+    delete $missing_search_truncation->{truncated};
+    must_fail(sub { build_envelope($context, $missing_search_truncation) });
+    my $mismatched_search_count = decode_json(
+        JSON::PP->new->canonical(1)->encode($graph)
+    );
+    $mismatched_search_count->{matches_returned} = 0;
+    must_fail(sub { build_envelope($context, $mismatched_search_count) });
+    my $duplicate_source = decode_json(
+        JSON::PP->new->canonical(1)->encode($context)
+    );
+    push @{$duplicate_source->{items}}, { %{$duplicate_source->{items}->[0]} };
+    must_fail(sub { build_envelope($duplicate_source, $graph) });
+    check_fixtures();
+    print "Phase 1 Codex envelope self-tests passed\n";
+}
+
+sub check_fixtures {
+    my $fixture_root = "$FindBin::Bin/../benchmarks/phase1/codex-envelope-v1";
+    my $context = read_json("$fixture_root/context.json", 'golden context fixture');
+    my $graph = read_json("$fixture_root/graph.json", 'golden graph fixture');
+    my $expected = read_json("$fixture_root/envelope.json", 'golden envelope fixture');
+    my $actual = build_envelope($context, $graph);
+    my $json = JSON::PP->new->canonical(1);
+    $json->encode($actual) eq $json->encode($expected)
+      or die "Phase 1 Codex envelope golden fixture mismatch\n";
+    print "Phase 1 Codex envelope fixtures passed\n";
+}
+
+sub must_fail {
+    my ($operation) = @_;
+    my $failed = 0;
+    {
+        local $@;
+        eval { $operation->() };
+        $failed = $@ ne '';
+    }
+    $failed or die "Phase 1 Codex envelope self-test expected rejection\n";
+}

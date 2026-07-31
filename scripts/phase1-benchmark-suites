@@ -75,3 +75,63 @@ run_retention_suite() {
         sqlite::worker::tests::dependent_delete_failure_rolls_back_rows_marks_audit_and_plan_state \
         -- --exact --test-threads=1
 }
+
+run_adversarial_release_matrix() {
+    run_adversarial_case migration_upgrade \
+        cargo test -p repowitness-local --release --locked --lib \
+        sqlite::tests::populated_version_two_database_upgrades_with_default_active_view \
+        -- --exact --test-threads=1 || return 1
+    run_adversarial_case migration_committed_cancellation \
+        cargo test -p repowitness-local --release --locked --lib \
+        sqlite::tests::cancellation_after_committed_migrations_reports_unknown_and_preserves_the_upgrade \
+        -- --exact --test-threads=1 || return 1
+    run_adversarial_case retention_atomic_replay \
+        cargo test -p repowitness-local --release --locked --lib \
+        sqlite::worker::tests::retention_plan_apply_is_bounded_atomic_and_idempotent \
+        -- --exact --test-threads=1 || return 1
+    run_adversarial_case retention_restart \
+        cargo test -p repowitness-local --release --locked --lib \
+        local_retention::tests::process_recovery::process_termination_after_committed_apply_preserves_authoritative_receipt \
+        -- --exact --test-threads=1 || return 1
+    run_adversarial_case source_final_fence \
+        cargo test -p repowitness-local --release --locked --lib \
+        local_index::connected_workspace::tests::faults::moving_ref_after_preparation_fails_the_final_fence_and_preserves_view \
+        -- --exact --test-threads=1 || return 1
+    run_adversarial_case watcher_overflow \
+        cargo test -p repowitness-local --release --locked --lib \
+        watch_reconciliation::tests::supervisor::overflow_and_unsupported_events_force_complete_work_without_path_payloads \
+        -- --exact --test-threads=1 || return 1
+    run_adversarial_case configuration_rejection \
+        cargo test -p repowitness-local --release --locked --lib \
+        configuration::tests::invalid_utf8_unknown_fields_and_duplicates_fail_closed \
+        -- --exact --test-threads=1 || return 1
+    run_adversarial_case backup_outcome_unknown \
+        cargo test -p repowitness-local --release --locked --lib \
+        sqlite::backup::tests::no_receipt_by_the_end_of_grace_returns_outcome_unknown_within_a_bound \
+        -- --exact --test-threads=1 || return 1
+    run_adversarial_case mutation_outcome_fence \
+        cargo test -p repowitness-local --release --locked --lib \
+        sqlite::worker::tests::unresolved_mutation_fences_queued_and_later_mutations_until_reopen \
+        -- --exact --test-threads=1 || return 1
+    run_adversarial_case compatibility_boundary \
+        cargo test -p repowitness-mcp --release --locked --lib \
+        server::tests::compatibility::every_alias_rejects_invalid_input_without_service_access_or_canary_disclosure \
+        -- --exact --test-threads=1 || return 1
+    run_adversarial_case compatibility_claim \
+        cargo test -p repowitness-mcp --release --locked --lib \
+        wire::compatibility::tests::pinned_public_observation_keeps_every_compatibility_claim_conservative \
+        -- --exact --test-threads=1 || return 1
+    run_adversarial_case watch_shutdown \
+        cargo test -p repowitness-cli --release --locked --test cli_contract \
+        foreground_watch_handles_first_sigint_and_sigterm_and_preserves_the_active_generation \
+        -- --exact --test-threads=1 || return 1
+    echo 'phase1_adversarial_matrix_profile=v1'
+    echo 'phase1_adversarial_matrix_cases=12'
+    echo 'phase1_adversarial_matrix_failures=0'
+}
+
+run_adversarial_case() {
+    case_name=$1
+    shift
+    run_exact_test "$@" || return 1
+}

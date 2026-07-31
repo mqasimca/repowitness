@@ -88,7 +88,9 @@ The manual `Phase 1 benchmark` GitHub Actions workflow checks out one exact
 depth one, requires both standalone depth-one disposable worktrees to be clean,
 records the declared environment fields, validates the complete receipt against an exact
 allow-list, rechecks the final repository and corpus revisions and statuses,
-and retains checksummed evidence. The local runner also verifies both
+and retains checksummed evidence. It also runs the 12-case adversarial release
+matrix for migration/recovery, retention, final fencing, watcher/configuration,
+mutation outcomes, compatibility boundaries, and watch shutdown. The local runner also verifies both
 disposable corpus worktrees at setup and after all workloads. A result becomes
 an attestation only after that workflow completes successfully for a committed
 exact revision.
@@ -105,6 +107,10 @@ the first ratification run and remain deliberately broad until repeated clean
 release-platform evidence exists. Ratification requires the full adversarial
 test matrix plus repeated isolated Codex runs that judge the actual MCP graph
 packet useful and cite its evidence identifiers.
+The evaluator-only packet is versioned by
+[`codex-envelope-v1.schema.json`](codex-envelope-v1.schema.json); its canonical
+golden input/output fixture and hostile-input self-tests are checked by
+`scripts/check-phase1-benchmarks`.
 
 The benchmark is not a scale claim. Changing the corpus, workload,
 semantics-affecting configuration, or a numeric budget requires a new review
