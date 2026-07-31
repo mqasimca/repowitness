@@ -1516,7 +1516,12 @@ mod tests {
         let repository = fixture_repository(&directory);
         fs::write(
             repository.join("src/lib.rs"),
-            "pub fn target() {}\npub fn Widget() { target(); }\n",
+            concat!(
+                "pub fn close_connection() {}\n",
+                "pub fn Listener() { close_connection(); }\n",
+                "pub fn retry_connection() {}\n",
+                "pub fn Worker() { retry_connection(); }\n",
+            ),
         )
         .expect("public synthetic source fixture");
         let database = directory.database();
@@ -1526,67 +1531,73 @@ mod tests {
         )
         .expect("index");
 
-        let lexical = search_local_index(
-            LocalCodeSearchRequest::new(&database, REPOSITORY_ID, "Widget"),
-            Arc::new(AtomicBool::new(false)),
-        )
-        .expect("lexical baseline");
-        assert_eq!(lexical.evidence().as_slice().len(), 1);
+        for (anchor, target) in [
+            ("Listener", "close_connection"),
+            ("Worker", "retry_connection"),
+        ] {
+            let lexical = search_local_index(
+                LocalCodeSearchRequest::new(&database, REPOSITORY_ID, anchor),
+                Arc::new(AtomicBool::new(false)),
+            )
+            .expect("lexical baseline");
+            assert_eq!(lexical.evidence().as_slice().len(), 1);
 
-        let graph = read_local_rust_graph(
-            LocalRustGraphReadRequest::new(
-                &database,
-                REPOSITORY_ID,
-                RustGraphReadOperation::Search {
-                    query: RustGraphSymbolQuery::try_new("Widget").expect("query"),
-                    limits: RustGraphTraceLimits::default(),
-                },
-            ),
-            Arc::new(AtomicBool::new(false)),
-        )
-        .expect("graph-only baseline");
-        assert!(matches!(
-            graph.output(),
-            LocalRustGraphReadOutput::Search(result) if result.definitions().len() == 1
-        ));
+            let graph = read_local_rust_graph(
+                LocalRustGraphReadRequest::new(
+                    &database,
+                    REPOSITORY_ID,
+                    RustGraphReadOperation::Search {
+                        query: RustGraphSymbolQuery::try_new(anchor).expect("query"),
+                        limits: RustGraphTraceLimits::default(),
+                    },
+                ),
+                Arc::new(AtomicBool::new(false)),
+            )
+            .expect("graph-only baseline");
+            assert!(matches!(
+                graph.output(),
+                LocalRustGraphReadOutput::Search(result) if result.definitions().len() == 1
+            ));
 
-        let incumbent = build_local_context(
-            LocalContextBuildRequest::new(&repository, &database, REPOSITORY_ID, "Widget"),
-            Arc::new(AtomicBool::new(false)),
-        )
-        .expect("supported incumbent context");
-        assert_eq!(incumbent.items().len(), 1);
-        assert!(matches!(
-            incumbent.items().first(),
-            Some(ContextItem::Source(item))
-                if std::str::from_utf8(item.candidate().declaration())
-                    .is_ok_and(|source| source.contains("Widget"))
-        ));
+            let incumbent = build_local_context(
+                LocalContextBuildRequest::new(&repository, &database, REPOSITORY_ID, anchor),
+                Arc::new(AtomicBool::new(false)),
+            )
+            .expect("supported incumbent context");
+            assert_eq!(incumbent.items().len(), 1);
+            assert!(matches!(
+                incumbent.items().first(),
+                Some(ContextItem::Source(item))
+                    if std::str::from_utf8(item.candidate().declaration())
+                        .is_ok_and(|source| source.contains(anchor))
+            ));
 
-        let phase2 = build_local_phase2_context(
-            LocalPhase2ContextBuildRequest::new(&repository, &database, REPOSITORY_ID, "Widget"),
-            Arc::new(AtomicBool::new(false)),
-        )
-        .expect("Phase 2 context");
-        assert!(phase2.items().iter().any(|item| {
-            matches!(item.payload(), LocalPhase2ContextItem::Syntax(candidate)
-                if std::str::from_utf8(candidate.declaration())
-                    .is_ok_and(|source| source.contains("Widget")))
-        }));
-        assert!(phase2.items().iter().any(|item| {
-            matches!(item.payload(), LocalPhase2ContextItem::GraphRelation(relation)
-                if relation.edge_kind() == RustGraphEdgeKind::Call
-                    && std::str::from_utf8(relation.candidate().declaration())
-                        .is_ok_and(|source| source.contains("target")))
-        }));
+            let phase2 = build_local_phase2_context(
+                LocalPhase2ContextBuildRequest::new(&repository, &database, REPOSITORY_ID, anchor),
+                Arc::new(AtomicBool::new(false)),
+            )
+            .expect("Phase 2 context");
+            assert!(phase2.items().iter().any(|item| {
+                matches!(item.payload(), LocalPhase2ContextItem::Syntax(candidate)
+                    if std::str::from_utf8(candidate.declaration())
+                        .is_ok_and(|source| source.contains(anchor)))
+            }));
+            assert!(phase2.items().iter().any(|item| {
+                matches!(item.payload(), LocalPhase2ContextItem::GraphRelation(relation)
+                    if relation.edge_kind() == RustGraphEdgeKind::Call
+                        && std::str::from_utf8(relation.candidate().declaration())
+                            .is_ok_and(|source| source.contains(target)))
+            }));
 
-        // The lexical and graph-only baselines expose only selectors, while the
-        // incumbent expands one source declaration. Phase 2 expands the same
-        // anchor plus the direct call target. Both declarations are one-line
-        // required task evidence, so its relevant-source density must improve.
-        assert!(incumbent.used_units() > 0);
-        assert!(phase2.used_units() > incumbent.used_units());
-        assert!(2 * incumbent.used_units() > phase2.used_units());
+            // The lexical and graph-only baselines expose only selectors, while
+            // the incumbent expands one source declaration. Phase 2 expands the
+            // same anchor plus the direct call target. Both declarations are
+            // one-line required task evidence, so its relevant-source density
+            // must improve for each downstream navigation task.
+            assert!(incumbent.used_units() > 0);
+            assert!(phase2.used_units() > incumbent.used_units());
+            assert!(2 * incumbent.used_units() > phase2.used_units());
+        }
     }
 
     #[test]

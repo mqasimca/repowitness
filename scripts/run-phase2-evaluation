@@ -6,6 +6,7 @@ REPOSITORY_ID=rwi1:h:C4C4C4C4C4C4C4C4C4C4C4C4C4C4C4C4C4C4C4C4C4C4C4C4C4C4C4C4C4C
 REVISION=3d93b42bc363220f85af4fc9e1bebd35b588a4a3
 RUNS=5
 AGENT=false
+DENSITY_TASKS='run handle_command subscribe'
 
 usage() {
     echo "usage: ./scripts/run-phase2-evaluation [--agent] <mini-redis-repository>" >&2
@@ -39,13 +40,21 @@ TEMP=$(mktemp -d "${TMPDIR:-/tmp}/repowitness-phase2-evaluation.XXXXXXXX")
 cleanup() { rm -rf "$TEMP"; }
 trap cleanup EXIT HUP INT TERM
 DATABASE=$TEMP/index.sqlite3
-PACKET=$TEMP/phase2-context.txt
-SAMPLES=$TEMP/latency-ms.txt
+LEXICAL_PACKET=$TEMP/lexical-selector.txt
+GRAPH_PACKET=$TEMP/graph-selector.json
+PHASE0_PACKET=$TEMP/phase0-context.txt
+PHASE2_PACKET=$TEMP/phase2-context.txt
+PHASE0_SAMPLES=$TEMP/phase0-latency-ms.txt
+PHASE2_SAMPLES=$TEMP/phase2-latency-ms.txt
+DENSITY_RESULTS=$TEMP/density-results.txt
 
 (cd "$ROOT" && cargo build --release --locked -p repowitness-cli --bin repowitness >/dev/null)
 "$CLI" index --repository-id "$REPOSITORY_ID" --database "$DATABASE" -- "$CORPUS" >/dev/null
 
 run_packet() {
+    output=$1
+    sample=$2
+    shift 2
     perl -MTime::HiRes=time -e '
         my ($output, $sample, @command) = @ARGV;
         my $start = time();
@@ -58,63 +67,234 @@ run_packet() {
         open my $samples, ">>:raw", $sample or die "cannot append sample\n";
         printf {$samples} "%.3f\n", (time() - $start) * 1000;
         close $samples or die "cannot close sample\n";
-    ' "$PACKET" "$SAMPLES" "$CLI" phase2-context-build \
+    ' "$output" "$sample" "$@"
+}
+
+run_phase0_packet() {
+    run_packet "$PHASE0_PACKET" "$PHASE0_SAMPLES" "$CLI" context-build \
         --repository-id "$REPOSITORY_ID" --database "$DATABASE" --root "$CORPUS" \
         --intent run --budget 65536 --limit 20
 }
 
+run_phase2_packet() {
+    run_packet "$PHASE2_PACKET" "$PHASE2_SAMPLES" "$CLI" phase2-context-build \
+        --repository-id "$REPOSITORY_ID" --database "$DATABASE" --root "$CORPUS" \
+        --intent run --budget 65536 --limit 20
+}
+
+build_graph_labels() {
+    task=$1
+    labels=$2
+    search=$TEMP/graph-search-$task.json
+    starts=$TEMP/graph-starts-$task.jsonl
+    trace=$TEMP/graph-trace-$task.json
+    : >"$labels"
+    "$CLI" graph search --repository-id "$REPOSITORY_ID" --database "$DATABASE" \
+        --query "$task" --max-results 20 >"$search"
+    perl -MJSON::PP -0777 -e '
+        my $result = decode_json(<>);
+        for my $definition (@{$result->{definitions} // []}) {
+            print encode_json({ type => "definition", definition => $definition }), "\n";
+        }
+    ' "$search" >"$starts"
+    while IFS= read -r start; do
+        "$CLI" graph trace --repository-id "$REPOSITORY_ID" --database "$DATABASE" \
+            --start-json "$start" --direction outbound \
+            --edge-kind import --edge-kind reference --edge-kind call >"$trace"
+        perl -MJSON::PP -0777 -e '
+            my $result = decode_json(<>);
+            for my $edge (@{$result->{trace}{edges} // []}) {
+                next unless ($edge->{cardinality}{kind} // "") eq "unique";
+                my $target = $edge->{target} // {};
+                next unless defined $target->{artifact_sha256} && defined $target->{fact_ordinal};
+                print "$target->{artifact_sha256}\t$target->{fact_ordinal}\n";
+            }
+        ' "$trace" >>"$labels"
+    done <"$starts"
+    LC_ALL=C sort -u "$labels" -o "$labels"
+    [ -s "$labels" ] || {
+        echo "error: graph-only baseline produced no task labels" >&2
+        exit 70
+    }
+}
+
+labelled_density_metrics() {
+    labels=$1
+    phase0=$2
+    phase2=$3
+    perl -e '
+        my %labels;
+        open my $labels, "<:raw", $ARGV[0] or die "cannot read labels\n";
+        while (<$labels>) {
+            chomp;
+            $labels{$_} = 1;
+        }
+        sub packet {
+            my ($path, $labels) = @_;
+            open my $packet, "<:raw", $path or die "cannot read packet\n";
+            my (%items, $units);
+            while (<$packet>) {
+                chomp;
+                $units = $1 if /^used_units=(\d+)$/;
+                if (/^context_item_(\d+)_(kind|artifact_sha256|fact_ordinal|declaration_data_json)=(.*)$/) {
+                    $items{$1}{$2} = $3;
+                }
+            }
+            defined $units && $units > 0 or die "packet has no units\n";
+            my %seen;
+            my $lines = 0;
+            for my $item (values %items) {
+                next unless defined $item->{artifact_sha256} && defined $item->{fact_ordinal};
+                my $key = "$item->{artifact_sha256}\t$item->{fact_ordinal}";
+                next unless $labels->{$key} && !$seen{$key}++;
+                my $source = $item->{declaration_data_json} // q{};
+                my $newlines = () = $source =~ /\\n/g;
+                $lines += 1 + $newlines;
+            }
+            return ($lines, $units);
+        }
+        my ($phase0_lines, $phase0_units) = packet($ARGV[1], \%labels);
+        my ($phase2_lines, $phase2_units) = packet($ARGV[2], \%labels);
+        print "$phase0_lines $phase0_units $phase2_lines $phase2_units\n";
+    ' "$labels" "$phase0" "$phase2"
+}
+
+evaluate_labelled_density_task() {
+    task=$1
+    labels=$TEMP/density-$task-labels.txt
+    phase0=$TEMP/density-$task-phase0.txt
+    phase2=$TEMP/density-$task-phase2.txt
+    build_graph_labels "$task" "$labels"
+    "$CLI" context-build --repository-id "$REPOSITORY_ID" --database "$DATABASE" \
+        --root "$CORPUS" --intent "$task" --budget 65536 --limit 20 >"$phase0"
+    "$CLI" phase2-context-build --repository-id "$REPOSITORY_ID" --database "$DATABASE" \
+        --root "$CORPUS" --intent "$task" --budget 65536 --limit 20 >"$phase2"
+    set -- $(labelled_density_metrics "$labels" "$phase0" "$phase2")
+    [ "$#" -eq 4 ] || { echo "error: labelled density metric is malformed" >&2; exit 70; }
+    [ "$3" -gt 0 ] || { echo "error: Phase 2 omitted graph-labelled source evidence" >&2; exit 70; }
+    printf '%s %s %s %s\n' "$1" "$2" "$3" "$4" >>"$DENSITY_RESULTS"
+}
+
+"$CLI" search --repository-id "$REPOSITORY_ID" --database "$DATABASE" \
+    --query run --limit 20 >"$LEXICAL_PACKET"
+"$CLI" graph search --repository-id "$REPOSITORY_ID" --database "$DATABASE" \
+    --query run >"$GRAPH_PACKET"
+grep -qx 'status=ok' "$LEXICAL_PACKET"
+[ -s "$GRAPH_PACKET" ] || { echo "error: graph-only baseline was empty" >&2; exit 70; }
+
 N=1
 while [ "$N" -le "$RUNS" ]; do
-    run_packet
+    run_phase0_packet
+    run_phase2_packet
     N=$((N + 1))
 done
 
-grep -qx 'profile_id=phase2-evidence-balanced-v1' "$PACKET"
-grep -qx 'provider_coverage_1_tier=syntax' "$PACKET"
-grep -qx 'provider_coverage_1_availability=available' "$PACKET"
-grep -qx 'provider_coverage_3_tier=references' "$PACKET"
-grep -qx 'provider_coverage_3_availability=available' "$PACKET"
-grep -qx 'provider_coverage_0_availability=unavailable' "$PACKET"
-grep -qx 'context_item_.*_kind=graph_relation' "$PACKET" || {
+grep -qx 'status=ok' "$PHASE0_PACKET"
+grep -qx 'operation=context-build' "$PHASE0_PACKET"
+grep -qx 'profile_id=phase2-evidence-balanced-v1' "$PHASE2_PACKET"
+grep -qx 'provider_coverage_1_tier=syntax' "$PHASE2_PACKET"
+grep -qx 'provider_coverage_1_availability=available' "$PHASE2_PACKET"
+grep -qx 'provider_coverage_3_tier=references' "$PHASE2_PACKET"
+grep -qx 'provider_coverage_3_availability=available' "$PHASE2_PACKET"
+grep -qx 'provider_coverage_0_availability=unavailable' "$PHASE2_PACKET"
+grep -qx 'context_item_.*_kind=graph_relation' "$PHASE2_PACKET" || {
     echo "error: Phase 2 packet omitted direct graph context" >&2
     exit 70
 }
 
+for density_task in $DENSITY_TASKS; do
+    evaluate_labelled_density_task "$density_task"
+done
+
+set -- $(perl -ane '
+    $phase0_lines += $F[0]; $phase0_units += $F[1];
+    $phase2_lines += $F[2]; $phase2_units += $F[3];
+    END { print "$phase0_lines $phase0_units $phase2_lines $phase2_units\n"; }
+' "$DENSITY_RESULTS")
+[ "$#" -eq 4 ] || { echo "error: aggregate labelled density metric is malformed" >&2; exit 70; }
+[ "$3" -gt 0 ] || { echo "error: labelled corpus task set has no Phase 2 source lines" >&2; exit 70; }
+perl -e 'exit !($ARGV[2] * $ARGV[1] > $ARGV[0] * $ARGV[3])' "$1" "$2" "$3" "$4" || {
+    echo "error: Phase 2 did not improve graph-labelled source density" >&2
+    exit 70
+}
+PHASE0_LABELLED_LINES=$1
+PHASE0_LABELLED_UNITS=$2
+PHASE2_LABELLED_LINES=$3
+PHASE2_LABELLED_UNITS=$4
+
 (cd "$ROOT" && cargo test -p repowitness-local \
     local_phase2_context_build::tests::public_synthetic_call_chain_improves_navigation_and_relevant_source_density \
     --locked >/dev/null)
+(cd "$ROOT" && cargo test -p repowitness-cli --test cli_contract \
+    scip_import_admits_one_contained_file_and_publishes_an_exact_active_overlay \
+    --locked >/dev/null)
 (cd "$ROOT" && cargo test -p repowitness-local --test phase2_history_context --locked >/dev/null)
 
-P95=$(sort -n "$SAMPLES" | perl -ne '
+PHASE0_P95=$(sort -n "$PHASE0_SAMPLES" | perl -ne '
+    push @values, $_;
+    END { print $values[int((@values * 95 + 99) / 100) - 1] }
+')
+PHASE2_P95=$(sort -n "$PHASE2_SAMPLES" | perl -ne '
     push @values, $_;
     END { print $values[int((@values * 95 + 99) / 100) - 1] }
 ')
 
 if [ "$AGENT" = true ]; then
     command -v codex >/dev/null 2>&1 || { echo "error: codex CLI is required for --agent" >&2; exit 69; }
-    ANSWER=$TEMP/agent-answer.txt
-    codex exec --ephemeral --ignore-user-config --ignore-rules --strict-config \
-        --disable apps --disable goals --disable hooks --disable memories --disable multi_agent \
-        --disable remote_plugin --disable shell_snapshot --disable shell_tool \
-        --config 'approval_policy="never"' --config 'mcp_servers={}' --config 'web_search="disabled"' \
-        --sandbox read-only --cd "$TEMP" --skip-git-repo-check --color never \
-        --output-last-message "$ANSWER" \
-        'Use only the supplied Phase 2 RepoWitness packet on standard input. Explain the shutdown path to connection handlers in at most two sentences, state one uncertainty, and do not claim any memory evidence.' \
-        <"$PACKET" >/dev/null
-    grep -Eiq 'listener|handler' "$ANSWER" || {
+    run_agent_task() {
+        packet=$1
+        task=$2
+        answer=$3
+        if ! codex exec --ephemeral --ignore-user-config --ignore-rules --strict-config \
+            --disable apps --disable goals --disable hooks --disable memories --disable multi_agent \
+            --disable remote_plugin --disable shell_snapshot --disable shell_tool \
+            --config 'approval_policy="never"' --config 'mcp_servers={}' --config 'web_search="disabled"' \
+            --sandbox read-only --cd "$TEMP" --skip-git-repo-check --color never \
+            --output-last-message "$answer" "$task" <"$packet" >/dev/null 2>&1; then
+            echo "error: downstream agent task execution failed" >&2
+            exit 70
+        fi
+        if ! grep -qx 'memory_evidence=absent' "$answer"; then
+            echo "error: downstream agent did not report absent memory evidence" >&2
+            exit 70
+        fi
+        if grep -Eiq 'memory (record|item).*(says|shows|confirms|proves)' "$answer"; then
+            echo "error: downstream agent made an unsupported memory claim" >&2
+            exit 70
+        fi
+    }
+
+    TASK_ONE='Use only the supplied RepoWitness packet on standard input. For request `run`, summarize the shutdown path to connection handlers in at most two sentences and state one uncertainty. Do not make any claim about a memory record. End with the exact line memory_evidence=absent.'
+    TASK_TWO='Use only the supplied RepoWitness packet on standard input. For request `run`, decide whether it establishes a direct listener-to-handler relationship in at most two sentences and state one uncertainty. Do not make any claim about a memory record. End with the exact line memory_evidence=absent.'
+    run_agent_task "$PHASE0_PACKET" "$TASK_ONE" "$TEMP/phase0-task-one.txt"
+    run_agent_task "$PHASE0_PACKET" "$TASK_TWO" "$TEMP/phase0-task-two.txt"
+    run_agent_task "$PHASE2_PACKET" "$TASK_ONE" "$TEMP/phase2-task-one.txt"
+    run_agent_task "$PHASE2_PACKET" "$TASK_TWO" "$TEMP/phase2-task-two.txt"
+    if ! grep -Eiq 'listener|handler' "$TEMP/phase2-task-one.txt"; then
         echo "error: downstream agent did not use the packet navigation evidence" >&2
         exit 70
-    }
+    fi
     echo 'agent_consumer=codex'
-    echo 'agent_stale_memory_uses=0'
+    echo 'downstream_agent_tasks_per_baseline=2'
+    echo 'phase0_agent_stale_memory_uses=0'
+    echo 'phase2_agent_stale_memory_uses=0'
 fi
 
 echo "profile=$PROFILE"
 echo "corpus_revision=$REVISION"
 echo "warm_runs=$RUNS"
-echo "phase2_context_p95_ms=$P95"
-echo 'baselines=lexical-selector,graph-selector,phase0-context'
+echo "phase0_context_p95_ms=$PHASE0_P95"
+echo "phase2_context_p95_ms=$PHASE2_P95"
+echo 'baselines=lexical-selector,graph-selector,phase0-context,phase2-context'
+echo 'pinned_corpus_baseline_receipts=passed'
+echo "labelled_density_tasks=$(printf '%s' "$DENSITY_TASKS" | wc -w | tr -d ' ')"
+echo "phase0_labelled_source_lines=$PHASE0_LABELLED_LINES"
+echo "phase0_labelled_content_units=$PHASE0_LABELLED_UNITS"
+echo "phase2_labelled_source_lines=$PHASE2_LABELLED_LINES"
+echo "phase2_labelled_content_units=$PHASE2_LABELLED_UNITS"
+echo 'labelled_source_density=improved'
 echo 'synthetic_navigation_and_density=passed'
+echo 'precise_overlay_syntax_coverage=passed'
 echo 'stale_provider_exclusion=passed'
 echo 'provider_coverage=syntax-available,references-available,precise-unavailable'
 echo 'status=passed'

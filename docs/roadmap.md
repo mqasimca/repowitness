@@ -123,12 +123,16 @@ activation.
   commit as historical provenance without asserting reachability or re-reading historical source.
   A regression fixture proves that a formerly approved and historically observed record is removed
   from both the memory and history providers after source revalidation makes it stale.
-  A public synthetic direct-call-chain evaluation compares lexical selector retrieval, graph-only
-  selector retrieval, the supported Phase 0 context, and Phase 2; Phase 2 retains the direct call
-  target and improves required source lines per content unit. The versioned local pinned-corpus
-  runner records warm latency and provider coverage, proves stale-provider exclusion, and offers an
-  opt-in isolated Codex consumer check with zero stale-memory input. Fresh macOS and Windows
-  evidence is intentionally deferred.
+  A public synthetic two-task direct-call-chain evaluation compares lexical selector retrieval,
+  graph-only selector retrieval, the supported Phase 0 context, and Phase 2; Phase 2 retains the
+  direct call target and improves required source lines per content unit for each task. The
+  versioned local pinned-corpus runner records all four baseline receipts, warm latency for both
+  context profiles, precise-overlay syntax coverage, and stale-provider exclusion. Its opt-in
+  isolated Codex evaluation runs the same two downstream tasks against Phase 0 and Phase 2 with
+  zero stale-memory uses for both. A graph-only baseline independently labels unique one-hop source
+  targets for three public-corpus direct-navigation tasks; Phase 2 improves their aggregate
+  relevant-lines-per-content-unit result over Phase 0. The Phase 2 exit gate is met. Fresh macOS
+  and Windows evaluator evidence remains intentionally deferred by maintainer direction.
 - Add tests, ownership, and Git-history relationships.
 - Evaluate context packs against lexical, graph-only, and supported incumbent baselines.
 - Add second and third languages only after each meets identity, coverage, and retrieval gates.

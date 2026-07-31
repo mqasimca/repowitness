@@ -286,6 +286,8 @@ fn scip_import_admits_one_contained_file_and_publishes_an_exact_active_overlay()
     assert!(context.contains("context_item_0_tier=precise_overlay\n"));
     assert!(context.contains("context_item_0_kind=precise_overlay\n"));
     assert!(context.contains("context_item_0_relationship_count=1\n"));
+    assert!(context.contains("provider_coverage_1_tier=syntax\n"));
+    assert!(context.contains("provider_coverage_1_availability=available\n"));
     assert_workspace_phase2_context_mcp_with_scip(&fixture);
 }
 
