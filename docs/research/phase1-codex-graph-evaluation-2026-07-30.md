@@ -1,6 +1,6 @@
 # Phase 1 Codex graph evaluation
 
-- Status: Local proposed-phase evidence only; clean attestation pending
+- Status: Clean exact-revision local evaluator evidence only; broader release attestation pending
 - Observed: 2026-07-30 and 2026-07-31 UTC
 - Corpus: `tokio-rs/mini-redis`
 - Base revision: `7295d727b82a0ef534b836b00807c15ef6c7f191`
@@ -68,12 +68,41 @@ not a clean committed release revision. It is therefore implementation
 evidence only; it does not replace the clean attested rerun required for
 ADR-0034 or Phase 1 ratification.
 
+## Clean exact-revision version-2 repeat
+
+On 2026-07-31, a clean worktree at RepoWitness revision
+`ebd329ef8c3d7d006b8444ae2b51d19b892c0f4e` repeated all three isolated
+base/changed pairs with the version-2 envelope. Every base answer returned
+`bug-present`, used source, graph, and current-memory evidence, and every
+changed answer returned `bug-fixed`, used source and graph evidence, and cited
+no memory. All six JSONL event streams contained zero tool events. The
+validator reported all three complete runs, source grounding, current-memory
+use at the base revision, stale-memory exclusion at the changed revision, and
+usefulness as passing.
+
+| Measure | Result |
+|---|---:|
+| Complete base/changed pairs | 3 / 3 |
+| Validated decisions | 6 / 6 |
+| Graph-cited answers | 6 / 6 |
+| Source-cited answers | 6 / 6 |
+| Base answers using current memory | 3 / 3 |
+| Changed answers using memory | 0 / 3 |
+| Tool events | 0 |
+| Total input tokens | 151,095 |
+| Total output tokens | 1,509 |
+| Total tokens | 152,604 |
+
+This closes ADR-0034's isolated-pair gate for that exact revision. It is local
+evaluator evidence, not a full release-platform benchmark attestation.
+
 ## Scope and remaining gate
 
 The historical result demonstrates the declared `minimum_complete_runs`
 against the public pinned corpus for the version-1 envelope. Version 1 did not
 retain the canonical trace request or bind its selector to a returned
 definition, so it is not evidence for the current version-2 envelope. The
-local version-2 repeat closes that implementation-validation gap but must be
-rerun from a clean attested revision before it can support ADR-0034, budget,
-public-contract, or broader Phase 1 release-gate decisions.
+clean version-2 repeat closes the isolated-pair requirement for ADR-0034. It
+does not ratify budgets, a public contract, or the broader Phase 1 release
+gate; those still require the full clean release-platform benchmark and
+maintainer review.

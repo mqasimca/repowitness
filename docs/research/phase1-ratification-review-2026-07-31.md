@@ -12,8 +12,9 @@ explicit maintainer action.
 
 The two clean Ubuntu 24.04 benchmark attestations are for committed revision
 `006197af6bc2a43d77cfa94c0b599b2e28d67704`, which predates the evaluator-only
-graph-envelope work committed in `f911d1f`. Therefore, that work and ADR-0034
-do not have a clean exact-revision release attestation yet.
+graph-envelope work committed in `f911d1f`. The isolated version-2 evaluator
+has since passed at clean revision `ebd329e`, but the complete current Phase 1
+profile does not have a clean exact-revision release-platform attestation yet.
 
 ## Evidence considered
 
@@ -30,6 +31,9 @@ do not have a clean exact-revision release attestation yet.
   event check. It ran from the current dirty working tree, so it is useful
   implementation evidence but not a clean exact-revision attestation:
   [evaluation](phase1-codex-graph-evaluation-2026-07-30.md).
+- Three clean exact-revision version-2 base/changed pairs at `ebd329e`, with
+  the same required decisions, evidence use, stale-memory exclusion, and zero
+  tool events: [evaluation](phase1-codex-graph-evaluation-2026-07-30.md).
 - The bounded 12-case Phase 1 adversarial matrix in release mode, covering
   migration/recovery, retention, source fencing, watcher/configuration,
   mutation outcomes, compatibility, and shutdown:
@@ -51,7 +55,8 @@ The implementation and local evidence are strong enough to continue the Phase
 profile as a whole:
 
 - The clean release-platform evidence does not include the current version-2
-  graph-envelope/evaluator implementation.
+  graph-envelope/evaluator implementation, even though its isolated clean
+  evaluator gate now passes locally.
 - macOS and Windows full-workspace CI passed for the current committed base,
   but it predates the current evaluator/matrix scripts and does not retain
   a platform-specific release receipt or resource measurement.
@@ -61,9 +66,8 @@ profile as a whole:
 - The incumbent aliases deliberately claim name compatibility only, so their
   request, response, and behavior compatibility has not been measured.
 - ADR-0034 now has a versioned envelope schema, canonical golden fixture, and
-  hostile-input self-tests, but the current implementation still lacks a clean
-  exact-revision release attestation and a version-2 isolated-pair rerun from
-  that attested revision.
+  hostile-input self-tests and a clean exact-revision isolated-pair result, but
+  the current implementation still lacks a full release-platform attestation.
 
 ## ADR recommendations
 
@@ -78,7 +82,7 @@ profile as a whole:
 | [0031](../adr/0031-source-slot-selectors-and-package-scopes.md) | Hold | The committed portable core passes, but current exact-revision platform and resource-budget evidence remains a stated gate. |
 | [0032](../adr/0032-explicit-connected-workspace-manifest.md) | Hold with the connected-workspace cluster | Its boundary implementation passes locally, but its prerequisite source-slot/migration contracts remain proposed. |
 | [0033](../adr/0033-bounded-mutation-outcome-resolution.md) | Hold | The 250-millisecond outcome-resolution grace needs supported-release-platform measurement before acceptance. |
-| [0034](../adr/0034-phase1-codex-graph-evaluation.md) | Hold | The local schema and fixture contract now passes, but a committed clean evaluation run and release evidence are still needed. |
+| [0034](../adr/0034-phase1-codex-graph-evaluation.md) | Hold | The clean isolated evaluation run now passes, but the current full release-platform attestation is still needed. |
 
 No proposed Phase 1 budget should be ratified at this time. The observed
 Ubuntu resource margins are useful evidence, not multi-platform capacity or
@@ -86,8 +90,9 @@ stability proof.
 
 ## Recommended completion sequence
 
-1. Cleanly attest the current evaluator/envelope changes on the release
-   platform; verify checksums and receipts as for the prior Phase 1 runs.
+1. Cleanly attest the current evaluator/envelope changes through the full
+   release-platform benchmark; verify checksums and receipts as for the prior
+   Phase 1 runs.
 2. Execute the integrated Phase 1 adversarial release matrix from the clean
    exact revision and collect the required supported-platform outcomes for
    migration-3 upgrade/recovery, retention roots and restart, source-change
@@ -97,9 +102,8 @@ stability proof.
    watcher cancellation/shutdown, and outcome grace.
 4. Either measure and document a deliberately bounded incumbent compatibility
    level or keep ADR-0030 name-only and out of the ratification set.
-5. Rerun ADR-0034's three isolated pairs from the clean attested revision,
-   retaining its versioned envelope schema and focused golden/adversarial
-   fixture checks.
+5. Retain ADR-0034's clean isolated-pair result, versioned envelope schema,
+   and focused golden/adversarial fixture checks with the release evidence.
 6. Return to this review for explicit maintainer decisions on the individual
    ADRs and budgets; do not accept the group as one undifferentiated change.
 
