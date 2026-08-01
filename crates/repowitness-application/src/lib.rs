@@ -14,6 +14,7 @@ mod memory_projection;
 mod memory_recall;
 mod memory_record_id_text;
 mod package_scope;
+mod personal_memory;
 mod python_profile;
 mod repository_diagnostics;
 mod repository_identity_text;
@@ -29,6 +30,7 @@ mod source_profile;
 mod source_slot_publication;
 mod source_snapshot;
 mod symbol_get;
+mod task_checkpoint;
 mod typescript_profile;
 mod workspace_identity_text;
 
@@ -107,6 +109,10 @@ pub use memory_record_id_text::{
 pub use package_scope::{
     MAX_PACKAGE_SCOPE_ROOTS, PACKAGE_SCOPE_VERSION, PackageRootCount, PackageRootOrdinal,
     PackageScope, PackageScopeDigest, PackageScopeError,
+};
+pub use personal_memory::{
+    MAX_PERSONAL_MEMORY_READ_RESULTS, PersonalMemoryError, PersonalMemoryPort,
+    PersonalMemoryReadPort, PersonalMemoryReceipt, append_personal_memory, read_personal_memory,
 };
 pub use python_profile::{
     PHASE0_PYTHON_ANALYSIS_SCHEMA_VERSION, PHASE0_PYTHON_CANONICALIZATION_VERSION,
@@ -202,6 +208,10 @@ pub use symbol_get::{
     SymbolGetPort, SymbolGetPortOutputError, SymbolGetPortRequest, SymbolGetPortResult,
     SymbolGetProducer, SymbolGetProducerIdentity, SymbolGetRequest, SymbolGetResult,
     SymbolGetSelector, symbol_get,
+};
+pub use task_checkpoint::{
+    EngineeringTaskError, EngineeringTaskPort, TaskCheckpointReceipt, TaskStatusPort,
+    TaskVerificationReceipt, append_task_checkpoint, append_task_verification, poll_task,
 };
 pub use typescript_profile::{
     PHASE0_TYPESCRIPT_ANALYSIS_SCHEMA_VERSION, PHASE0_TYPESCRIPT_CANONICALIZATION_VERSION,

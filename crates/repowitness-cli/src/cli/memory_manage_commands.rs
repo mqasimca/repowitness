@@ -36,6 +36,8 @@ fn parse_memory_manage_arguments(
         parse_memory_write_arguments(remaining)
     } else if operation == OsStr::new("approve") {
         parse_memory_approve_arguments(remaining)
+    } else if operation == OsStr::new("sync") {
+        parse_memory_sync_arguments(remaining)
     } else if operation == OsStr::new("review") {
         parse_memory_review_arguments(remaining)
     } else if operation == OsStr::new("import-history") {
@@ -43,6 +45,28 @@ fn parse_memory_manage_arguments(
     } else {
         Err("error: unknown memory-manage operation; use memory-manage --help\n")
     }
+}
+
+fn parse_memory_sync_arguments(
+    arguments: &[OsString],
+) -> Result<MemoryManageInvocation, &'static str> {
+    let parsed = parse_manage_options(arguments, ManageOptionSet::Sync)?;
+    Ok(MemoryManageInvocation::Sync {
+        repository_root: required_root(parsed.repository_root)?,
+        database: required_database(parsed.database)?,
+        repository_identity: required_manage_value(
+            parsed.repository_identity,
+            "error: memory-manage sync requires --repository-id\n",
+        )?,
+        record_id: required_manage_value(
+            parsed.record_id,
+            "error: memory-manage sync requires --record-id\n",
+        )?,
+        actor: required_manage_value(
+            parsed.actor,
+            "error: memory-manage sync requires --actor\n",
+        )?,
+    })
 }
 
 fn parse_memory_write_arguments(
@@ -120,6 +144,7 @@ fn parse_memory_review_arguments(
         target_fact_ordinal: parsed
             .target_fact_ordinal
             .ok_or("error: memory-manage review requires --target-fact\n")?,
+        target_snapshot: parsed.target_snapshot,
         actor: required_manage_value(
             parsed.actor,
             "error: memory-manage review requires --actor\n",
@@ -149,6 +174,7 @@ fn parse_memory_history_arguments(
 enum ManageOptionSet {
     Write,
     Approve,
+    Sync,
     Review,
     ImportHistory,
 }
@@ -167,6 +193,7 @@ struct ParsedManageOptions {
     target_path: Option<OsString>,
     target_artifact: Option<OsString>,
     target_fact_ordinal: Option<u64>,
+    target_snapshot: Option<OsString>,
 }
 
 fn parse_manage_options(
@@ -218,7 +245,7 @@ fn assign_manage_option(
     } else if option == OsStr::new("--database")
         && matches!(
             set,
-            ManageOptionSet::Approve | ManageOptionSet::Review | ManageOptionSet::ImportHistory
+            ManageOptionSet::Approve | ManageOptionSet::Sync | ManageOptionSet::Review | ManageOptionSet::ImportHistory
         )
     {
         set_manage_once(
@@ -233,7 +260,7 @@ fn assign_manage_option(
             "error: memory-manage write accepts --input only once\n",
         )
     } else if option == OsStr::new("--record-id")
-        && matches!(set, ManageOptionSet::Approve | ManageOptionSet::Review)
+        && matches!(set, ManageOptionSet::Approve | ManageOptionSet::Sync | ManageOptionSet::Review)
     {
         set_manage_once(
             &mut parsed.record_id,
@@ -243,7 +270,7 @@ fn assign_manage_option(
     } else if option == OsStr::new("--actor")
         && matches!(
             set,
-            ManageOptionSet::Approve | ManageOptionSet::Review | ManageOptionSet::ImportHistory
+            ManageOptionSet::Approve | ManageOptionSet::Sync | ManageOptionSet::Review | ManageOptionSet::ImportHistory
         )
     {
         set_manage_once(
@@ -289,6 +316,12 @@ fn assign_manage_option(
             &mut parsed.target_fact_ordinal,
             fact,
             "error: memory-manage review accepts --target-fact only once\n",
+        )
+    } else if option == OsStr::new("--target-snapshot") && matches!(set, ManageOptionSet::Review) {
+        set_manage_once(
+            &mut parsed.target_snapshot,
+            value.to_os_string(),
+            "error: memory-manage review accepts --target-snapshot only once\n",
         )
     } else {
         Err("error: option is not valid for this memory-manage operation\n")
@@ -403,6 +436,16 @@ fn emit_memory_manage_report(
             "{{\"schema_version\":{MEMORY_MANAGE_SCHEMA_VERSION},\"operation\":\"approve\",\"revision_sha256\":\"{revision}\",\"version_inserted\":{version_inserted},\"observation_inserted\":{observation_inserted},\"approval_inserted\":{approval_inserted},\"maintenance\":{}}}",
             cli_memory_maintenance_json(maintenance)
         ),
+        CliMemoryManageReport::Sync {
+            revision,
+            version_inserted,
+            observation_inserted,
+            maintenance,
+        } => writeln!(
+            writer,
+            "{{\"schema_version\":{MEMORY_MANAGE_SCHEMA_VERSION},\"operation\":\"sync\",\"revision_sha256\":\"{revision}\",\"version_inserted\":{version_inserted},\"observation_inserted\":{observation_inserted},\"maintenance\":{}}}",
+            cli_memory_maintenance_json(maintenance)
+        ),
         CliMemoryManageReport::Review {
             inserted,
             maintenance,
@@ -445,6 +488,10 @@ const fn memory_manage_report_mutation(
             MemoryMutationRequestScope::Approve,
             MemoryMutationOperation::Approval,
         ),
+        CliMemoryManageReport::Sync { .. } => (
+            MemoryMutationRequestScope::TeamSync,
+            MemoryMutationOperation::TeamSync,
+        ),
         CliMemoryManageReport::Review { .. } => (
             MemoryMutationRequestScope::Review,
             MemoryMutationOperation::CorrespondenceReview,
@@ -464,6 +511,11 @@ fn memory_manage_report_is_valid(report: &CliMemoryManageReport) -> bool {
             ..
         } => valid_memory_manage_revision(revision) && publication_is_valid(publication),
         CliMemoryManageReport::Approve {
+            revision,
+            maintenance,
+            ..
+        } => valid_memory_manage_revision(revision) && maintenance_is_valid(maintenance),
+        CliMemoryManageReport::Sync {
             revision,
             maintenance,
             ..

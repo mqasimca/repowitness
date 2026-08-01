@@ -17,6 +17,13 @@ enum CapturedManageInvocation {
         record_id: OsString,
         actor: OsString,
     },
+    Sync {
+        repository_root: PathBuf,
+        database: PathBuf,
+        repository_identity: OsString,
+        record_id: OsString,
+        actor: OsString,
+    },
     Review {
         repository_root: PathBuf,
         database: PathBuf,
@@ -28,6 +35,7 @@ enum CapturedManageInvocation {
         target_path: OsString,
         target_artifact: OsString,
         target_fact_ordinal: u64,
+        target_snapshot: Option<OsString>,
         actor: OsString,
     },
     ImportHistory {
@@ -121,6 +129,19 @@ impl RepositoryMemory for RecordingManager {
                 record_id: record_id.clone(),
                 actor: actor.clone(),
             },
+            MemoryManageInvocation::Sync {
+                repository_root,
+                database,
+                repository_identity,
+                record_id,
+                actor,
+            } => CapturedManageInvocation::Sync {
+                repository_root: repository_root.clone(),
+                database: database.clone(),
+                repository_identity: repository_identity.clone(),
+                record_id: record_id.clone(),
+                actor: actor.clone(),
+            },
             MemoryManageInvocation::Review {
                 repository_root,
                 database,
@@ -132,6 +153,7 @@ impl RepositoryMemory for RecordingManager {
                 target_path,
                 target_artifact,
                 target_fact_ordinal,
+                target_snapshot,
                 actor,
             } => CapturedManageInvocation::Review {
                 repository_root: repository_root.clone(),
@@ -144,6 +166,7 @@ impl RepositoryMemory for RecordingManager {
                 target_path: target_path.clone(),
                 target_artifact: target_artifact.clone(),
                 target_fact_ordinal: *target_fact_ordinal,
+                target_snapshot: target_snapshot.clone(),
                 actor: actor.clone(),
             },
             MemoryManageInvocation::ImportHistory {
@@ -326,6 +349,48 @@ fn memory_manage_approval_and_history_keep_trust_inputs_explicit() {
 }
 
 #[test]
+fn memory_manage_sync_requires_the_explicit_team_record_selector() {
+    let identity = identity();
+    let manager = RecordingManager::success(CliMemoryManageReport::Sync {
+        revision: "33".repeat(32),
+        version_inserted: true,
+        observation_inserted: true,
+        maintenance: CliMemoryMaintenanceStatus::confirmed_for_test(),
+    });
+    let (code, stdout, stderr) = invoke_manage(
+        &[
+            "memory-manage",
+            "sync",
+            "--repository-id",
+            &identity,
+            "--database",
+            "../private.sqlite3",
+            "--record-id",
+            "rwm1:h:00000000000000000000000000",
+            "--actor",
+            "reviewer",
+            "--",
+            "../private-repository",
+        ],
+        &manager,
+    );
+    assert_eq!(code, EXIT_SUCCESS);
+    assert!(stderr.is_empty());
+    assert!(stdout.contains("\"operation\":\"sync\""));
+    assert!(stdout.contains(&"33".repeat(32)));
+    assert_eq!(
+        manager.captured.borrow().as_ref(),
+        Some(&CapturedManageInvocation::Sync {
+            repository_root: PathBuf::from("../private-repository"),
+            database: PathBuf::from("../private.sqlite3"),
+            repository_identity: OsString::from(identity),
+            record_id: OsString::from("rwm1:h:00000000000000000000000000"),
+            actor: OsString::from("reviewer"),
+        })
+    );
+}
+
+#[test]
 fn memory_manage_review_parses_exact_selector_and_emits_safe_json() {
     let manager = RecordingManager::success(CliMemoryManageReport::Review {
         inserted: true,
@@ -382,6 +447,7 @@ fn memory_manage_review_parses_exact_selector_and_emits_safe_json() {
             target_path: OsString::from("rwp1:h:7372632F6C69622E7273"),
             target_artifact: OsString::from(artifact),
             target_fact_ordinal: 9_007_199_254_740_991,
+            target_snapshot: None,
             actor: OsString::from("trusted-reviewer"),
         })
     );

@@ -277,6 +277,29 @@ impl WriterState {
         Ok(receipt)
     }
 
+    pub(super) fn sync_team_memory(
+        &mut self,
+        prepared: &PreparedMemoryImport,
+        control: WriteControl<'_>,
+    ) -> Result<MemoryImportReceipt, SqliteStoreError> {
+        check_control(control)?;
+        let transaction = self.transaction()?;
+        let workspace_id = transaction
+            .query_row(
+                "SELECT workspace_id FROM workspaces WHERE repository_identity = ?1",
+                [prepared.repository.as_bytes().as_slice()],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()
+            .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?
+            .ok_or(SqliteStoreError::WorkspaceUnavailable)?;
+        verify_team_merge_heads(&transaction, workspace_id, prepared, control)?;
+        let receipt =
+            import_memory_version_in_transaction(&transaction, workspace_id, prepared, control)?;
+        commit_mutation(transaction)?;
+        Ok(receipt)
+    }
+
     pub(super) fn import_observed_memory_history(
         &mut self,
         repository: RepositoryIdentityDigest,
@@ -570,6 +593,80 @@ fn ensure_workspace_in_transaction(
     let source_epoch = decode_source_slot_epoch(stored_epoch)?;
     ensure_default_workspace_membership(transaction, repository, workspace_id, source_epoch)?;
     Ok((workspace_id, source_epoch))
+}
+
+/// Verifies the explicit Phase 3 merge rule at the only serialization point
+/// shared by all journal mutations. A retry of an already admitted merge is
+/// deliberately accepted: its parents are no longer heads because this exact
+/// child is now the resolving version.
+fn verify_team_merge_heads(
+    transaction: &Transaction<'_>,
+    workspace_id: i64,
+    prepared: &PreparedMemoryImport,
+    control: WriteControl<'_>,
+) -> Result<(), SqliteStoreError> {
+    let parents = prepared.record.header().parents();
+    if parents.len() <= 1 {
+        return Ok(());
+    }
+    let record_id = prepared.record.header().record_id();
+    let already_present = transaction
+        .query_row(
+            "SELECT 1 FROM memory_versions
+             WHERE workspace_id = ?1 AND record_id = ?2 AND revision_digest = ?3",
+            params![
+                workspace_id,
+                record_id.as_bytes().as_slice(),
+                prepared.revision.as_bytes().as_slice(),
+            ],
+            |_| Ok(()),
+        )
+        .optional()
+        .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?
+        .is_some();
+    if already_present {
+        return Ok(());
+    }
+    let proposed_display = i64::from(prepared.record.header().display_revision().get());
+    for parent in parents {
+        check_control(control)?;
+        let valid_parent = transaction
+            .query_row(
+                "SELECT EXISTS (
+                    SELECT 1
+                    FROM memory_versions AS parent
+                    WHERE parent.workspace_id = ?1
+                      AND parent.record_id = ?2
+                      AND parent.revision_digest = ?3
+                      AND EXISTS (
+                          SELECT 1 FROM memory_audit AS observed
+                          WHERE observed.workspace_id = parent.workspace_id
+                            AND observed.record_id = parent.record_id
+                            AND observed.revision_digest = parent.revision_digest
+                            AND observed.operation = 'observed'
+                            AND observed.display_revision < ?4
+                      )
+                      AND NOT EXISTS (
+                          SELECT 1 FROM memory_version_parents AS child
+                          WHERE child.workspace_id = parent.workspace_id
+                            AND child.record_id = parent.record_id
+                            AND child.parent_revision_digest = parent.revision_digest
+                      )
+                )",
+                params![
+                    workspace_id,
+                    record_id.as_bytes().as_slice(),
+                    parent.as_bytes().as_slice(),
+                    proposed_display,
+                ],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
+        if valid_parent != 1 {
+            return Err(SqliteStoreError::InvalidMemoryImport);
+        }
+    }
+    Ok(())
 }
 
 fn import_memory_version_in_transaction(

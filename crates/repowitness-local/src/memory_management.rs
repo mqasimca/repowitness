@@ -28,7 +28,8 @@ mod approval;
 mod finalization;
 mod history;
 mod review;
-mod secret;
+pub(crate) mod secret;
+mod team_sync;
 mod write;
 
 #[cfg(test)]
@@ -42,6 +43,7 @@ pub use history::{
     LocalMemoryHistoryImportRequest, import_local_memory_history,
 };
 pub use review::LocalMemoryCorrespondenceReviewReceipt;
+pub use team_sync::LocalTeamMemorySyncReceipt;
 pub use write::{
     LocalMemoryFilePublicationStatus, LocalMemoryWriteReceipt, MemoryFileIdentityStatus,
     MemoryFilePublicationStepStatus,
@@ -127,6 +129,81 @@ pub struct LocalMemoryWriteRequest<'a> {
     deadline: Duration,
 }
 
+/// Complete input for admitting one repository-authored team record.
+///
+/// A multi-parent record is accepted only by the SQLite writer's final
+/// unresolved-head fence. This operation observes the record; use the
+/// separate approval operation to trust it locally.
+#[derive(Clone, Copy)]
+pub struct LocalTeamMemorySyncRequest<'a> {
+    repository_root: &'a Path,
+    database: &'a Path,
+    repository_identity: &'a str,
+    record_id: &'a str,
+    actor: &'a str,
+    migration_applied_at_unix_ms: u64,
+    recorded_at_unix_ms: u64,
+    configuration: Option<&'a ResolvedConfiguration>,
+    deadline: Duration,
+}
+
+impl<'a> LocalTeamMemorySyncRequest<'a> {
+    /// Constructs one bounded repository-authored memory synchronization.
+    #[must_use]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the repository, record, actor, and timestamp are independent trust inputs"
+    )]
+    pub const fn new(
+        repository_root: &'a Path,
+        database: &'a Path,
+        repository_identity: &'a str,
+        record_id: &'a str,
+        actor: &'a str,
+        migration_applied_at_unix_ms: u64,
+        recorded_at_unix_ms: u64,
+    ) -> Self {
+        Self {
+            repository_root,
+            database,
+            repository_identity,
+            record_id,
+            actor,
+            migration_applied_at_unix_ms,
+            recorded_at_unix_ms,
+            configuration: None,
+            deadline: DEFAULT_LOCAL_MEMORY_MANAGE_DEADLINE,
+        }
+    }
+
+    /// Applies resolved memory-mutation policy to this request.
+    #[must_use]
+    pub const fn with_configuration(mut self, configuration: &'a ResolvedConfiguration) -> Self {
+        self.configuration = Some(configuration);
+        self
+    }
+
+    /// Replaces the end-to-end operation deadline.
+    #[must_use]
+    pub const fn with_deadline(mut self, deadline: Duration) -> Self {
+        self.deadline = deadline;
+        self
+    }
+}
+
+impl fmt::Debug for LocalTeamMemorySyncRequest<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("LocalTeamMemorySyncRequest")
+            .field(
+                "configuration_digest",
+                &self.configuration.map(ResolvedConfiguration::digest),
+            )
+            .field("deadline", &self.deadline)
+            .finish_non_exhaustive()
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(super) enum LocalMemoryWriteInput<'a> {
     File(&'a Path),
@@ -146,6 +223,7 @@ pub struct LocalMemoryCorrespondenceReviewRequest<'a> {
     target_path: &'a str,
     target_artifact_sha256: &'a str,
     target_fact_ordinal: u64,
+    archival_target_snapshot_sha256: Option<&'a str>,
     actor: &'a str,
     migration_applied_at_unix_ms: u64,
     recorded_at_unix_ms: u64,
@@ -186,6 +264,7 @@ impl<'a> LocalMemoryCorrespondenceReviewRequest<'a> {
             target_path,
             target_artifact_sha256,
             target_fact_ordinal,
+            archival_target_snapshot_sha256: None,
             actor,
             migration_applied_at_unix_ms,
             recorded_at_unix_ms,
@@ -198,6 +277,14 @@ impl<'a> LocalMemoryCorrespondenceReviewRequest<'a> {
     #[must_use]
     pub const fn with_configuration(mut self, configuration: &'a ResolvedConfiguration) -> Self {
         self.configuration = Some(configuration);
+        self
+    }
+
+    /// Pins this review to a retained indexed target snapshot instead of the
+    /// current generation. The hexadecimal digest is validated before storage.
+    #[must_use]
+    pub const fn with_archival_target_snapshot_sha256(mut self, digest: &'a str) -> Self {
+        self.archival_target_snapshot_sha256 = Some(digest);
         self
     }
 
@@ -351,6 +438,8 @@ pub enum LocalMemoryMutation {
     StoreStartup,
     /// One current worktree memory version and local approval.
     Approval,
+    /// One repository-authored team memory synchronization.
+    TeamSync,
     /// One bounded set of observation-only Git history imports.
     HistoryImport,
     /// One exact trusted correspondence-review append.
@@ -369,6 +458,9 @@ impl LocalMemoryMutation {
             }
             Self::Approval => {
                 "reload the exact memory revision, worktree observation, and local approval receipt before retrying"
+            }
+            Self::TeamSync => {
+                "reload the exact repository-authored revision and its immutable observation receipt before retrying"
             }
             Self::HistoryImport => {
                 "reload the immutable memory journal and compare every intended revision and Git observation before retrying"
@@ -511,6 +603,16 @@ pub fn write_local_memory(
 ) -> Result<LocalMemoryWriteReceipt, LocalMemoryManageError> {
     check_memory_write_policy(request.configuration)?;
     write::write(request, cancelled)
+}
+
+/// Observes one canonical team-memory record with a final multi-parent head
+/// fence. This does not grant local approval.
+pub fn sync_local_team_memory(
+    request: LocalTeamMemorySyncRequest<'_>,
+    cancelled: Arc<AtomicBool>,
+) -> Result<LocalTeamMemorySyncReceipt, LocalMemoryManageError> {
+    check_memory_write_policy(request.configuration)?;
+    team_sync::sync(request, cancelled)
 }
 
 /// Appends or verifies one exact trusted correspondence-review event.

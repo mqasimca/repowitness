@@ -141,12 +141,25 @@ Exit when precise overlays improve navigation without hiding syntax coverage, co
 
 ## Phase 3 — durable engineering memory beta
 
-- Complete team-memory synchronization and local personal memory.
-- Add remaining memory kinds and lifecycle policies.
+- Complete team-memory synchronization and local personal memory under
+  [ADR-0038](adr/0038-phase3-memory-scopes-and-kinds.md).
+- Add remaining memory kinds and lifecycle policies through a compatible,
+  separately versioned profile; preserve the strict version-1 team record.
 - Expand correspondence review to multi-parent and archival workflows; add
-  historical “as known at” queries, task checkpoints, verification, and MCP
-  Tasks.
+  historical “as known at” queries under
+  [ADR-0039](adr/0039-phase3-historical-correspondence.md).
+- Add bounded task checkpoints, verification evidence, negotiated MCP Tasks,
+  and ordinary polling fallback under
+  [ADR-0040](adr/0040-phase3-task-checkpoints-and-verification.md).
 - Test poisoning, secrets, concurrent Git edits, rewritten history, conflict preservation, and projection rebuilds.
+
+Implementation is in progress. The first implementation slice includes the
+compatible durable-state migration, owned SQLite task ports, and an opt-in
+aggregate-only longitudinal Codex runner. The runner validates five fresh
+paired candidate/source-only/naive-memory executions per snapshot and rejects
+leakage or non-strict baseline evidence; it does not create an attestation. The
+beta exit claim remains withheld until independently reviewed longitudinal
+evidence is collected.
 
 Exit when longitudinal tests show fewer repeated failures and less stale-memory use than source-only and naive text-memory baselines, with no cross-scope leakage. This is the first recommended public beta.
 

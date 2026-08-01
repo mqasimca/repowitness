@@ -1,0 +1,95 @@
+#!/usr/bin/env perl
+
+# Validate only public, manifest-pinned source identities.  This never prints,
+# copies, or persists corpus contents.
+use strict;
+use warnings;
+
+use Digest::SHA;
+use File::Basename qw(dirname);
+use JSON::PP qw(decode_json);
+
+@ARGV == 1 or die "usage: ./scripts/check-phase3-public-scenarios <public-corpus-repository>\n";
+my $repository = $ARGV[0];
+-d $repository && !-l $repository or die "public corpus repository is unavailable\n";
+
+my $root = dirname(__FILE__) . '/..';
+my $manifest_path = "$root/benchmarks/phase3/manifest.json";
+my $manifest = read_json($manifest_path);
+my $scenarios = $manifest->{change_scenarios};
+ref($scenarios) eq 'ARRAY' && @$scenarios
+  or die "Phase 3 manifest has no change scenarios\n";
+
+for my $scenario (@$scenarios) {
+    ref($scenario) eq 'HASH' or die "Phase 3 change scenario is invalid\n";
+    my $discriminator = $scenario->{source_discriminator};
+    ref($discriminator) eq 'HASH'
+      && exact_keys($discriminator, qw(path base_sha256 changed_sha256))
+      or die "Phase 3 change scenario has no exact source discriminator\n";
+    my $path = $discriminator->{path};
+    defined($path) && !ref($path) && $path =~ /\A(?:[A-Za-z0-9_.-]+\/)*[A-Za-z0-9_.-]+\z/
+      && $path !~ /\A(?:[.]|.*\/(?:[.]|[.][.])(?:\/|\z))/
+      or die "Phase 3 source discriminator path is invalid\n";
+    for my $field (qw(base_sha256 changed_sha256)) {
+        defined($discriminator->{$field}) && !ref($discriminator->{$field})
+          && $discriminator->{$field} =~ /\A[0-9a-f]{64}\z/
+          or die "Phase 3 source discriminator digest is invalid\n";
+    }
+    my %revisions = (
+        base => $scenario->{base_revision},
+        changed => $scenario->{changed_revision},
+    );
+    for my $snapshot (qw(base changed)) {
+        my $revision = $revisions{$snapshot};
+        defined($revision) && !ref($revision) && $revision =~ /\A[0-9a-f]{40}\z/
+          or die "Phase 3 source discriminator revision is invalid\n";
+        git_success($repository, 'cat-file', '-e', "$revision^{commit}");
+        my $actual = git_blob_sha256($repository, "$revision:$path");
+        $actual eq $discriminator->{"${snapshot}_sha256"}
+          or die "Phase 3 public source discriminator does not match its pinned revision\n";
+    }
+}
+
+print "Phase 3 public source discriminators passed\n";
+
+sub read_json {
+    my ($path) = @_;
+    -f $path && !-l $path && (-s $path) <= 1_048_576
+      or die "Phase 3 manifest is unavailable\n";
+    open my $handle, '<:raw', $path or die "Phase 3 manifest is unavailable\n";
+    local $/;
+    my $value = eval { decode_json(<$handle>) };
+    close $handle;
+    !$@ && ref($value) eq 'HASH' or die "Phase 3 manifest is invalid\n";
+    return $value;
+}
+
+sub exact_keys {
+    my ($value, @keys) = @_;
+    return 0 if ref($value) ne 'HASH' || keys(%$value) != @keys;
+    my %allowed = map { $_ => 1 } @keys;
+    return !grep { !$allowed{$_} } keys %$value;
+}
+
+sub git_success {
+    my ($repository, @arguments) = @_;
+    local %ENV = (%ENV, GIT_CONFIG_NOSYSTEM => 1, GIT_CONFIG_GLOBAL => '/dev/null', GIT_TERMINAL_PROMPT => 0);
+    system('git', '-C', $repository, '-c', 'core.hooksPath=/dev/null', @arguments) == 0
+      or die "public corpus Git object is unavailable\n";
+}
+
+sub git_blob_sha256 {
+    my ($repository, $spec) = @_;
+    local %ENV = (%ENV, GIT_CONFIG_NOSYSTEM => 1, GIT_CONFIG_GLOBAL => '/dev/null', GIT_TERMINAL_PROMPT => 0);
+    open my $handle, '-|', 'git', '-C', $repository, '-c', 'core.hooksPath=/dev/null', 'show', $spec
+      or die "public corpus source is unavailable\n";
+    my $sha = Digest::SHA->new(256);
+    while (1) {
+        my $read = read($handle, my $chunk, 65_536);
+        defined($read) or die "public corpus source is unavailable\n";
+        last if $read == 0;
+        $sha->add($chunk);
+    }
+    close $handle or die "public corpus source is unavailable\n";
+    return $sha->hexdigest;
+}

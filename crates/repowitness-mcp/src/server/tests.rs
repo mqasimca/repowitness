@@ -1,9 +1,18 @@
-use std::sync::{
-    Mutex,
-    atomic::{AtomicUsize, Ordering},
+use std::{
+    collections::BTreeMap,
+    sync::{
+        Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
-use rmcp::{ServiceExt, model::CallToolRequestParams};
+use rmcp::{
+    ServiceExt,
+    model::{
+        CallToolRequest, CallToolRequestParams, ClientRequest, GetTaskParams, GetTaskPayloadParams,
+        GetTaskPayloadRequest, GetTaskRequest, ServerResult, TaskMetadata,
+    },
+};
 
 use super::*;
 use crate::{
@@ -11,7 +20,7 @@ use crate::{
     McpMemoryCoverage, McpMemoryProducer, McpMemoryTarget, McpSearchMatch, McpSpan, McpSymbol,
     MemoryManageDatabaseIdentityStatus, MemoryManageMaintenanceStatus,
     MemoryManageMaintenanceStepStatus, MemoryManageOperation, MemoryRecallServiceSelection,
-    SymbolSelectorOutput,
+    PersonalMemoryOperation, SymbolSelectorOutput,
 };
 
 mod fixtures;
@@ -48,6 +57,8 @@ struct FakeService {
     context_request: Mutex<Option<(String, u64, u16)>>,
     memory_request: Mutex<Option<(bool, u16)>>,
     manage_request: Mutex<Option<MemoryManageOperation>>,
+    native_tasks: Mutex<BTreeMap<String, NativeTaskStatus>>,
+    next_native_task: AtomicUsize,
 }
 
 struct ConcurrencyService {
@@ -118,11 +129,79 @@ impl FakeService {
             context_request: Mutex::new(None),
             memory_request: Mutex::new(None),
             manage_request: Mutex::new(None),
+            native_tasks: Mutex::new(BTreeMap::new()),
+            next_native_task: AtomicUsize::new(1),
         }
     }
 }
 
 impl RepositoryService for FakeService {
+    fn native_task_start(
+        &self,
+        _objective: &str,
+        _cancelled: Arc<AtomicBool>,
+    ) -> Result<NativeTaskStatus, RepositoryServiceError> {
+        let task_id = format!(
+            "{:032x}",
+            self.next_native_task.fetch_add(1, Ordering::Relaxed)
+        );
+        let status = NativeTaskStatus::new(task_id.clone(), NativeTaskState::Working, 1, 0);
+        self.native_tasks
+            .lock()
+            .expect("lock")
+            .insert(task_id, status.clone());
+        Ok(status)
+    }
+
+    fn native_task_transition(
+        &self,
+        task_id: &str,
+        state: NativeTaskState,
+        _cancelled: Arc<AtomicBool>,
+    ) -> Result<NativeTaskStatus, RepositoryServiceError> {
+        let mut tasks = self.native_tasks.lock().expect("lock");
+        let previous = tasks
+            .get(task_id)
+            .ok_or(RepositoryServiceError::NativeTask)?;
+        let status = NativeTaskStatus::new(
+            task_id.to_owned(),
+            state,
+            previous.checkpoint_sequence() + 1,
+            previous.verification_count(),
+        );
+        tasks.insert(task_id.to_owned(), status.clone());
+        Ok(status)
+    }
+
+    fn native_task_status(
+        &self,
+        task_id: &str,
+        _cancelled: Arc<AtomicBool>,
+    ) -> Result<Option<NativeTaskStatus>, RepositoryServiceError> {
+        Ok(self
+            .native_tasks
+            .lock()
+            .expect("lock")
+            .get(task_id)
+            .cloned())
+    }
+
+    fn native_task_list(
+        &self,
+        limit: u16,
+        _cancelled: Arc<AtomicBool>,
+    ) -> Result<Box<[NativeTaskStatus]>, RepositoryServiceError> {
+        Ok(self
+            .native_tasks
+            .lock()
+            .expect("lock")
+            .values()
+            .take(usize::from(limit))
+            .cloned()
+            .collect::<Vec<_>>()
+            .into_boxed_slice())
+    }
+
     fn code_search(
         &self,
         request: CodeSearchServiceRequest,
@@ -237,6 +316,23 @@ impl RepositoryService for FakeService {
             confirmed_memory_maintenance(),
         ))
     }
+
+    fn personal_memory(
+        &self,
+        request: PersonalMemoryServiceRequest,
+        _cancelled: Arc<AtomicBool>,
+    ) -> Result<PersonalMemoryOutput, RepositoryServiceError> {
+        assert!(matches!(
+            request,
+            PersonalMemoryServiceRequest::Read { max_results: 1, .. }
+        ));
+        Ok(PersonalMemoryOutput {
+            schema_version: 1,
+            scope: "personal".to_owned(),
+            operation: PersonalMemoryOperation::Read,
+            records: Vec::new(),
+        })
+    }
 }
 
 mod adversarial;
@@ -329,6 +425,57 @@ fn encoded_call_tool_result_is_checked_against_the_output_budget() {
         result.content[0].as_text().expect("text error").text,
         "tool output exceeded its byte limit"
     );
+}
+
+#[tokio::test]
+async fn personal_memory_is_absent_by_default_and_requires_explicit_server_capability() {
+    let default = RepoWitnessMcpServer::new(Arc::new(FakeService::new()));
+    assert!(
+        default
+            .tools
+            .iter()
+            .all(|tool| tool.name.as_ref() != PERSONAL_MEMORY_TOOL_NAME)
+    );
+    let (server_transport, client_transport) = tokio::io::duplex(8 * 1024);
+    let server = RepoWitnessMcpServer::with_surface_and_personal_memory(
+        Arc::new(FakeService::new()),
+        McpToolSurface::NativeV1,
+    );
+    let server_task = tokio::spawn(async move {
+        server
+            .serve(server_transport)
+            .await
+            .expect("server starts")
+            .waiting()
+            .await
+            .expect("server stops")
+    });
+    let client = ().serve(client_transport).await.expect("client starts");
+    let tools = client.list_all_tools().await.expect("tools list");
+    assert!(
+        tools
+            .iter()
+            .any(|tool| tool.name.as_ref() == PERSONAL_MEMORY_TOOL_NAME)
+    );
+    let response = client
+        .call_tool(
+            CallToolRequestParams::new(PERSONAL_MEMORY_TOOL_NAME).with_arguments(json_object(
+                serde_json::json!({"operation": "read", "max_results": 1}),
+            )),
+        )
+        .await
+        .expect("personal-memory response");
+    assert_eq!(response.is_error, Some(false));
+    assert_eq!(
+        response
+            .structured_content
+            .as_ref()
+            .and_then(|value| value.get("scope"))
+            .and_then(serde_json::Value::as_str),
+        Some("personal")
+    );
+    drop(client);
+    server_task.await.expect("server task joins");
 }
 
 #[tokio::test]
@@ -547,6 +694,102 @@ async fn initialized_client_lists_and_calls_all_tools() {
         service.context_request.lock().expect("lock").as_ref(),
         Some(&("run".to_owned(), 4096, 7))
     );
+
+    client.cancel().await.expect("client closes");
+    server_task.await.expect("server task");
+}
+
+#[test]
+fn native_tasks_are_opt_in_and_only_the_phase2_context_tool_is_task_capable() {
+    let default = RepoWitnessMcpServer::new(Arc::new(FakeService::new()));
+    assert!(default.get_info().capabilities.tasks.is_none());
+    let enabled = RepoWitnessMcpServer::with_native_tasks(Arc::new(FakeService::new()));
+    assert!(enabled.get_info().capabilities.tasks.is_some());
+    let task_tools = enabled
+        .tools
+        .iter()
+        .filter(|tool| tool.task_support() != rmcp::model::TaskSupport::Forbidden)
+        .map(|tool| tool.name.as_ref())
+        .collect::<Vec<_>>();
+    assert_eq!(task_tools, vec![PHASE2_CONTEXT_BUILD_TOOL_NAME]);
+}
+
+#[tokio::test]
+async fn native_task_submission_returns_an_opaque_id_and_retains_a_bounded_result() {
+    let (server_transport, client_transport) = tokio::io::duplex(32 * 1024);
+    let server = RepoWitnessMcpServer::with_native_tasks(Arc::new(FakeService::new()));
+    let server_task = tokio::spawn(async move {
+        server
+            .serve(server_transport)
+            .await
+            .expect("server starts")
+            .waiting()
+            .await
+            .expect("server stops")
+    });
+    let client = ().serve(client_transport).await.expect("client starts");
+    let response = client
+        .send_request(ClientRequest::CallToolRequest(CallToolRequest::new(
+            CallToolRequestParams::new(PHASE2_CONTEXT_BUILD_TOOL_NAME)
+                .with_arguments(json_object(serde_json::json!({
+                    "intent": "run",
+                    "budget_units": 4096,
+                    "max_provider_results": 7
+                })))
+                .with_task(TaskMetadata::new()),
+        )))
+        .await
+        .expect("task is accepted");
+    let ServerResult::CreateTaskResult(created) = response else {
+        panic!("task invocation must create a native task");
+    };
+    let task_id = created.task.task_id;
+    let suffix = task_id.as_str();
+    assert_eq!(suffix.len(), 32);
+    assert!(
+        suffix
+            .chars()
+            .all(|character| character.is_ascii_hexdigit())
+    );
+
+    let mut completed = false;
+    let mut last_status = None;
+    for _ in 0..100 {
+        let response = client
+            .send_request(ClientRequest::GetTaskRequest(GetTaskRequest::new(
+                GetTaskParams::new(task_id.clone()),
+            )))
+            .await
+            .expect("task remains queryable");
+        let ServerResult::GetTaskResult(status) = response else {
+            panic!("task query must return its status");
+        };
+        last_status = Some((
+            status.task.status.clone(),
+            status.task.status_message.clone(),
+        ));
+        if status.task.status == TaskStatus::Completed {
+            completed = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    assert!(
+        completed,
+        "native task must reach its terminal state: {last_status:?}"
+    );
+    let response = client
+        .send_request(ClientRequest::GetTaskPayloadRequest(
+            GetTaskPayloadRequest::new(GetTaskPayloadParams::new(task_id)),
+        ))
+        .await
+        .expect("completed task result is available");
+    // Task payloads retain the original `CallToolResult` wire shape, which
+    // the SDK decodes as that concrete result before its custom fallback.
+    let ServerResult::CallToolResult(result) = response else {
+        panic!("task result must use the negotiated task payload response");
+    };
+    assert!(result.structured_content.is_some());
 
     client.cancel().await.expect("client closes");
     server_task.await.expect("server task");

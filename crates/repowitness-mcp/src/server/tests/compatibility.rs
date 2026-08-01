@@ -8,7 +8,7 @@ use crate::{
     SEARCH_GRAPH_ALIAS_TOOL_NAME, TRACE_PATH_ALIAS_TOOL_NAME,
 };
 
-const COMPATIBILITY_TOOL_NAMES: [&str; 20] = [
+const COMPATIBILITY_TOOL_NAMES: [&str; 21] = [
     CODE_SEARCH_TOOL_NAME,
     CONTEXT_BUILD_TOOL_NAME,
     DIAGNOSTICS_TOOL_NAME,
@@ -20,6 +20,7 @@ const COMPATIBILITY_TOOL_NAMES: [&str; 20] = [
     GRAPH_SEARCH_TOOL_NAME,
     GRAPH_STATUS_TOOL_NAME,
     GRAPH_TRACE_TOOL_NAME,
+    HISTORICAL_MEMORY_TOOL_NAME,
     IMPACT_ANALYZE_TOOL_NAME,
     INDEX_STATUS_ALIAS_TOOL_NAME,
     MEMORY_RECALL_TOOL_NAME,
@@ -290,7 +291,7 @@ fn memory_capability_adds_only_the_canonical_mutation_tool() {
         .iter()
         .map(|tool| tool.name.as_ref())
         .collect::<Vec<_>>();
-    assert_eq!(names.len(), 21);
+    assert_eq!(names.len(), 22);
     assert!(names.windows(2).all(|pair| pair[0] < pair[1]));
     assert_eq!(
         names

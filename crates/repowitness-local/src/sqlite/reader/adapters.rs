@@ -92,6 +92,35 @@ impl RepositoryDiagnosticsPort for OwnedSqliteReader {
     }
 }
 
+impl repowitness_application::PersonalMemoryReadPort for OwnedSqliteReader {
+    type Error = SqliteStoreError;
+
+    fn read_personal_memory(
+        &self,
+        profile: PersonalMemoryProfileId,
+        repository: RepositoryIdentityDigest,
+        limit: u16,
+        cancelled: Arc<AtomicBool>,
+        deadline: Instant,
+    ) -> Result<Vec<PersonalMemoryRecord>, Self::Error> {
+        Self::read_personal_memory(self, profile, repository, limit, cancelled, deadline)
+    }
+}
+
+impl repowitness_application::TaskStatusPort for OwnedSqliteReader {
+    type Error = SqliteStoreError;
+
+    fn task_status(
+        &self,
+        repository: RepositoryIdentityDigest,
+        task_id: TaskId,
+        cancelled: Arc<AtomicBool>,
+        deadline: Instant,
+    ) -> Result<Option<TaskStatus>, Self::Error> {
+        Self::task_status(self, repository, task_id, cancelled, deadline)
+    }
+}
+
 impl Drop for OwnedSqliteReader {
     fn drop(&mut self) {
         if self.worker.is_none() {
@@ -134,6 +163,19 @@ fn execute_reader_command(connection: &mut Connection, command: ReaderCommand) -
         ReaderCommand::RecallMemory(command) => execute_memory_recall_command(connection, *command),
         ReaderCommand::HistoryEvidence(command) => {
             execute_history_evidence_command(connection, *command)
+        }
+        ReaderCommand::KnownAtHistoryEvidence(command) => {
+            execute_known_at_history_evidence_command(connection, *command)
+        }
+        ReaderCommand::KnownAtHistoryReceipt(command) => {
+            execute_known_at_history_receipt_command(connection, *command)
+        }
+        ReaderCommand::PersonalMemoryRead(command) => {
+            execute_personal_memory_read_command(connection, *command)
+        }
+        ReaderCommand::TaskStatus(command) => execute_task_status_command(connection, *command),
+        ReaderCommand::TaskStatuses(command) => {
+            execute_task_statuses_command(connection, *command)
         }
         ReaderCommand::Diagnostics(command) => execute_diagnostics_command(connection, *command),
         ReaderCommand::WorkspaceView(command) => {

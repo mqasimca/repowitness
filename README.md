@@ -400,6 +400,53 @@ target/debug/repowitness memory-recall \
   --limit 20
 ```
 
+Create one durable local task with an OS-generated opaque ID. Task text is
+bounded and secret-scanned before it reaches SQLite:
+
+```text
+target/debug/repowitness task create \
+  --repository-id rwi1:h:0000000000000000000000000000000000000000000000000000000000000001 \
+  --database /path/outside/the/worktree/repowitness.sqlite3 \
+  --state open \
+  --objective "Confirm the migration preserves task receipts"
+```
+
+Append the next immutable checkpoint with `task checkpoint`, then poll its
+redacted state. Polling never returns task text, hypotheses, next actions, or
+captured verification output:
+
+```text
+target/debug/repowitness task-status \
+  --repository-id rwi1:h:0000000000000000000000000000000000000000000000000000000000000001 \
+  --database /path/outside/the/worktree/repowitness.sqlite3 \
+  --task-id 00000000000000000000000000000001
+```
+
+The task ID must be lowercase hexadecimal and the repository identity must
+match the one recorded for the task. A different repository receives only
+`status=not_found`.
+
+Append local-only personal memory with a separately supplied opaque profile.
+The profile is an owner-controlled local composition input; it is not a user,
+repository, or actor name. Personal records are never written to the worktree
+or Git history:
+
+```text
+target/debug/repowitness personal-memory append \
+  --repository-id rwi1:h:0000000000000000000000000000000000000000000000000000000000000001 \
+  --database /path/outside/the/worktree/repowitness.sqlite3 \
+  --profile aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  --kind preference --title "Prefer exact source evidence" \
+  --body "Keep this local-only" --lifecycle active
+```
+
+`personal-memory read` requires the same explicit profile and repository. Its
+private content is returned only to that direct local CLI invocation. The
+ordinary `memory-recall`, diagnostics, `context-build`, and default MCP tool
+list remain team-only. An owner may expose the separate `personal_memory` MCP
+tool only with both `--enable-personal-memory` and a fixed
+`--personal-memory-profile`; tool callers can never select another profile.
+
 Create or replace one canonical shared record from a complete strict
 version-1 YAML input:
 
@@ -440,6 +487,49 @@ reporting an incomplete shallow or over-limit traversal. Use
 `memory-manage --help` for the exact selector required to append an approve,
 reject, or manual-link event for one record-evidence and target-occurrence
 selector.
+
+Ask what was known at an inclusive recorded-time cutoff for one exact Git
+object or retained snapshot. Branch names are intentionally rejected: resolve
+them to an immutable commit first. The receipt reports retained coverage and
+applicability separately, and never turns a missing/pruned Git object into a
+negative answer:
+
+```text
+target/debug/repowitness memory-history \
+  --repository-id rwi1:h:0000000000000000000000000000000000000000000000000000000000000001 \
+  --database /path/outside/the/worktree/repowitness.sqlite3 \
+  --known-at 1722000000001 \
+  --git-commit 0123456789012345678901234567890123456789 \
+  ../repository
+```
+
+For a retained worktree target, replace `--git-commit` with `--snapshot` and
+one lowercase SHA-256 source-snapshot digest. The default read-only MCP tool
+`historical_memory` accepts the same exact selectors and returns only record
+and revision identities, evidence basis, coverage, and categorical
+applicability—never repository paths or source text.
+
+After a reviewed Git resolution of divergent team-memory heads, synchronize the
+exact canonical record before approving it locally:
+
+```text
+target/debug/repowitness memory-manage sync \
+  --repository-id rwi1:h:0000000000000000000000000000000000000000000000000000000000000001 \
+  --database /path/outside/the/worktree/repowitness.sqlite3 \
+  --record-id rwm1:h:00000000000000000000000000000000 \
+  --actor local-reviewer \
+  ../repository
+```
+
+For a multi-parent record, sync accepts only two through eight already observed
+unresolved heads of that same record, and requires a display revision greater
+than every parent. It does not infer a semantic merge from Git text; local
+approval remains separate.
+
+Correspondence review may pin a retained target source snapshot through the
+local API. Such archival reviews validate the exact retained generation and
+retain their original target identity; they never become a review of the
+currently indexed source snapshot merely because the repository has advanced.
 
 Compile exact source and eligible current memory under a conservative content
 budget:
@@ -570,11 +660,13 @@ together at `mcp-serve` startup to select the graph and SCIP-overlay source.
 Those tools then read that exact source slot; the other MCP tools retain the
 configured repository context.
 
-Register the default read-only built binary with Codex:
+Register the default read-only release binary with Codex. The `CLI build`
+workflow also retains this binary for Linux, macOS, and Windows after a
+successful version-tag build.
 
 ```text
 codex mcp add repowitness -- \
-  /absolute/path/to/repowitness/target/debug/repowitness mcp-serve \
+  /absolute/path/to/repowitness/target/release/repowitness mcp-serve \
   --repository-id rwi1:h:0000000000000000000000000000000000000000000000000000000000000001 \
   --database /absolute/path/to/repowitness.sqlite3 \
   --root /absolute/path/to/repository
@@ -586,7 +678,7 @@ Alternatively, place the following in a trusted repository's
 
 ```toml
 [mcp_servers.repowitness]
-command = "/absolute/path/to/repowitness/target/debug/repowitness"
+command = "/absolute/path/to/repowitness/target/release/repowitness"
 args = [
   "mcp-serve",
   "--repository-id",
@@ -597,6 +689,9 @@ args = [
   "/absolute/path/to/repository",
 ]
 ```
+
+On Windows, use `target\release\repowitness.exe` in the corresponding
+command or configuration value.
 
 Restart the Codex client after changing configuration, then use `/mcp` in the
 terminal UI to inspect the connection. Codex CLI, the IDE extension, and the

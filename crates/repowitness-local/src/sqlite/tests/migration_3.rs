@@ -66,7 +66,7 @@ fn populated_version_two_database_upgrades_with_default_active_view() {
         })
         .expect("foreign-key check should run");
 
-    assert_eq!(user_version, 4);
+    assert_eq!(user_version, 5);
     assert_eq!(
         migration,
         (

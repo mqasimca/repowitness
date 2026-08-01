@@ -6,7 +6,7 @@ use repowitness_application::{
 use repowitness_domain::{
     AnalysisArtifactDigest, CanonicalMemoryDigest, MAX_MEMORY_EVIDENCE,
     MAX_MEMORY_INTEROPERABLE_INTEGER, MemoryAuditActorId, MemoryFactOrdinal,
-    MemoryRecordedAtUnixMillis, RepositoryPathLimits,
+    MemoryRecordedAtUnixMillis, RepositoryPathLimits, SourceSnapshotDigest,
 };
 
 use super::{
@@ -81,6 +81,16 @@ pub(super) fn review_with_hook(
     }
     let target_fact_ordinal = MemoryFactOrdinal::try_new(request.target_fact_ordinal)
         .map_err(|_| LocalMemoryManageError::ReviewTargetUnavailable)?;
+    let archival_target_snapshot = request
+        .archival_target_snapshot_sha256
+        .map(|digest| {
+            SourceSnapshotDigest::try_from_slice(
+                &decode_sha256(digest)
+                    .map_err(|()| LocalMemoryManageError::ReviewTargetUnavailable)?,
+            )
+            .map_err(|_| LocalMemoryManageError::ReviewTargetUnavailable)
+        })
+        .transpose()?;
     let actor = MemoryAuditActorId::try_new(request.actor.to_owned())
         .map_err(|_| LocalMemoryManageError::ActorInvalid)?;
     let recorded_at = MemoryRecordedAtUnixMillis::try_new(request.recorded_at_unix_ms)
@@ -95,18 +105,24 @@ pub(super) fn review_with_hook(
     )?;
     let operation = store
         .append_memory_correspondence_review(
-            PreparedMemoryCorrespondenceReview::new(
-                repository,
-                record_id,
-                revision,
-                request.evidence_ordinal,
-                request.operation,
-                target_path,
-                target_artifact,
-                target_fact_ordinal.get(),
-                actor,
-                recorded_at,
-            ),
+            {
+                let prepared = PreparedMemoryCorrespondenceReview::new(
+                    repository,
+                    record_id,
+                    revision,
+                    request.evidence_ordinal,
+                    request.operation,
+                    target_path,
+                    target_artifact,
+                    target_fact_ordinal.get(),
+                    actor,
+                    recorded_at,
+                );
+                match archival_target_snapshot {
+                    Some(snapshot) => prepared.with_archival_target_snapshot(snapshot),
+                    None => prepared,
+                }
+            },
             Arc::clone(&cancelled),
             deadline,
         )

@@ -111,3 +111,63 @@ impl repowitness_application::MemoryVersionImportPort for OwnedSqliteIndex {
         )
     }
 }
+
+impl repowitness_application::TaskStatusPort for OwnedSqliteIndex {
+    type Error = SqliteStoreError;
+
+    fn task_status(
+        &self,
+        repository: RepositoryIdentityDigest,
+        task_id: TaskId,
+        cancelled: Arc<AtomicBool>,
+        deadline: Instant,
+    ) -> Result<Option<TaskStatus>, Self::Error> {
+        Self::task_status(self, repository, task_id, cancelled, deadline)
+    }
+}
+
+impl repowitness_application::EngineeringTaskPort for OwnedSqliteIndex {
+
+    fn append_checkpoint(
+        &self,
+        checkpoint: TaskCheckpoint,
+        cancelled: Arc<AtomicBool>,
+        deadline: Instant,
+    ) -> Result<repowitness_application::TaskCheckpointReceipt, Self::Error> {
+        let receipt = Self::append_task_checkpoint(self, checkpoint, cancelled, deadline)?;
+        Ok(repowitness_application::TaskCheckpointReceipt::new(
+            receipt.task_id(),
+            receipt.sequence(),
+        ))
+    }
+
+    fn append_verification(
+        &self,
+        verification: TaskVerification,
+        cancelled: Arc<AtomicBool>,
+        deadline: Instant,
+    ) -> Result<repowitness_application::TaskVerificationReceipt, Self::Error> {
+        let receipt = Self::append_task_verification(self, verification, cancelled, deadline)?;
+        repowitness_application::TaskVerificationReceipt::new(receipt.verification_id())
+            .ok_or(SqliteStoreError::IntegrityCheckFailed)
+    }
+
+}
+
+impl repowitness_application::PersonalMemoryPort for OwnedSqliteIndex {
+    type Error = SqliteStoreError;
+
+    fn append_personal_memory(
+        &self,
+        record: PersonalMemoryRecord,
+        cancelled: Arc<AtomicBool>,
+        deadline: Instant,
+    ) -> Result<repowitness_application::PersonalMemoryReceipt, Self::Error> {
+        let receipt = Self::append_personal_memory(self, record, cancelled, deadline)?;
+        Ok(repowitness_application::PersonalMemoryReceipt::new(
+            receipt.record_id(),
+            receipt.revision(),
+            receipt.inserted(),
+        ))
+    }
+}

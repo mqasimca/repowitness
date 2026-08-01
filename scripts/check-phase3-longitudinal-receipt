@@ -1,0 +1,312 @@
+#!/usr/bin/env perl
+
+use strict;
+use warnings;
+
+use JSON::PP qw(decode_json);
+
+my $MANIFEST = 'benchmarks/phase3/manifest.json';
+my $MAX_RECEIPT_BYTES = 1_048_576;
+
+if (@ARGV == 1 && $ARGV[0] eq '--self-test') {
+    self_test();
+    exit 0;
+}
+
+@ARGV == 2
+  or die "usage: scripts/check-phase3-longitudinal-receipt <receipt.json> <repowitness-revision>\n";
+
+my ($receipt_path, $expected_revision) = @ARGV;
+$expected_revision =~ /\A[0-9a-f]{40}\z/
+  or die "expected RepoWitness revision is invalid\n";
+my $manifest = read_json($MANIFEST, 1_048_576, 'Phase 3 manifest');
+my $receipt = read_json($receipt_path, $MAX_RECEIPT_BYTES, 'Phase 3 receipt');
+my @errors = validate_receipt($receipt, $manifest, $expected_revision);
+die join("\n", @errors), "\n" if @errors;
+print "Phase 3 longitudinal aggregate receipt is valid (not attested)\n";
+
+sub read_json {
+    my ($path, $limit, $label) = @_;
+    -f $path && !-l $path or die "$label is unavailable\n";
+    my $size = -s $path;
+    defined($size) && $size > 0 && $size <= $limit
+      or die "$label exceeds its byte limit\n";
+    open my $handle, '<:raw', $path or die "$label is unavailable\n";
+    local $/;
+    my $value = eval { decode_json(<$handle>) };
+    close $handle or die "$label could not be closed\n";
+    !$@ && ref($value) eq 'HASH' or die "$label is invalid JSON\n";
+    return $value;
+}
+
+sub integer {
+    my ($value) = @_;
+    return undef
+      if !defined($value) || ref($value) || $value !~ /\A(?:0|[1-9][0-9]*)\z/
+      || length($value) > 12;
+    return 0 + $value;
+}
+
+sub exact_keys {
+    my ($value, @keys) = @_;
+    return 0 if ref($value) ne 'HASH';
+    my %expected = map { $_ => 1 } @keys;
+    return 0 if keys(%$value) != @keys;
+    return !grep { !$expected{$_} } keys %$value;
+}
+
+sub outcome_keys {
+    return qw(
+      complete_runs
+      repeated_failures
+      stale_memory_uses
+      personal_to_team_leaks
+      cross_repository_leaks
+      sensitive_scope_output_leaks
+    );
+}
+
+sub validate_outcome {
+    my ($value, $runs, $label, $errors) = @_;
+    if (!exact_keys($value, outcome_keys())) {
+        push @$errors, "$label has an invalid outcome shape";
+        return;
+    }
+    for my $key (outcome_keys()) {
+        my $number = integer($value->{$key});
+        if (!defined $number) {
+            push @$errors, "$label $key is not a canonical nonnegative integer";
+            next;
+        }
+        push @$errors, "$label complete_runs differs from the declared run count"
+          if $key eq 'complete_runs' && $number != $runs;
+        push @$errors, "$label $key exceeds complete runs"
+          if $key ne 'complete_runs' && $number > $runs;
+    }
+}
+
+sub validate_receipt {
+    my ($receipt, $manifest, $expected_revision) = @_;
+    my @errors;
+    my $phase3 = $manifest->{phase3_longitudinal};
+    my $runner = ref($phase3) eq 'HASH' ? $phase3->{runner} : undef;
+    if (ref($runner) ne 'HASH') {
+        return ('Phase 3 manifest does not declare a runner');
+    }
+    my @required = qw(
+      schema_version receipt_kind attestation_status benchmark_id runner_id
+      repowitness_revision corpus_revisions complete_runs_per_case
+      case_aggregates aggregate_outcomes isolation baseline_relations status
+    );
+    push @errors, 'receipt has an unexpected top-level shape'
+      if !exact_keys($receipt, @required);
+    for my $pair (
+        [schema_version => 1],
+        [receipt_kind => 'phase3-longitudinal-aggregate'],
+        [attestation_status => 'not-attested'],
+        [benchmark_id => $manifest->{benchmark_id}],
+        [runner_id => $runner->{id}],
+        [repowitness_revision => $expected_revision],
+        [status => 'validated'],
+      )
+    {
+        push @errors, "receipt $pair->[0] does not match the Phase 3 contract"
+          if !defined($receipt->{$pair->[0]}) || ref($receipt->{$pair->[0]})
+          || $receipt->{$pair->[0]} ne "$pair->[1]";
+    }
+    my $runs = integer($receipt->{complete_runs_per_case});
+    push @errors, 'complete_runs_per_case is outside the declared bounded range'
+      if !defined($runs) || $runs < $phase3->{paired_runs}->{minimum_complete_runs_per_case}
+      || $runs > $runner->{max_runs_per_variant};
+
+    my %expected_corpora = map { $_->{id} => $_->{revision} } @{$manifest->{corpora} // []};
+    my $corpora = $receipt->{corpus_revisions};
+    if (ref($corpora) ne 'HASH' || keys(%$corpora) != keys(%expected_corpora)) {
+        push @errors, 'receipt corpus revisions are incomplete';
+    } elsif (ref($corpora) eq 'HASH') {
+        for my $id (keys %expected_corpora) {
+            push @errors, "receipt corpus revision for $id does not match the manifest"
+              if !defined($corpora->{$id}) || ref($corpora->{$id})
+              || $corpora->{$id} ne $expected_corpora{$id};
+        }
+    }
+
+    my %variants = map { $_ => 1 } ('candidate', @{$phase3->{required_baseline_ids} // []});
+    my %comparisons = map { $_->{id} => $_ } @{$manifest->{comparative_evaluations} // []};
+    my $cases = $receipt->{case_aggregates};
+    my %totals = map { $_ => { map { $_ => 0 } outcome_keys() } } keys %variants;
+    if (ref($cases) ne 'ARRAY' || @$cases != keys(%comparisons)) {
+        push @errors, 'receipt case aggregates do not cover every comparison exactly once';
+    } elsif (defined $runs) {
+        my %seen;
+        for my $case (@$cases) {
+            if (!exact_keys($case, qw(comparison_id snapshots))) {
+                push @errors, 'receipt case aggregate has an invalid shape';
+                next;
+            }
+            my $id = $case->{comparison_id};
+            if (!defined($id) || ref($id) || !exists($comparisons{$id}) || $seen{$id}++) {
+                push @errors, 'receipt case aggregate has an invalid or duplicate comparison id';
+                next;
+            }
+            my $snapshots = $case->{snapshots};
+            if (!exact_keys($snapshots, qw(base changed))) {
+                push @errors, "receipt case $id does not have exactly base and changed snapshots";
+                next;
+            }
+            for my $snapshot (qw(base changed)) {
+                my $outcomes = $snapshots->{$snapshot};
+                if (ref($outcomes) ne 'HASH' || keys(%$outcomes) != keys(%variants)) {
+                    push @errors, "receipt case $id $snapshot does not cover every variant";
+                    next;
+                }
+                for my $variant (keys %variants) {
+                    if (!exists $outcomes->{$variant}) {
+                        push @errors, "receipt case $id $snapshot omits $variant";
+                        next;
+                    }
+                    validate_outcome($outcomes->{$variant}, $runs, "receipt case $id $snapshot $variant", \@errors);
+                    next if ref($outcomes->{$variant}) ne 'HASH';
+                    for my $key (outcome_keys()) {
+                        my $number = integer($outcomes->{$variant}->{$key});
+                        $totals{$variant}->{$key} += $number if defined $number;
+                    }
+                }
+            }
+        }
+        push @errors, 'receipt case aggregate inventory is incomplete'
+          if keys(%seen) != keys(%comparisons);
+    }
+
+    my $aggregate = $receipt->{aggregate_outcomes};
+    if (ref($aggregate) ne 'HASH' || keys(%$aggregate) != keys(%variants)) {
+        push @errors, 'receipt aggregate outcomes do not cover every variant';
+    } elsif (defined $runs) {
+        for my $variant (keys %variants) {
+            validate_outcome($aggregate->{$variant}, $runs * 2 * keys(%comparisons), "aggregate $variant", \@errors);
+            next if ref($aggregate->{$variant}) ne 'HASH';
+            for my $key (outcome_keys()) {
+                my $number = integer($aggregate->{$variant}->{$key});
+                push @errors, "aggregate $variant $key does not equal the case aggregate"
+                  if defined($number) && $number != $totals{$variant}->{$key};
+            }
+        }
+    }
+
+    my $isolation = $receipt->{isolation};
+    if (!exact_keys($isolation, qw(personal_to_team_leaks cross_repository_leaks sensitive_scope_output_leaks))) {
+        push @errors, 'receipt isolation shape is invalid';
+    } else {
+        for my $key (keys %$isolation) {
+            push @errors, "receipt isolation $key must equal zero"
+              if !defined(integer($isolation->{$key})) || integer($isolation->{$key}) != 0;
+            my $total_key = $key;
+            my $total = 0;
+            $total += $totals{$_}->{$total_key} for keys %variants;
+            push @errors, "receipt isolation $key does not equal aggregate outcomes"
+              if defined(integer($isolation->{$key})) && integer($isolation->{$key}) != $total;
+        }
+    }
+
+    my %requirements = map { $_->{id} => $_ } @{$phase3->{outcome_requirements} // []};
+    my $relations = $receipt->{baseline_relations};
+    my @needed;
+    for my $outcome (sort keys %requirements) {
+        my $requirement = $requirements{$outcome};
+        push @needed, map { "$outcome/$_" } @{$requirement->{baseline_ids} // []};
+    }
+    my %needed = map { $_ => 1 } @needed;
+    if (ref($relations) ne 'ARRAY' || @$relations != @needed) {
+        push @errors, 'receipt baseline relations are incomplete';
+    } else {
+        my %seen;
+        for my $relation (@$relations) {
+            if (!exact_keys($relation, qw(outcome baseline candidate_value baseline_value relation))) {
+                push @errors, 'receipt baseline relation has an invalid shape';
+                next;
+            }
+            my $outcome = $relation->{outcome};
+            my $baseline = $relation->{baseline};
+            my $key = defined($outcome) && defined($baseline) ? "$outcome/$baseline" : '';
+            if (!$needed{$key} || $seen{$key}++) {
+                push @errors, 'receipt baseline relation is unknown or repeated';
+                next;
+            }
+            my $requirement = $requirements{$outcome};
+            my $field = $outcome =~ /\Arepeated-failures\z/ ? 'repeated_failures' : 'stale_memory_uses';
+            my $candidate = integer($relation->{candidate_value});
+            my $baseline_value = integer($relation->{baseline_value});
+            push @errors, "receipt relation $key is not strict"
+              if !defined($relation->{relation}) || $relation->{relation} ne $requirement->{baseline_relation}
+              || !defined($candidate) || !defined($baseline_value)
+              || $candidate != $totals{candidate}->{$field}
+              || $baseline_value != $totals{$baseline}->{$field}
+              || $candidate > $requirement->{candidate_maximum}
+              || $baseline_value <= $candidate;
+        }
+        push @errors, 'receipt baseline relation inventory is incomplete'
+          if keys(%seen) != @needed;
+    }
+    return @errors;
+}
+
+sub self_test {
+    my $manifest = read_json($MANIFEST, 1_048_576, 'Phase 3 manifest');
+    my $revision = 'a' x 40;
+    my $runs = 5;
+    my @comparisons = map { $_->{id} } @{$manifest->{comparative_evaluations}};
+    my @variants = qw(candidate source-only naive-memory-text);
+    my %zero = map { $_ => 0 } outcome_keys();
+    my @cases;
+    for my $comparison (@comparisons) {
+        my %snapshots;
+        for my $snapshot (qw(base changed)) {
+            my %outcomes;
+            for my $variant (@variants) {
+                $outcomes{$variant} = { %zero, complete_runs => $runs };
+            }
+            $snapshots{$snapshot} = \%outcomes;
+        }
+        push @cases, { comparison_id => $comparison, snapshots => \%snapshots };
+    }
+    # A real strict relation needs measured baseline misses; this is synthetic
+    # validator input only and is never emitted as a benchmark receipt.
+    $cases[0]->{snapshots}->{base}->{'source-only'}->{repeated_failures} = 1;
+    $cases[0]->{snapshots}->{base}->{'naive-memory-text'}->{repeated_failures} = 1;
+    $cases[0]->{snapshots}->{changed}->{'naive-memory-text'}->{stale_memory_uses} = 1;
+    my %aggregate = map { $_ => { %zero } } @variants;
+    for my $case (@cases) {
+        for my $snapshot (qw(base changed)) {
+            for my $variant (@variants) {
+                for my $key (outcome_keys()) {
+                    $aggregate{$variant}->{$key} += $case->{snapshots}->{$snapshot}->{$variant}->{$key};
+                }
+            }
+        }
+    }
+    my $receipt = {
+        schema_version => 1, receipt_kind => 'phase3-longitudinal-aggregate',
+        attestation_status => 'not-attested', benchmark_id => $manifest->{benchmark_id},
+        runner_id => $manifest->{phase3_longitudinal}->{runner}->{id},
+        repowitness_revision => $revision,
+        corpus_revisions => { 'mini-redis' => $manifest->{corpora}->[0]->{revision} },
+        complete_runs_per_case => $runs, case_aggregates => \@cases,
+        aggregate_outcomes => \%aggregate,
+        isolation => { personal_to_team_leaks => 0, cross_repository_leaks => 0, sensitive_scope_output_leaks => 0 },
+        baseline_relations => [
+          { outcome => 'repeated-failures', baseline => 'source-only', candidate_value => 0, baseline_value => 1, relation => 'strictly-greater-than-candidate' },
+          { outcome => 'repeated-failures', baseline => 'naive-memory-text', candidate_value => 0, baseline_value => 1, relation => 'strictly-greater-than-candidate' },
+          { outcome => 'stale-memory-uses', baseline => 'naive-memory-text', candidate_value => 0, baseline_value => 1, relation => 'strictly-greater-than-candidate' },
+        ], status => 'validated',
+    };
+    my @errors = validate_receipt($receipt, $manifest, $revision);
+    die "valid receipt self-test failed: @errors\n" if @errors;
+    $receipt->{isolation}->{cross_repository_leaks} = 1;
+    @errors = validate_receipt($receipt, $manifest, $revision);
+    die "leakage receipt self-test unexpectedly passed\n" if !@errors;
+    $receipt->{isolation}->{cross_repository_leaks} = 0;
+    $receipt->{baseline_relations}->[0]->{baseline_value} = 0;
+    @errors = validate_receipt($receipt, $manifest, $revision);
+    die "non-strict receipt self-test unexpectedly passed\n" if !@errors;
+    print "Phase 3 longitudinal receipt self-tests passed\n";
+}

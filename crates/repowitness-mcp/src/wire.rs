@@ -15,9 +15,11 @@ mod compatibility;
 mod context_build;
 mod diagnostics;
 mod graph;
+mod historical_memory;
 mod memory_manage;
 mod memory_mutation;
 mod memory_recall;
+mod personal_memory;
 mod phase2_context;
 mod repository_service_error;
 mod scip_evidence;
@@ -53,6 +55,12 @@ pub use graph::{
     McpGraphPublication, McpGraphSite, McpGraphTrace, McpGraphTraceCoverage,
     McpGraphTraceTruncation,
 };
+pub use historical_memory::{
+    HISTORICAL_MEMORY_SCHEMA_VERSION, HistoricalMemoryApplicability, HistoricalMemoryCoverage,
+    HistoricalMemoryEvidence, HistoricalMemoryEvidenceBasis, HistoricalMemoryInput,
+    HistoricalMemoryOutput, HistoricalMemoryServiceRequest, HistoricalMemoryTarget,
+    HistoricalMemoryTargetKind,
+};
 pub use memory_manage::{
     MEMORY_MANAGE_SCHEMA_VERSION, MemoryManageDatabaseIdentityStatus,
     MemoryManageFileIdentityStatus, MemoryManageInput, MemoryManageMaintenanceStatus,
@@ -65,6 +73,11 @@ pub use memory_recall::{
     McpMemoryCandidate, McpMemoryCoverage, McpMemoryEvidence, McpMemoryOccurrence,
     McpMemoryProducer, McpMemoryRecord, McpMemoryTarget, McpSelectedMemory, MemoryRecallInput,
     MemoryRecallOutput, MemoryRecallServiceRequest, MemoryRecallServiceSelection,
+};
+pub use personal_memory::{
+    PERSONAL_MEMORY_SCHEMA_VERSION, PersonalMemoryInput, PersonalMemoryKind,
+    PersonalMemoryLifecycle, PersonalMemoryOperation, PersonalMemoryOutput,
+    PersonalMemoryRecordOutput, PersonalMemoryServiceRequest,
 };
 pub use phase2_context::{
     McpPhase2ContextAttribution, McpPhase2ContextItem, McpPhase2ContextOmission,
@@ -89,6 +102,10 @@ pub const DIAGNOSTICS_TOOL_NAME: &str = "diagnostics";
 pub const MEMORY_RECALL_TOOL_NAME: &str = "memory_recall";
 /// MCP tool name for explicitly authorized local engineering-memory mutation.
 pub const MEMORY_MANAGE_TOOL_NAME: &str = "memory_manage";
+/// MCP tool name for explicitly enabled local-profile personal memory.
+pub const PERSONAL_MEMORY_TOOL_NAME: &str = "personal_memory";
+/// MCP tool name for a bounded exact historical memory applicability receipt.
+pub const HISTORICAL_MEMORY_TOOL_NAME: &str = "historical_memory";
 /// MCP tool name for exact verified declaration retrieval.
 pub const SYMBOL_GET_TOOL_NAME: &str = "symbol_get";
 /// MCP tool name for immutable package-scoped SCIP symbol evidence.
@@ -107,7 +124,10 @@ pub(crate) const MAX_MCP_PHASE2_CONTEXT_OUTPUT_BYTES: usize = 24 * 1024 * 1024;
 pub(crate) const MAX_MCP_DIAGNOSTICS_OUTPUT_BYTES: usize = 256 * 1024;
 pub(crate) const MAX_MCP_GRAPH_OUTPUT_BYTES: usize = 64 * 1024 * 1024;
 pub(crate) const MAX_MCP_MEMORY_RECALL_OUTPUT_BYTES: usize = 20 * 1024 * 1024;
+pub(crate) const MAX_MCP_HISTORICAL_MEMORY_OUTPUT_BYTES: usize = 128 * 1024;
 pub(crate) const MAX_MCP_MEMORY_MANAGE_OUTPUT_BYTES: usize = 64 * 1024;
+/// Personal records are bounded to 4 KiB fields and reads to 100 records.
+pub(crate) const MAX_MCP_PERSONAL_MEMORY_OUTPUT_BYTES: usize = 2 * 1024 * 1024;
 // The MCP SDK includes both structured JSON and a compatibility text copy.
 // A bounded 10 MiB application payload can therefore require almost 60 MiB
 // after exact source representation and nested JSON escaping.
@@ -337,11 +357,124 @@ impl fmt::Debug for SymbolGetServiceRequest {
     }
 }
 
+/// Durable lifecycle state projected through negotiated native MCP Tasks.
+///
+/// The transport never derives this state from an ephemeral result payload.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NativeTaskState {
+    /// Work remains active.
+    Working,
+    /// The operation completed successfully.
+    Completed,
+    /// The operation needs follow-up after a bounded failure.
+    Failed,
+    /// The caller cancelled the operation.
+    Cancelled,
+}
+
+/// Polling-safe durable task projection for the MCP transport.
+///
+/// It excludes persisted task text and all captured output. `task_id` is an
+/// opaque canonical durable task identity, not a user-controlled path or key.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeTaskStatus {
+    task_id: String,
+    state: NativeTaskState,
+    checkpoint_sequence: u32,
+    verification_count: u32,
+}
+
+impl NativeTaskStatus {
+    /// Creates one validated adapter-owned status projection.
+    #[must_use]
+    pub fn new(
+        task_id: String,
+        state: NativeTaskState,
+        checkpoint_sequence: u32,
+        verification_count: u32,
+    ) -> Self {
+        Self {
+            task_id,
+            state,
+            checkpoint_sequence,
+            verification_count,
+        }
+    }
+
+    /// Returns the canonical opaque durable task identity.
+    #[must_use]
+    pub fn task_id(&self) -> &str {
+        &self.task_id
+    }
+
+    /// Returns the lifecycle state supported by the MCP task protocol.
+    #[must_use]
+    pub const fn state(&self) -> NativeTaskState {
+        self.state
+    }
+
+    /// Returns the last committed immutable checkpoint sequence.
+    #[must_use]
+    pub const fn checkpoint_sequence(&self) -> u32 {
+        self.checkpoint_sequence
+    }
+
+    /// Returns the bounded number of verification receipts.
+    #[must_use]
+    pub const fn verification_count(&self) -> u32 {
+        self.verification_count
+    }
+}
+
 /// Synchronous repository operations injected by the CLI composition root.
 ///
 /// Implementations must honor both the request timeout and cancellation flag.
 /// They must return only bounded output DTOs and stable, redacted errors.
 pub trait RepositoryService: Send + Sync + 'static {
+    /// Creates the canonical durable engineering-task record backing one
+    /// explicitly negotiated native MCP task. The returned opaque identifier
+    /// is both the transport handle and the durable task identity text.
+    fn native_task_start(
+        &self,
+        _objective: &str,
+        _cancelled: Arc<AtomicBool>,
+    ) -> Result<NativeTaskStatus, RepositoryServiceError> {
+        Err(RepositoryServiceError::NativeTask)
+    }
+
+    /// Appends one bounded lifecycle checkpoint to a durable native task.
+    ///
+    /// This is intentionally separate from the retained MCP result payload:
+    /// the payload is ephemeral transport data, while this state survives a
+    /// reconnect and remains subject to the engineering-task audit rules.
+    fn native_task_transition(
+        &self,
+        _task_id: &str,
+        _state: NativeTaskState,
+        _cancelled: Arc<AtomicBool>,
+    ) -> Result<NativeTaskStatus, RepositoryServiceError> {
+        Err(RepositoryServiceError::NativeTask)
+    }
+
+    /// Returns one durable native task in the configured repository scope.
+    fn native_task_status(
+        &self,
+        _task_id: &str,
+        _cancelled: Arc<AtomicBool>,
+    ) -> Result<Option<NativeTaskStatus>, RepositoryServiceError> {
+        Err(RepositoryServiceError::NativeTask)
+    }
+
+    /// Lists the bounded most-recent durable native task records in the
+    /// configured repository scope.
+    fn native_task_list(
+        &self,
+        _limit: u16,
+        _cancelled: Arc<AtomicBool>,
+    ) -> Result<Box<[NativeTaskStatus]>, RepositoryServiceError> {
+        Err(RepositoryServiceError::NativeTask)
+    }
+
     /// Runs one bounded lexical search.
     fn code_search(
         &self,
@@ -397,6 +530,16 @@ pub trait RepositoryService: Send + Sync + 'static {
         cancelled: Arc<AtomicBool>,
     ) -> Result<MemoryRecallOutput, RepositoryServiceError>;
 
+    /// Reads a bounded exact historical applicability receipt. The repository
+    /// scope is fixed at MCP startup and target paths are never accepted.
+    fn historical_memory(
+        &self,
+        _request: HistoricalMemoryServiceRequest,
+        _cancelled: Arc<AtomicBool>,
+    ) -> Result<HistoricalMemoryOutput, RepositoryServiceError> {
+        Err(RepositoryServiceError::HistoricalMemory)
+    }
+
     /// Performs one explicitly authorized, path-confined memory mutation.
     fn memory_manage(
         &self,
@@ -404,6 +547,18 @@ pub trait RepositoryService: Send + Sync + 'static {
         _cancelled: Arc<AtomicBool>,
     ) -> Result<MemoryManageOutput, RepositoryServiceError> {
         Err(RepositoryServiceError::MemoryManage)
+    }
+
+    /// Reads or appends local-only memory for the fixed startup profile.
+    ///
+    /// This method is unavailable unless the composition root opted into a
+    /// single opaque local profile before the MCP runtime started.
+    fn personal_memory(
+        &self,
+        _request: PersonalMemoryServiceRequest,
+        _cancelled: Arc<AtomicBool>,
+    ) -> Result<PersonalMemoryOutput, RepositoryServiceError> {
+        Err(RepositoryServiceError::PersonalMemory)
     }
 
     /// Retrieves one exact, verified source declaration.

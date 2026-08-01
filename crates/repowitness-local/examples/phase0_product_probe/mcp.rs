@@ -12,7 +12,10 @@ use serde_json::{Value, json};
 use crate::ProbeResult;
 
 const IO_DEADLINE: Duration = Duration::from_secs(10);
-const MAX_MESSAGE_BYTES: usize = 64 * 1024;
+// Tool schemas are static protocol metadata rather than material evidence. The
+// default surface is still bounded below, while a single tools/list response
+// needs room for every supported read-only schema.
+const MAX_MESSAGE_BYTES: usize = 256 * 1024;
 const MAX_STDERR_BYTES: u64 = 16 * 1024;
 
 pub struct McpMetrics {
@@ -73,16 +76,23 @@ fn probe(process: &mut McpProcess, max_material_result_bytes: usize) -> ProbeRes
                 .ok_or("MCP tool name was not a string")
         })
         .collect::<Result<Vec<_>, _>>()?;
-    if names
-        != [
-            "code_search",
-            "context_build",
-            "diagnostics",
-            "memory_recall",
-            "symbol_get",
-        ]
+    const REQUIRED_BASELINE_TOOLS: [&str; 5] = [
+        "code_search",
+        "context_build",
+        "diagnostics",
+        "memory_recall",
+        "symbol_get",
+    ];
+    if names.len() > 32
+        || names.windows(2).any(|pair| pair[0] >= pair[1])
+        || REQUIRED_BASELINE_TOOLS
+            .iter()
+            .any(|required| !names.contains(required))
+        || names
+            .iter()
+            .any(|name| matches!(*name, "memory_manage" | "personal_memory"))
     {
-        return Err("default MCP capabilities were not read-only and exact".into());
+        return Err("default MCP capabilities were not bounded and read-only".into());
     }
 
     let searched = process.request(json!({

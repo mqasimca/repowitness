@@ -20,8 +20,9 @@ use repowitness_domain::{
     MemoryAssurance, MemoryAuditActorId, MemoryEvidence, MemoryKind, MemoryLifecycle,
     MemoryObjectFormat, MemoryObservationSource, MemoryPresentationDigest, MemoryProvenanceOrigin,
     MemoryRecord, MemoryRecordedAtUnixMillis, MemoryRelationshipKind, MemoryValidity,
-    RepositoryIdentityDigest, RustMemorySymbolKind, SourceFileKind, SourceSlotId,
-    SourceSnapshotDigest,
+    PersonalMemoryKind, PersonalMemoryRecord, RepositoryIdentityDigest, RustMemorySymbolKind,
+    SourceFileKind, SourceSlotId, SourceSnapshotDigest, TaskCheckpoint, TaskId, TaskState,
+    TaskStatus, TaskText, TaskVerification, TaskVerificationOutcome,
 };
 use rusqlite::{
     Connection, ErrorCode, OptionalExtension, Transaction, TransactionBehavior, params,
@@ -477,6 +478,8 @@ include!("writer/scip_overlay.rs");
 include!("writer/retention.rs");
 
 include!("writer/memory.rs");
+include!("writer/task.rs");
+include!("writer/personal_memory.rs");
 include!("writer/helpers.rs");
 
 #[cfg(test)]

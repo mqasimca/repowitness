@@ -273,6 +273,151 @@ fn memory_import_is_append_only_idempotent_and_survives_backup_and_reopen() {
 }
 
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one end-to-end adversarial fixture keeps merge admission, retry, stale-parent, and missing-parent assertions together"
+)]
+fn team_sync_accepts_only_observed_unresolved_merge_heads_and_is_retry_safe() {
+    let directory = TempDirectory::new();
+    let database = directory.database();
+    let (base, base_revision, base_presentation) = memory_input(COMMIT_MEMORY_YAML);
+    let repository = base.scope().repository();
+    let (store, _) = OwnedSqliteIndex::start(&database, 123, deadline()).expect("store should start");
+    store
+        .register_workspace(repository, 0, deadline())
+        .expect("workspace should register");
+    store
+        .import_memory_version(
+            repository,
+            base,
+            base_presentation,
+            memory_source(),
+            memory_actor(),
+            memory_recorded_at(),
+            MemoryImportApproval::ObservedOnly,
+            Arc::new(AtomicBool::new(false)),
+            deadline(),
+        )
+        .expect("base should be observed");
+
+    let parent_a = memory_with_parents_and_body(2, &[base_revision], "First reviewed branch.");
+    let parent_b = memory_with_parents_and_body(2, &[base_revision], "Second reviewed branch.");
+    let (_, parent_a_revision, parent_a_presentation) = memory_input(parent_a.as_bytes());
+    let (parent_a_record, _, _) = memory_input(parent_a.as_bytes());
+    let (_, parent_b_revision, parent_b_presentation) = memory_input(parent_b.as_bytes());
+    let (parent_b_record, _, _) = memory_input(parent_b.as_bytes());
+    for (record, presentation) in [
+        (parent_a_record, parent_a_presentation),
+        (parent_b_record, parent_b_presentation),
+    ] {
+        store
+            .import_memory_version(
+                repository,
+                record,
+                presentation,
+                memory_source(),
+                memory_actor(),
+                memory_recorded_at(),
+                MemoryImportApproval::ObservedOnly,
+                Arc::new(AtomicBool::new(false)),
+                deadline(),
+            )
+            .expect("divergent parent should be observed");
+    }
+
+    let merge = memory_with_parents_and_body(3, &[parent_a_revision, parent_b_revision], "Reviewed merge.");
+    let (merge_record, merge_revision, merge_presentation) = memory_input(merge.as_bytes());
+    let merged = store
+        .sync_team_memory(
+            repository,
+            merge_record.clone(),
+            merge_presentation,
+            memory_source(),
+            memory_actor(),
+            memory_recorded_at(),
+            Arc::new(AtomicBool::new(false)),
+            deadline(),
+        )
+        .expect("two observed unresolved parents should merge");
+    assert_eq!(merged.revision(), merge_revision);
+    assert!(merged.version_inserted());
+    assert!(merged.observation_inserted());
+    let retry = store
+        .sync_team_memory(
+            repository,
+            merge_record,
+            merge_presentation,
+            memory_source(),
+            memory_actor(),
+            memory_recorded_at(),
+            Arc::new(AtomicBool::new(false)),
+            deadline(),
+        )
+        .expect("exact merge retry should remain idempotent");
+    assert!(!retry.version_inserted());
+
+    let stale = memory_with_parents_and_body(4, &[parent_a_revision, parent_b_revision], "Stale merge.");
+    let (stale_record, _, stale_presentation) = memory_input(stale.as_bytes());
+    assert_eq!(
+        store.sync_team_memory(
+            repository,
+            stale_record,
+            stale_presentation,
+            memory_source(),
+            memory_actor(),
+            memory_recorded_at(),
+            Arc::new(AtomicBool::new(false)),
+            deadline(),
+        ),
+        Err(SqliteStoreError::InvalidMemoryImport),
+        "a resolved parent cannot be merged again"
+    );
+
+    let missing_parent = CanonicalMemoryDigest::new([0xA5; 32]);
+    let missing = memory_with_parents_and_body(4, &[parent_a_revision, missing_parent], "Missing merge.");
+    let (missing_record, _, missing_presentation) = memory_input(missing.as_bytes());
+    assert_eq!(
+        store.sync_team_memory(
+            repository,
+            missing_record,
+            missing_presentation,
+            memory_source(),
+            memory_actor(),
+            memory_recorded_at(),
+            Arc::new(AtomicBool::new(false)),
+            deadline(),
+        ),
+        Err(SqliteStoreError::InvalidMemoryImport),
+        "an unobserved parent cannot be silently admitted as a merge head"
+    );
+    store.shutdown(deadline()).expect("writer should stop");
+}
+
+fn memory_with_parents_and_body(
+    display_revision: u32,
+    parents: &[CanonicalMemoryDigest],
+    body: &str,
+) -> String {
+    let parents = parents
+        .iter()
+        .map(|parent| {
+            let mut encoded = String::with_capacity(64);
+            for byte in parent.as_bytes() {
+                use std::fmt::Write as _;
+                let _ = write!(encoded, "{byte:02x}");
+            }
+            format!("  - \"{encoded}\"")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    String::from_utf8(COMMIT_MEMORY_YAML.to_vec())
+        .expect("fixture should be UTF-8")
+        .replacen("display_revision: 1", &format!("display_revision: {display_revision}"), 1)
+        .replacen("parent_revision_digests: []", &format!("parent_revision_digests:\n{parents}"), 1)
+        .replacen("Readers must never observe a partially staged generation.", body, 1)
+}
+
+#[test]
 fn observed_only_import_cannot_activate_repository_authored_memory() {
     let directory = TempDirectory::new();
     let database = directory.database();

@@ -21,6 +21,59 @@ impl ObservedMemoryHistoryItem {
 }
 
 impl OwnedSqliteIndex {
+    /// Imports a repository-authored team record after enforcing the reviewed
+    /// multi-parent head fence in the single SQLite writer transaction.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "each semantic, source, actor, and control identity stays explicit at the writer boundary"
+    )]
+    pub(crate) fn sync_team_memory(
+        &self,
+        repository: RepositoryIdentityDigest,
+        record: MemoryRecord,
+        presentation: MemoryPresentationDigest,
+        source: MemoryObservationSource,
+        audit_actor: MemoryAuditActorId,
+        recorded_at: MemoryRecordedAtUnixMillis,
+        cancelled: Arc<AtomicBool>,
+        deadline: Instant,
+    ) -> Result<MemoryImportReceipt, SqliteStoreError> {
+        let prepared = prepare_memory_import(
+            repository,
+            record,
+            presentation,
+            source,
+            audit_actor,
+            recorded_at,
+            MemoryImportApproval::ObservedOnly,
+            cancelled.as_ref(),
+            deadline,
+        )?;
+        check_memory_control(cancelled.as_ref(), deadline)?;
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.send(
+            WriterCommand::SyncTeamMemory(Box::new(MemoryImportCommand {
+                prepared,
+                cancelled: Arc::clone(&cancelled),
+                deadline,
+                reply,
+            })),
+            deadline,
+        )?;
+        match receive_mutation_reply(
+            &receiver,
+            Some(cancelled.as_ref()),
+            deadline,
+            Some(&self.unresolved_mutation),
+        ) {
+            Ok(receipt) => Ok(receipt),
+            Err(error) => {
+                cancelled.store(true, Ordering::Release);
+                Err(error)
+            }
+        }
+    }
+
     /// Appends or verifies one exact semantic memory version and trusted audit receipt.
     ///
     /// On [`SqliteStoreError::MutationOutcomeUnknown`], reload the immutable

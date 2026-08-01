@@ -427,7 +427,7 @@ fn a_receipt_arriving_during_resolution_grace_preserves_the_exact_outcome() {
     });
 
     published_receiver
-        .recv_timeout(Duration::from_secs(1))
+        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
         .expect("backup must reach its committed reply");
     validate_backup(&destination).expect("delivery gate must follow a committed valid backup");
     thread::sleep(

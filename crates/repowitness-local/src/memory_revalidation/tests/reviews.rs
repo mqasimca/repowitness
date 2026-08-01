@@ -17,6 +17,7 @@ struct ReviewSelector {
     path: String,
     artifact: String,
     fact_ordinal: u64,
+    snapshot: String,
 }
 
 fn review_selector(database: &Path, repository: RepositoryIdentityDigest) -> ReviewSelector {
@@ -55,7 +56,40 @@ fn review_selector_at(
         artifact: hex(&occurrence.artifact),
         fact_ordinal: u64::try_from(occurrence.fact_ordinal)
             .expect("fact ordinal should be nonnegative"),
+        snapshot: hex(&occurrence.snapshot),
     }
+}
+
+fn append_archival_review(
+    repository: &Path,
+    database: &Path,
+    identity: &str,
+    selector: &ReviewSelector,
+    operation: MemoryCorrespondenceReviewOperation,
+    actor: &str,
+    recorded_at: u64,
+) -> bool {
+    review_local_memory_correspondence(
+        LocalMemoryCorrespondenceReviewRequest::new(
+            repository,
+            database,
+            identity,
+            &selector.record_id,
+            &selector.revision,
+            0,
+            operation,
+            &selector.path,
+            &selector.artifact,
+            selector.fact_ordinal,
+            actor,
+            123,
+            recorded_at,
+        )
+        .with_archival_target_snapshot_sha256(&selector.snapshot),
+        Arc::new(AtomicBool::new(false)),
+    )
+    .expect("valid archival correspondence review should append")
+    .inserted()
 }
 
 fn append_review(
@@ -362,6 +396,107 @@ fn an_obsolete_target_snapshot_review_does_not_affect_the_active_generation() {
         )
         .expect("obsolete review should remain auditable");
     assert_eq!(audit_count, 1);
+}
+
+#[test]
+fn archival_review_accepts_a_retained_target_without_affecting_the_current_projection() {
+    let (_fixture, repository, database, repository_identity, identity) =
+        exact_commit_projection_fixture();
+    let selector = review_selector(&database, repository_identity);
+    fs::write(
+        repository.join("src/lib.rs"),
+        b"pub fn current() -> bool { false }\n",
+    )
+    .expect("new source snapshot should be written");
+    git(&repository, &["add", "src/lib.rs"]);
+    git(
+        &repository,
+        &["commit", "--quiet", "-m", "retain reviewed target"],
+    );
+    index_local_repository(
+        LocalIndexRequest::new(&repository, &database, &identity, 123),
+        Arc::new(AtomicBool::new(false)),
+    )
+    .expect("new source generation should activate");
+
+    assert!(append_archival_review(
+        &repository,
+        &database,
+        &identity,
+        &selector,
+        MemoryCorrespondenceReviewOperation::ManualLink,
+        "archive-reviewer",
+        1_722_000_000_241,
+    ));
+    let connection = Connection::open(&database).expect("database should open");
+    let target_snapshot = connection
+        .query_row(
+            "SELECT target_snapshot_digest FROM memory_correspondence_audit",
+            [],
+            |row| row.get::<_, Vec<u8>>(0),
+        )
+        .expect("archival audit should exist");
+    assert_eq!(target_snapshot, hex_bytes(&selector.snapshot));
+    let current_snapshot = active_occurrence(&database, repository_identity).snapshot;
+    assert_ne!(target_snapshot, current_snapshot);
+}
+
+#[test]
+fn archival_review_rejects_an_unretained_target_without_appending_an_audit_event() {
+    let (_fixture, repository, database, repository_identity, identity) =
+        exact_commit_projection_fixture();
+    let selector = review_selector(&database, repository_identity);
+    fs::write(
+        repository.join("src/lib.rs"),
+        b"pub fn current() -> bool { false }\n",
+    )
+    .expect("new source snapshot should be written");
+    git(&repository, &["add", "src/lib.rs"]);
+    git(
+        &repository,
+        &["commit", "--quiet", "-m", "remove archival target coverage"],
+    );
+    index_local_repository(
+        LocalIndexRequest::new(&repository, &database, &identity, 123),
+        Arc::new(AtomicBool::new(false)),
+    )
+    .expect("new source generation should activate");
+
+    let unavailable_snapshot = "a5".repeat(32);
+    let error = review_local_memory_correspondence(
+        LocalMemoryCorrespondenceReviewRequest::new(
+            &repository,
+            &database,
+            &identity,
+            &selector.record_id,
+            &selector.revision,
+            0,
+            MemoryCorrespondenceReviewOperation::ManualLink,
+            &selector.path,
+            &selector.artifact,
+            selector.fact_ordinal,
+            "archive-reviewer",
+            123,
+            1_722_000_000_242,
+        )
+        .with_archival_target_snapshot_sha256(&unavailable_snapshot),
+        Arc::new(AtomicBool::new(false)),
+    )
+    .expect_err("an archival target without retained indexed coverage must be rejected");
+    assert_eq!(
+        error,
+        crate::LocalMemoryManageError::ReviewTargetUnavailable
+    );
+
+    let audit_count = Connection::open(&database)
+        .expect("database should open")
+        .query_row(
+            "SELECT count(*) FROM memory_correspondence_audit",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .expect("review count should be readable");
+    assert_eq!(audit_count, 0);
 }
 
 #[test]

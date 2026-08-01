@@ -50,14 +50,16 @@ pub use self::graph::{
     RustGraphTraceTruncation, prepare_rust_graph_generation,
 };
 pub use self::reader::{
-    OwnedSqliteReader, SearchHit, SearchLimits, SearchResults, SymbolLookupResults,
+    GitHistoryEvidence, KnownAtApplicability, KnownAtEvidenceBasis, KnownAtHistoryCoverage,
+    KnownAtHistoryReceipt, KnownAtObservationEvidence, OwnedSqliteReader, SearchHit, SearchLimits,
+    SearchResults, SymbolLookupResults,
 };
 pub use self::retention::*;
 pub(crate) use self::retention_read::load_retention_apply_outcome_read_only;
 pub use self::retention_read::plan_generation_retention_read_only;
 use self::schema::{
     APPLICATION_ID, MIGRATION_1, MIGRATION_1_NAME, MIGRATION_2, MIGRATION_2_NAME, MIGRATION_3,
-    MIGRATION_3_NAME, MIGRATION_4, MIGRATION_4_NAME, SCHEMA_VERSION,
+    MIGRATION_3_NAME, MIGRATION_4, MIGRATION_4_NAME, MIGRATION_5, MIGRATION_5_NAME, SCHEMA_VERSION,
 };
 pub use self::scip_overlay::{
     MAX_SCIP_OVERLAY_DOCUMENTS, PreparedScipOverlay, ScipEvidenceReadLimits,
@@ -75,7 +77,8 @@ pub use self::workspace::{
     WorkspaceViewMember,
 };
 pub use self::writer::{
-    CheckpointOutcome, GenerationId, ProjectionRebuildLimits, ProjectionRebuildOutcome,
+    CheckpointOutcome, GenerationId, PersonalMemoryReceipt, ProjectionRebuildLimits,
+    ProjectionRebuildOutcome, TaskCheckpointReceipt, TaskVerificationReceipt,
 };
 pub use repowitness_application::RustIndexCoverage as GenerationCoverage;
 pub use repowitness_application::SourceSlotEpoch;
@@ -597,12 +600,13 @@ fn validate_migration_ledger_through(
     Ok(())
 }
 
-const fn migrations() -> [(i64, &'static str, &'static str); 4] {
+const fn migrations() -> [(i64, &'static str, &'static str); 5] {
     [
         (1, MIGRATION_1_NAME, MIGRATION_1),
         (2, MIGRATION_2_NAME, MIGRATION_2),
         (3, MIGRATION_3_NAME, MIGRATION_3),
         (4, MIGRATION_4_NAME, MIGRATION_4),
+        (5, MIGRATION_5_NAME, MIGRATION_5),
     ]
 }
 

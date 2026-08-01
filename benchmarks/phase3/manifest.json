@@ -1,0 +1,312 @@
+{
+  "schema_version": 2,
+  "benchmark_id": "phase3-durable-memory-longitudinal-v1",
+  "status": "proposed",
+  "reviewed_on": "2026-07-31",
+  "source_policy": {
+    "mode": "external-reference-only",
+    "vendored_content": false
+  },
+  "corpora": [
+    {
+      "id": "mini-redis",
+      "repository": "https://github.com/tokio-rs/mini-redis.git",
+      "revision": "3d93b42bc363220f85af4fc9e1bebd35b588a4a3",
+      "verified_ref": "refs/heads/master",
+      "revision_verified_on": "2026-07-23",
+      "license": "MIT",
+      "language": "rust",
+      "observed_rust_files": 28,
+      "observed_rust_lines": 4354,
+      "include_paths": [
+        "src/**/*.rs",
+        "tests/**/*.rs",
+        "examples/**/*.rs"
+      ],
+      "exclude_paths": [
+        "target/**"
+      ]
+    }
+  ],
+  "tasks": [
+    {
+      "id": "negative-bulk-history-decision",
+      "kind": "historical-memory-decision",
+      "corpus": "mini-redis",
+      "revision": "3d93b42bc363220f85af4fc9e1bebd35b588a4a3",
+      "intent": "At each pinned snapshot, decide whether RESP bulk lengths below -1 are accepted, cite the source evidence, and expose obsolete team memory only as stale rather than current guidance.",
+      "required_evidence": [
+        "src/frame.rs::Frame::check",
+        "tests/frame_validation.rs::check_rejects_invalid_negative_bulk_length"
+      ],
+      "expected_resolution": "confirmed",
+      "max_result_items": 20,
+      "max_output_bytes": 32768
+    },
+    {
+      "id": "set-expiration-history-decision",
+      "kind": "historical-memory-decision",
+      "corpus": "mini-redis",
+      "revision": "3d93b42bc363220f85af4fc9e1bebd35b588a4a3",
+      "intent": "At each pinned snapshot, decide how SET PX durations are encoded, cite the source evidence, and require a fresh verification receipt before procedure guidance is current.",
+      "required_evidence": [
+        "src/cmd/set.rs::Set::into_frame",
+        "src/clients/client.rs::Client::set_expires"
+      ],
+      "expected_resolution": "confirmed",
+      "max_result_items": 20,
+      "max_output_bytes": 32768
+    }
+  ],
+  "change_scenarios": [
+    {
+      "id": "negative-bulk-validation-fix",
+      "corpus": "mini-redis",
+      "base_revision": "7295d727b82a0ef534b836b00807c15ef6c7f191",
+      "changed_revision": "3d93b42bc363220f85af4fc9e1bebd35b588a4a3",
+      "changed_paths": [
+        "src/frame.rs",
+        "tests/frame_validation.rs"
+      ],
+      "source_discriminator": {
+        "path": "src/frame.rs",
+        "base_sha256": "cf354ed6af106331012b9eab05afca8486d80349a36fb54286fad64634b12a03",
+        "changed_sha256": "b0e00edf693935a3c1474e9b693cb257868cf4121c0f61014c10d1fd26c150d5"
+      },
+      "memory_claim": "Frame::check accepts negative bulk lengths other than -1.",
+      "expected_before_resolution": "indeterminate",
+      "expected_before_evidence_relation": "supports",
+      "expected_after_resolution": "confirmed",
+      "expected_after_evidence_relation": "contradicts",
+      "expected_memory_transition": "stale",
+      "required_changed_evidence": [
+        "src/frame.rs::Frame::check",
+        "tests/frame_validation.rs::check_rejects_invalid_negative_bulk_length"
+      ]
+    },
+    {
+      "id": "set-expiration-frame-fix",
+      "corpus": "mini-redis",
+      "base_revision": "5948f0760a181e8148082cdff8ea3914902c2049",
+      "changed_revision": "7295d727b82a0ef534b836b00807c15ef6c7f191",
+      "changed_paths": [
+        "src/cmd/set.rs"
+      ],
+      "source_discriminator": {
+        "path": "src/cmd/set.rs",
+        "base_sha256": "47aac43c1ff2abe653dd7727c985b010c048c414d6dd133814321ced280ebc0e",
+        "changed_sha256": "9691d0287ef84096b0a2ca525a3f10db7b3f65af1116636d31d7814576e825cf"
+      },
+      "memory_claim": "SET PX durations are encoded as bulk strings rather than RESP integer frames.",
+      "expected_before_resolution": "indeterminate",
+      "expected_before_evidence_relation": "contradicts",
+      "expected_after_resolution": "confirmed",
+      "expected_after_evidence_relation": "supports",
+      "expected_memory_transition": "revalidated",
+      "required_changed_evidence": [
+        "src/cmd/set.rs::Set::into_frame"
+      ]
+    }
+  ],
+  "baselines": [
+    {
+      "id": "source-only",
+      "description": "Use bounded source retrieval over each pinned snapshot with the same question and source-evidence budget, without any engineering-memory text, history, or task receipts."
+    },
+    {
+      "id": "naive-memory-text",
+      "description": "Append the prior memory claim as unvalidated text to the same bounded source retrieval, without scope isolation, temporal validity, correspondence review, or verification receipts."
+    }
+  ],
+  "comparative_evaluations": [
+    {
+      "id": "negative-bulk-scoped-memory-comparison",
+      "task": "negative-bulk-history-decision",
+      "change_scenario": "negative-bulk-validation-fix",
+      "memory_claim": "Frame::check accepts negative bulk lengths other than -1.",
+      "base_claim_relation": "supports",
+      "changed_claim_relation": "contradicts",
+      "expected_memory_transition": "stale",
+      "lexical_signals": {
+        "base_support": "skip(src, 4)",
+        "changed_contradiction": "check_rejects_invalid_negative_bulk_length"
+      },
+      "lexical_limits": {
+        "max_paths": 4096,
+        "max_file_bytes": 1048576,
+        "max_total_source_bytes": 16777216,
+        "deadline_ms": 10000
+      },
+      "baseline_ids": [
+        "source-only",
+        "naive-memory-text"
+      ],
+      "required_observations": [
+        "source_evidence_relation",
+        "memory_effective_state",
+        "memory_context_inclusion",
+        "stale_claims_exposed",
+        "personal_to_team_leaks",
+        "cross_repository_leaks",
+        "verification_receipt_state"
+      ],
+      "expected_decision_change": true
+    },
+    {
+      "id": "set-expiration-scoped-memory-comparison",
+      "task": "set-expiration-history-decision",
+      "change_scenario": "set-expiration-frame-fix",
+      "memory_claim": "SET PX durations are encoded as bulk strings rather than RESP integer frames.",
+      "base_claim_relation": "contradicts",
+      "changed_claim_relation": "supports",
+      "expected_memory_transition": "revalidated",
+      "lexical_signals": {
+        "base_support": "Frame::Bulk",
+        "changed_contradiction": "Frame::Integer"
+      },
+      "lexical_limits": {
+        "max_paths": 4096,
+        "max_file_bytes": 1048576,
+        "max_total_source_bytes": 16777216,
+        "deadline_ms": 10000
+      },
+      "baseline_ids": [
+        "source-only",
+        "naive-memory-text"
+      ],
+      "required_observations": [
+        "source_evidence_relation",
+        "memory_effective_state",
+        "memory_context_inclusion",
+        "stale_claims_exposed",
+        "personal_to_team_leaks",
+        "cross_repository_leaks",
+        "verification_receipt_state"
+      ],
+      "expected_decision_change": true
+    }
+  ],
+  "agent_evaluations": [
+    {
+      "id": "codex-negative-bulk-scoped-memory-comparison",
+      "comparison": "negative-bulk-scoped-memory-comparison",
+      "consumer": "codex",
+      "execution": "opt-in",
+      "question": "At the current source snapshot, does Frame::check accept RESP bulk lengths below -1? Cite source evidence and do not treat stale memory as current guidance.",
+      "response_contract": "codex-decision-v2",
+      "minimum_complete_runs": 5,
+      "base_expected_decision": "bug-present",
+      "changed_expected_decision": "bug-fixed",
+      "require_source_grounding": true,
+      "require_current_memory_use_at_base": true,
+      "max_stale_memory_uses": 0,
+      "required_usefulness": "useful"
+    },
+    {
+      "id": "codex-set-expiration-scoped-memory-comparison",
+      "comparison": "set-expiration-scoped-memory-comparison",
+      "consumer": "codex",
+      "execution": "opt-in",
+      "question": "At the current source snapshot, are SET PX durations encoded as RESP bulk strings? Cite source evidence and report the verification state of any procedure memory.",
+      "response_contract": "codex-decision-v2",
+      "minimum_complete_runs": 5,
+      "base_expected_decision": "bug-present",
+      "changed_expected_decision": "bug-fixed",
+      "require_source_grounding": true,
+      "require_current_memory_use_at_base": true,
+      "max_stale_memory_uses": 0,
+      "required_usefulness": "useful"
+    }
+  ],
+  "budgets": {
+    "status": "proposed",
+    "correctness": {
+      "max_false_confirmed_claims": 0,
+      "max_silent_truncations": 0,
+      "max_mixed_generation_reads": 0,
+      "max_false_automatic_relinks": 0
+    },
+    "resources": {
+      "max_full_index_wall_ms": 10000,
+      "max_peak_rss_mib": 384,
+      "max_warm_query_p95_ms": 500,
+      "max_material_result_bytes": 65536,
+      "max_database_bytes": 16777216,
+      "max_wal_bytes_after_completion": 0
+    }
+  },
+  "run_environment": {
+    "warm_query_runs": 10,
+    "cold_and_warm_runs_required": true,
+    "capture": [
+      "repowitness_revision",
+      "corpus_revision",
+      "rust_toolchain",
+      "operating_system",
+      "cpu_model",
+      "logical_cpu_count",
+      "memory_mib",
+      "filesystem_type",
+      "resolved_configuration_digest"
+    ]
+  },
+  "phase3_longitudinal": {
+    "status": "proposed",
+    "runner_status": "implemented-not-attested",
+    "runner": {
+      "id": "phase3-codex-longitudinal-v1",
+      "execution": "opt-in-codex",
+      "receipt_schema": "phase3-longitudinal-receipt-v1.schema.json",
+      "envelope_schema": "codex-envelope-v1.schema.json",
+      "max_runs_per_variant": 10,
+      "max_codex_seconds_per_run": 600,
+      "max_codex_output_bytes": 8388608,
+      "max_envelope_bytes": 25165824
+    },
+    "candidate": {
+      "id": "scoped-revalidated-memory",
+      "description": "Use scoped team and personal memory with source-backed current-state revalidation, archival correspondence only when explicitly requested, and verification receipts for procedure guidance."
+    },
+    "required_baseline_ids": [
+      "source-only",
+      "naive-memory-text"
+    ],
+    "paired_runs": {
+      "minimum_complete_runs_per_case": 5,
+      "same_revision_per_pair": true,
+      "same_question_per_pair": true,
+      "same_source_evidence_budget_per_pair": true,
+      "same_source_evidence_per_pair": true,
+      "fresh_disposable_state_per_run": true
+    },
+    "outcome_requirements": [
+      {
+        "id": "repeated-failures",
+        "candidate_maximum": 0,
+        "baseline_ids": [
+          "source-only",
+          "naive-memory-text"
+        ],
+        "baseline_relation": "strictly-greater-than-candidate"
+      },
+      {
+        "id": "stale-memory-uses",
+        "candidate_maximum": 0,
+        "baseline_ids": [
+          "naive-memory-text"
+        ],
+        "baseline_relation": "strictly-greater-than-candidate"
+      }
+    ],
+    "isolation": {
+      "max_personal_to_team_leaks": 0,
+      "max_cross_repository_leaks": 0,
+      "max_sensitive_scope_output_leaks": 0,
+      "requires_disposable_scope_fixture": true
+    },
+    "attestation": {
+      "status": "not-collected",
+      "public_aggregate_only": true
+    }
+  }
+}

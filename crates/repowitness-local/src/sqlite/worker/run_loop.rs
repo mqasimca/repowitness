@@ -155,6 +155,22 @@ fn run_writer(
                 );
                 send_mutation_reply(reply, result, hooks, unresolved_mutation);
             }
+            WriterCommand::SyncTeamMemory(command) => {
+                let MemoryImportCommand {
+                    prepared,
+                    cancelled,
+                    deadline,
+                    reply,
+                } = *command;
+                let result = state.sync_team_memory(
+                    &prepared,
+                    WriteControl {
+                        cancelled: &cancelled,
+                        deadline,
+                    },
+                );
+                send_mutation_reply(reply, result, hooks, unresolved_mutation);
+            }
             WriterCommand::ImportObservedMemoryHistory(command) => {
                 let ObservedMemoryHistoryCommand {
                     repository,
@@ -198,6 +214,72 @@ fn run_writer(
                 ) {
                     break;
                 }
+            }
+            WriterCommand::AppendTaskCheckpoint(command) => {
+                let TaskCheckpointCommand {
+                    checkpoint,
+                    cancelled,
+                    deadline,
+                    reply,
+                } = *command;
+                let result = state.append_task_checkpoint(
+                    &checkpoint,
+                    WriteControl {
+                        cancelled: &cancelled,
+                        deadline,
+                    },
+                );
+                send_mutation_reply(reply, result, hooks, unresolved_mutation);
+            }
+            WriterCommand::AppendPersonalMemory(command) => {
+                let PersonalMemoryCommand {
+                    record,
+                    cancelled,
+                    deadline,
+                    reply,
+                } = *command;
+                let result = state.append_personal_memory(
+                    &record,
+                    WriteControl {
+                        cancelled: &cancelled,
+                        deadline,
+                    },
+                );
+                send_mutation_reply(reply, result, hooks, unresolved_mutation);
+            }
+            WriterCommand::TaskStatus(command) => {
+                let TaskStatusCommand {
+                    repository,
+                    task_id,
+                    cancelled,
+                    deadline,
+                    reply,
+                } = *command;
+                let result = state.task_status(
+                    repository,
+                    task_id,
+                    WriteControl {
+                        cancelled: &cancelled,
+                        deadline,
+                    },
+                );
+                let _ = reply.try_send(result);
+            }
+            WriterCommand::AppendTaskVerification(command) => {
+                let TaskVerificationCommand {
+                    verification,
+                    cancelled,
+                    deadline,
+                    reply,
+                } = *command;
+                let result = state.append_task_verification(
+                    &verification,
+                    WriteControl {
+                        cancelled: &cancelled,
+                        deadline,
+                    },
+                );
+                send_mutation_reply(reply, result, hooks, unresolved_mutation);
             }
             WriterCommand::LoadMemorySource {
                 repository,

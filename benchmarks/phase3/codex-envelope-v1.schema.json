@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RepoWitness Phase 3 Codex evaluation envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "comparison_id",
+    "snapshot",
+    "variant",
+    "corpus_revision",
+    "question",
+    "source_evidence_budget",
+    "disposable_state_id",
+    "packet"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "comparison_id": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" },
+    "snapshot": { "enum": ["base", "changed"] },
+    "variant": { "enum": ["candidate", "source-only", "naive-memory-text"] },
+    "corpus_revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "question": { "type": "string", "minLength": 1, "maxLength": 1024 },
+    "source_evidence_budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_result_items", "max_output_bytes"],
+      "properties": {
+        "max_result_items": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "max_output_bytes": { "type": "integer", "minimum": 1, "maximum": 65536 }
+      }
+    },
+    "disposable_state_id": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "packet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_evidence", "memory_mode", "memory_entries"],
+      "properties": {
+        "source_evidence": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "content"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^source/[A-Za-z0-9_.:-]+/[A-Za-z0-9_.:-]+$" },
+              "content": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "memory_mode": { "enum": ["scoped-revalidated", "none", "naive-text"] },
+        "memory_entries": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "state", "scope", "content"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^memory/[A-Za-z0-9_.:-]+/[A-Za-z0-9_.:-]+$" },
+              "state": { "enum": ["current", "stale", "unvalidated"] },
+              "scope": { "enum": ["team", "personal", "sensitive-fixture"] },
+              "content": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    }
+  }
+}

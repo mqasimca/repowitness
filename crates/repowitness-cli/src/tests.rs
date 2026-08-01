@@ -13,13 +13,16 @@ mod doctor;
 mod gc;
 mod graph;
 mod identity;
+mod known_at_history;
 mod mcp;
 mod memory;
 mod memory_manage;
+mod personal_memory;
 mod runtime_configuration;
 mod scip_evidence;
 mod scip_import;
 mod symbol_inspect_io;
+mod task;
 mod watch;
 
 struct FakeInspector {

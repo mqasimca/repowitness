@@ -33,12 +33,21 @@ fn migration_checksums_are_stable_golden_vectors() {
         ]
     );
     assert_eq!(
+        migration_checksum(MIGRATION_5),
+        [
+            0x7f, 0x72, 0x30, 0x6e, 0xd3, 0xd2, 0x79, 0x7a, 0x52, 0xbd, 0xae, 0x17, 0x6d,
+            0x7a, 0x01, 0x32, 0xa5, 0xd0, 0x54, 0x56, 0xd2, 0x5a, 0x81, 0xd3, 0x44, 0x6b,
+            0xa9, 0x8a, 0x7d, 0x08, 0xab, 0x1e,
+        ]
+    );
+    assert_eq!(
         migrations(),
         [
             (1, MIGRATION_1_NAME, MIGRATION_1),
             (2, MIGRATION_2_NAME, MIGRATION_2),
             (3, MIGRATION_3_NAME, MIGRATION_3),
             (4, MIGRATION_4_NAME, MIGRATION_4),
+            (5, MIGRATION_5_NAME, MIGRATION_5),
         ]
     );
     for transitional_statement in ["CREATE TEMP", "ALTER TABLE", "DROP TABLE"] {
@@ -47,7 +56,7 @@ fn migration_checksums_are_stable_golden_vectors() {
 }
 
 #[test]
-fn current_catalog_matches_the_phase_two_version_four_golden() {
+fn current_catalog_matches_the_phase_three_version_five_golden() {
     let directory = TempDirectory::new();
     let connection =
         open_index_writer(&directory.database(), 123).expect("baseline should succeed");
@@ -80,9 +89,9 @@ fn current_catalog_matches_the_phase_two_version_four_golden() {
     assert_eq!(
         migration_checksum(&canonical_catalog),
         [
-            0xd0, 0x49, 0xd7, 0xcb, 0x31, 0xd8, 0x0e, 0x50, 0x7c, 0xca, 0xaf, 0x1f, 0xd2, 0x7d,
-            0x50, 0xb2, 0xaf, 0xa0, 0xc0, 0x89, 0x27, 0xea, 0x57, 0x83, 0x54, 0xe4, 0x78, 0x03,
-            0x62, 0x95, 0xa9, 0x80,
+            0x39, 0xf9, 0x42, 0xae, 0x44, 0x26, 0x7c, 0x65, 0x50, 0x05, 0xdb, 0x78, 0x0b, 0x3f,
+            0xd4, 0xd8, 0x69, 0x97, 0x4a, 0xea, 0x97, 0x92, 0xac, 0x3b, 0xca, 0x5a, 0x92, 0x1f,
+            0x39, 0x24, 0xc7, 0xa2,
         ]
     );
 }
@@ -330,6 +339,9 @@ fn fresh_database_has_exact_identity_ledger_and_required_schema() {
                     'retention_workspace_view_garbage',
                     'retention_source_slot_receipt_garbage',
                     'retention_collection_audit'
+                    , 'personal_memory_records', 'personal_memory_audit',
+                    'engineering_tasks', 'engineering_task_checkpoints',
+                    'engineering_task_verifications'
                  )",
             [],
             |row| row.get(0),
@@ -417,9 +429,15 @@ fn fresh_database_has_exact_identity_ledger_and_required_schema() {
                 migration_checksum(MIGRATION_4).to_vec(),
                 123
             ),
+            (
+                5,
+                MIGRATION_5_NAME.to_owned(),
+                migration_checksum(MIGRATION_5).to_vec(),
+                123
+            ),
         ]
     );
-    assert_eq!(tables, 52);
+    assert_eq!(tables, 57);
     assert_eq!(memory_schema_objects, (4, 30));
     assert_eq!(graph_schema_objects, (2, 26));
     assert_eq!(retention_schema_objects, (7, 15));

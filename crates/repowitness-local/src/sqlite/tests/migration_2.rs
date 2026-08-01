@@ -65,7 +65,7 @@ fn version_one_database_upgrades_without_losing_immutable_artifacts() {
         )
         .expect("upgraded artifact should remain readable");
 
-    assert_eq!(user_version, 4);
+    assert_eq!(user_version, 5);
     assert_eq!(
         ledger,
         vec![
@@ -91,6 +91,12 @@ fn version_one_database_upgrades_without_losing_immutable_artifacts() {
                 4,
                 MIGRATION_4_NAME.to_owned(),
                 migration_checksum(MIGRATION_4).to_vec(),
+                222,
+            ),
+            (
+                5,
+                MIGRATION_5_NAME.to_owned(),
+                migration_checksum(MIGRATION_5).to_vec(),
                 222,
             ),
         ]
@@ -160,7 +166,7 @@ fn reopening_current_version_is_idempotent() {
     let directory = TempDirectory::new();
     let database = directory.database();
     drop(open_index_writer(&database, 111).expect("fresh database should migrate"));
-    drop(open_index_writer(&database, 222).expect("version four should reopen"));
+    drop(open_index_writer(&database, 222).expect("version five should reopen"));
 
     let connection = raw_connection(&database);
     let ledger_rows: i64 = connection
@@ -170,12 +176,12 @@ fn reopening_current_version_is_idempotent() {
         .expect("migration ledger count should be readable");
     let latest_timestamp: i64 = connection
         .query_row(
-            "SELECT applied_at_unix_ms FROM schema_migrations WHERE version = 4",
+            "SELECT applied_at_unix_ms FROM schema_migrations WHERE version = 5",
             [],
             |row| row.get(0),
         )
         .expect("migration-four timestamp should be readable");
 
-    assert_eq!(ledger_rows, 4);
+    assert_eq!(ledger_rows, 5);
     assert_eq!(latest_timestamp, 111);
 }

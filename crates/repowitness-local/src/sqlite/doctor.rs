@@ -99,7 +99,7 @@ fn validate_bounded_migration_ledger(connection: &Connection) -> Result<(), Sqli
                     typeof(checksum),
                     length(checksum),
                     substr(checksum, 1, 32)
-             FROM schema_migrations ORDER BY version LIMIT 4",
+             FROM schema_migrations ORDER BY version LIMIT 5",
         )
         .map_err(|_| SqliteStoreError::MigrationLedgerMismatch)?;
     let mut rows = statement

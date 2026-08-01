@@ -53,6 +53,10 @@ pub enum SqliteStoreError {
     InvalidMemoryCorrespondenceReview,
     /// Correspondence review history exceeded its fixed per-evidence bound.
     MemoryCorrespondenceReviewLimitExceeded,
+    /// A durable task checkpoint or verification violated the local contract.
+    InvalidTask,
+    /// A personal-memory revision violated local-only scope or immutable-record rules.
+    InvalidPersonalMemory,
     /// The supplied source epoch was not the current workspace epoch.
     StaleSourceEpoch,
     /// A requested source epoch transition was not monotonic.
@@ -159,6 +163,8 @@ impl fmt::Display for SqliteStoreError {
             Self::MemoryCorrespondenceReviewLimitExceeded => {
                 "memory correspondence review limit exceeded"
             }
+            Self::InvalidTask => "durable task input is invalid",
+            Self::InvalidPersonalMemory => "personal memory input is invalid",
             Self::StaleSourceEpoch => "SQLite source epoch is stale",
             Self::InvalidSourceEpoch => "SQLite source epoch transition is invalid",
             Self::SourceEpochExhausted => "SQLite source epoch is exhausted",

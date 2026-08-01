@@ -118,11 +118,17 @@ Repository, workspace, package, revision, worktree, file, symbol, occurrence, an
 
 ### Work plane
 
-Task objectives, hypotheses, attempts, commands, diagnostics, tests, and verification outcomes. Persisted task support follows the first alpha.
+Task objectives, hypotheses, attempts, diagnostics, tests, checkpoints, and
+verification outcomes. Phase 3 persists only structured, bounded, redacted
+task evidence under ADR-0040; it never treats raw terminal sessions or
+conversations as trustworthy work state.
 
 ### Memory plane
 
-Decisions, failures, procedures, episodes, preferences, policies, and non-source-derivable facts. Every record has scope, evidence, immutable versions, project validity, recorded time, lifecycle, and audit events.
+Decisions, failures, procedures, episodes, preferences, policies, and
+non-source-derivable facts. ADR-0038 partitions immutable team, personal, and
+archival visibility; every record has scope, evidence, project validity,
+recorded time, lifecycle, and audit events.
 
 ### Runtime plane
 
@@ -408,13 +414,21 @@ category is confirmed, changed after commit, or unconfirmed; either latter
 state makes aggregate maintenance incomplete without erasing the known durable
 receipt. No compatibility constructor may synthesize a successful maintenance
 state.
+The separate `personal_memory` tool is absent unless the local composition
+supplies one fixed opaque personal profile at startup. The profile cannot be
+selected by a caller. Existing memory recall, diagnostics, and context tools
+remain team-only, so enabling this capability cannot place personal content in
+a default MCP response.
 A four-permit semaphore bounds admitted repository work. Each synchronous
 local operation runs on Tokio's blocking pool with a remaining deadline and
 cooperative cancellation flag, while stdout remains exclusively JSON-RPC
 traffic.
 Product correctness does not depend on deprecated Roots, Sampling, or Logging,
-and experimental MCP Tasks remain an optional negotiated projection of
-application-owned task semantics.
+and MCP Tasks remain an optional negotiated transport feature. Durable
+engineering-task identity and state use the application-owned SQLite path and
+are projected through the transport; bounded result payload caching is
+process-local. Normal polling remains the fallback for clients that do not
+negotiate Tasks.
 
 Every query constructs a `QueryContext` with workspace, active generation, source snapshot, policy/authorization, deadline, cancellation, and explicit traversal/result/context budgets. The initial synchronous `code_search` request already carries repository, deadline, cancellation, row, and encoded-output bounds; the remaining workspace/policy fields belong in the MCP composition rather than the SQLite adapter. Pagination cursors bind to the generation and ranking-profile version; a stale cursor fails visibly.
 

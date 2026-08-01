@@ -151,6 +151,18 @@ fn run_with_adapters(
     if command == OsStr::new("memory-manage") {
         return run_memory_manage(args, &mut stdout, &mut stderr, memory);
     }
+    if command == OsStr::new("memory-history") {
+        return run_memory_history(args, &mut stdout, &mut stderr);
+    }
+    if command == OsStr::new("personal-memory") {
+        return run_personal_memory(args, &mut stdout, &mut stderr);
+    }
+    if command == OsStr::new("task-status") {
+        return run_task_status(args, &mut stdout, &mut stderr);
+    }
+    if command == OsStr::new("task") {
+        return run_task(args, &mut stdout, &mut stderr);
+    }
 
     emit_error(
         &mut stderr,

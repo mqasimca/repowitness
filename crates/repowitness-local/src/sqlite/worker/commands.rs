@@ -23,8 +23,13 @@ enum WriterCommand {
     StageGraph(Box<StageGraphCommand>),
     StageScipOverlay(Box<StageScipOverlayCommand>),
     ImportMemory(Box<MemoryImportCommand>),
+    SyncTeamMemory(Box<MemoryImportCommand>),
     ImportObservedMemoryHistory(Box<ObservedMemoryHistoryCommand>),
     AppendMemoryCorrespondenceReview(Box<AppendMemoryCorrespondenceReviewCommand>),
+    AppendTaskCheckpoint(Box<TaskCheckpointCommand>),
+    AppendTaskVerification(Box<TaskVerificationCommand>),
+    AppendPersonalMemory(Box<PersonalMemoryCommand>),
+    TaskStatus(Box<TaskStatusCommand>),
     LoadMemorySource {
         repository: RepositoryIdentityDigest,
         cancelled: Arc<AtomicBool>,
@@ -84,8 +89,12 @@ impl WriterCommand {
             | Self::StageGraph(_)
             | Self::StageScipOverlay(_)
             | Self::ImportMemory(_)
+            | Self::SyncTeamMemory(_)
             | Self::ImportObservedMemoryHistory(_)
             | Self::AppendMemoryCorrespondenceReview(_)
+            | Self::AppendTaskCheckpoint(_)
+            | Self::AppendTaskVerification(_)
+            | Self::AppendPersonalMemory(_)
             | Self::PublishMemoryProjection(_)
             | Self::Activate { .. }
             | Self::ConnectWorkspace(_)
@@ -96,6 +105,7 @@ impl WriterCommand {
             | Self::ApplyRetention(_)
             | Self::Checkpoint { .. } => true,
             Self::LoadMemorySource { .. }
+            | Self::TaskStatus(_)
             | Self::LoadMemoryJournal(_)
             | Self::LoadRustMemoryCandidates(_)
             | Self::LoadMemoryCorrespondenceReviews(_)
@@ -117,10 +127,14 @@ impl WriterCommand {
             Self::StageGraph(command) => reject_unresolved_reply(command.reply),
             Self::StageScipOverlay(command) => reject_unresolved_reply(command.reply),
             Self::ImportMemory(command) => reject_unresolved_reply(command.reply),
+            Self::SyncTeamMemory(command) => reject_unresolved_reply(command.reply),
             Self::ImportObservedMemoryHistory(command) => reject_unresolved_reply(command.reply),
             Self::AppendMemoryCorrespondenceReview(command) => {
                 reject_unresolved_reply(command.reply);
             }
+            Self::AppendTaskCheckpoint(command) => reject_unresolved_reply(command.reply),
+            Self::AppendTaskVerification(command) => reject_unresolved_reply(command.reply),
+            Self::AppendPersonalMemory(command) => reject_unresolved_reply(command.reply),
             Self::PublishMemoryProjection(command) => reject_unresolved_reply(command.reply),
             Self::Activate { reply, .. } => reject_unresolved_reply(reply),
             Self::ConnectWorkspace(command) => reject_unresolved_reply(command.reply),
@@ -131,6 +145,7 @@ impl WriterCommand {
             Self::ApplyRetention(command) => reject_unresolved_reply(command.reply),
             Self::Checkpoint { reply, .. } => reject_unresolved_reply(reply),
             Self::LoadMemorySource { .. }
+            | Self::TaskStatus(_)
             | Self::LoadMemoryJournal(_)
             | Self::LoadRustMemoryCandidates(_)
             | Self::LoadMemoryCorrespondenceReviews(_)

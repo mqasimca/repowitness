@@ -49,8 +49,20 @@ pub(super) fn check_record(record: &MemoryRecord) -> Result<(), LocalMemoryManag
 }
 
 fn check_text(text: &str) -> Result<(), LocalMemoryManageError> {
+    if contains_sensitive_text(text) {
+        Err(LocalMemoryManageError::SensitiveContent)
+    } else {
+        Ok(())
+    }
+}
+
+/// Returns whether a bounded untrusted text field contains high-confidence secret material.
+///
+/// This deliberately has no diagnostic payload, so callers cannot accidentally render the
+/// rejected content while applying the same admission policy outside memory-file handling.
+pub(crate) fn contains_sensitive_text(text: &str) -> bool {
     let bytes = text.as_bytes();
-    if contains_ascii_case_insensitive(bytes, b"-----BEGIN PRIVATE KEY-----")
+    contains_ascii_case_insensitive(bytes, b"-----BEGIN PRIVATE KEY-----")
         || contains_ascii_case_insensitive(bytes, b"-----BEGIN RSA PRIVATE KEY-----")
         || contains_ascii_case_insensitive(bytes, b"-----BEGIN OPENSSH PRIVATE KEY-----")
         || TOKEN_PREFIXES
@@ -59,11 +71,6 @@ fn check_text(text: &str) -> Result<(), LocalMemoryManageError> {
         || SENSITIVE_KEY_SPELLINGS
             .iter()
             .any(|key| contains_nonempty_assignment(bytes, key))
-    {
-        Err(LocalMemoryManageError::SensitiveContent)
-    } else {
-        Ok(())
-    }
 }
 
 fn contains_ascii_case_insensitive(haystack: &[u8], needle: &[u8]) -> bool {

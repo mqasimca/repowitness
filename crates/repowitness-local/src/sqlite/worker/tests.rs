@@ -22,10 +22,12 @@ use repowitness_application::{
 use repowitness_domain::{
     AnalysisSchemaDigest, CanonicalMemoryDigest, ConfigurationDigest, ConnectedWorkspaceId,
     GitStateDigest, MemoryAuditActorId, MemoryCommitId, MemoryCorrespondenceReviewOperation,
-    MemoryEvidence, MemoryObservationSource, MemoryPresentationDigest, MemoryProjectValidity,
-    MemoryRecord, MemoryRecordedAtUnixMillis, MemoryRevalidationTarget, ProducerManifestDigest,
-    RepositoryIdentityDigest, RepositoryPath, RepositoryPathLimits, ScipSymbol, SourceSlotId,
-    SourceSnapshotDigest, WorktreeStateDigest,
+    MemoryEvidence, MemoryLifecycle, MemoryObservationSource, MemoryPresentationDigest,
+    MemoryProjectValidity, MemoryRecord, MemoryRecordedAtUnixMillis, MemoryRevalidationTarget,
+    PersonalMemoryId, PersonalMemoryKind, PersonalMemoryProfileId, PersonalMemoryRecord,
+    PersonalMemoryRevision, ProducerManifestDigest, RepositoryIdentityDigest, RepositoryPath,
+    RepositoryPathLimits, ScipSymbol, SourceSlotId, SourceSnapshotDigest, TaskCheckpoint, TaskId,
+    TaskState, TaskText, TaskVerification, TaskVerificationOutcome, WorktreeStateDigest,
 };
 use rusqlite::{Connection, TransactionBehavior, params};
 use sha2::{Digest, Sha256};
@@ -139,3 +141,4 @@ include!("tests/retention_views.rs");
 include!("tests/graph.rs");
 include!("tests/graph_adversarial.rs");
 include!("tests/scip_overlay.rs");
+include!("tests/tasks.rs");

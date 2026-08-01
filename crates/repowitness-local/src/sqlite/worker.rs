@@ -17,8 +17,9 @@ use repowitness_application::{
 };
 use repowitness_domain::{
     ConnectedWorkspaceId, MemoryAuditActorId, MemoryCommitId, MemoryObservationSource,
-    MemoryPresentationDigest, MemoryRecord, MemoryRecordedAtUnixMillis, RepositoryIdentityDigest,
-    RustSymbolMemoryEvidence, SourceSlotId,
+    MemoryPresentationDigest, MemoryRecord, MemoryRecordedAtUnixMillis, PersonalMemoryRecord,
+    RepositoryIdentityDigest, RustSymbolMemoryEvidence, SourceSlotId, TaskCheckpoint, TaskId,
+    TaskStatus, TaskVerification,
 };
 
 use super::{
@@ -52,6 +53,7 @@ use crate::{
 type Reply<T> = SyncSender<Result<T, SqliteStoreError>>;
 
 include!("worker/commands.rs");
+include!("worker/task_commands.rs");
 include!("worker/scip_overlay_commands.rs");
 
 /// Startup facts from deterministic recovery on the owned writer thread.

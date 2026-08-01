@@ -27,6 +27,7 @@ fn memory_manage_tool_is_default_deny_and_conservatively_annotated() {
             GRAPH_SEARCH_TOOL_NAME,
             GRAPH_STATUS_TOOL_NAME,
             GRAPH_TRACE_TOOL_NAME,
+            HISTORICAL_MEMORY_TOOL_NAME,
             IMPACT_ANALYZE_TOOL_NAME,
             MEMORY_MANAGE_TOOL_NAME,
             MEMORY_RECALL_TOOL_NAME,

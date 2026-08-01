@@ -24,6 +24,7 @@ fn assert_mcp_tools(input: &mut ChildStdin, output: &mut BufReader<ChildStdout>)
             "graph_search",
             "graph_status",
             "graph_trace",
+            "historical_memory",
             "impact_analyze",
             "memory_recall",
             "phase2_context_build",

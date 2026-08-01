@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RepoWitness Phase 3 longitudinal aggregate receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "receipt_kind",
+    "attestation_status",
+    "benchmark_id",
+    "runner_id",
+    "repowitness_revision",
+    "corpus_revisions",
+    "complete_runs_per_case",
+    "aggregate_outcomes",
+    "isolation",
+    "baseline_relations",
+    "status"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "receipt_kind": { "const": "phase3-longitudinal-aggregate" },
+    "attestation_status": { "const": "not-attested" },
+    "benchmark_id": { "const": "phase3-durable-memory-longitudinal-v1" },
+    "runner_id": { "const": "phase3-codex-longitudinal-v1" },
+    "repowitness_revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "corpus_revisions": { "type": "object", "additionalProperties": { "type": "string", "pattern": "^[0-9a-f]{40}$" } },
+    "complete_runs_per_case": { "type": "integer", "minimum": 5, "maximum": 10 },
+    "aggregate_outcomes": { "type": "object" },
+    "isolation": { "type": "object" },
+    "baseline_relations": { "type": "object" },
+    "status": { "const": "validated" }
+  }
+}

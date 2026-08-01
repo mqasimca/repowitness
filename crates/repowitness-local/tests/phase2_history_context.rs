@@ -3,17 +3,24 @@
 use std::{
     process::Command,
     sync::{Arc, atomic::AtomicBool},
+    time::{Duration, Instant},
 };
 
 use repowitness_application::RepositoryIdentityTextV1;
-use repowitness_domain::RepositoryIdentityDigest;
-use repowitness_local::{
-    LocalIndexRequest, LocalMemoryApprovalRequest, LocalMemoryHistoryImportRequest,
-    LocalMemoryRevalidationRequest, LocalMemoryWriteRequest, LocalPhase2ContextBuildRequest,
-    LocalPhase2ContextItem, MemoryEffectiveState, Phase2ContextTier, approve_local_memory,
-    build_local_phase2_context, import_local_memory_history, index_local_repository,
-    revalidate_local_memory, write_local_memory,
+use repowitness_domain::{
+    MemoryObservationSource, MemoryRecordedAtUnixMillis, RepositoryIdentityDigest,
+    SourceSnapshotDigest,
 };
+use repowitness_local::{
+    KnownAtApplicability, KnownAtEvidenceBasis, KnownAtHistoryCoverage, LocalIndexRequest,
+    LocalKnownAtHistoryRequest, LocalMemoryApprovalRequest, LocalMemoryHistoryImportRequest,
+    LocalMemoryRevalidationRequest, LocalMemoryWriteRequest, LocalPhase2ContextBuildRequest,
+    LocalPhase2ContextItem, MemoryEffectiveState, OwnedSqliteReader, Phase2ContextTier,
+    approve_local_memory, build_local_phase2_context, import_local_memory_history,
+    index_local_repository, read_local_known_at_history, revalidate_local_memory,
+    write_local_memory,
+};
+use rusqlite::Connection;
 
 #[allow(dead_code)]
 #[path = "phase0_product_loop/mod.rs"]
@@ -27,6 +34,10 @@ fn not_cancelled() -> Arc<AtomicBool> {
 }
 
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one end-to-end timeline proves the recorded-time cutoff cannot leak later approvals"
+)]
 fn phase2_history_requires_current_approved_memory_and_an_immutable_git_observation() {
     let directory = fixture::TempDirectory::new();
     let repository = directory.repository();
@@ -109,6 +120,145 @@ fn phase2_history_requires_current_approved_memory_and_an_immutable_git_observat
     .expect("the committed memory should import as an observation");
     assert!(imported.appended_observations() >= 1);
 
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let reader = OwnedSqliteReader::start(&database, deadline)
+        .expect("the immutable journal should open read-only");
+    let before_observation = reader
+        .known_at_trusted_git_history_evidence(
+            repository_digest,
+            MemoryRecordedAtUnixMillis::try_new(APPROVAL_TIMESTAMP)
+                .expect("fixture timestamp is representable"),
+            16,
+            not_cancelled(),
+            deadline,
+        )
+        .expect("the journal-only historical read should succeed");
+    assert!(
+        before_observation.is_empty(),
+        "later audit events must not leak backward"
+    );
+    let after_observation = reader
+        .known_at_trusted_git_history_evidence(
+            repository_digest,
+            MemoryRecordedAtUnixMillis::try_new(APPROVAL_TIMESTAMP + 1)
+                .expect("fixture timestamp is representable"),
+            16,
+            not_cancelled(),
+            deadline,
+        )
+        .expect("the completed historical observation should be visible");
+    assert_eq!(after_observation.len(), 1);
+    assert_eq!(after_observation[0].commit(), observed_commit);
+
+    let target_snapshot = retained_active_snapshot(&database, repository_digest);
+    let before_worktree_receipt = reader
+        .known_at_history_receipt(
+            repository_digest,
+            MemoryRecordedAtUnixMillis::try_new(MIGRATION_TIMESTAMP)
+                .expect("fixture timestamp is representable"),
+            MemoryObservationSource::Worktree(target_snapshot),
+            16,
+            not_cancelled(),
+            deadline,
+        )
+        .expect("the retained historical target should be readable");
+    assert!(before_worktree_receipt.evidence().is_empty());
+    assert_eq!(
+        before_worktree_receipt.applicability(),
+        KnownAtApplicability::NotApplicable,
+        "a retained target with no pre-cutoff approval must not become applicable"
+    );
+    let after_worktree_receipt = reader
+        .known_at_history_receipt(
+            repository_digest,
+            MemoryRecordedAtUnixMillis::try_new(APPROVAL_TIMESTAMP)
+                .expect("fixture timestamp is representable"),
+            MemoryObservationSource::Worktree(target_snapshot),
+            16,
+            not_cancelled(),
+            deadline,
+        )
+        .expect("the retained historical target should be readable");
+    assert_eq!(after_worktree_receipt.evidence().len(), 1);
+    assert_eq!(
+        after_worktree_receipt.evidence()[0].basis(),
+        KnownAtEvidenceBasis::Observation
+    );
+    assert_eq!(
+        after_worktree_receipt.applicability(),
+        KnownAtApplicability::Applicable,
+        "the exact retained observation and pre-cutoff approval should apply"
+    );
+
+    let before_receipt = reader
+        .known_at_history_receipt(
+            repository_digest,
+            MemoryRecordedAtUnixMillis::try_new(APPROVAL_TIMESTAMP)
+                .expect("fixture timestamp is representable"),
+            MemoryObservationSource::Git(observed_commit),
+            16,
+            not_cancelled(),
+            deadline,
+        )
+        .expect("the target-bound journal receipt should succeed");
+    assert!(before_receipt.evidence().is_empty());
+    assert_eq!(before_receipt.coverage(), KnownAtHistoryCoverage::Complete);
+    assert_eq!(
+        before_receipt.applicability(),
+        KnownAtApplicability::Unavailable,
+        "a journal receipt must not claim Git or snapshot applicability"
+    );
+    let after_receipt = reader
+        .known_at_history_receipt(
+            repository_digest,
+            MemoryRecordedAtUnixMillis::try_new(APPROVAL_TIMESTAMP + 1)
+                .expect("fixture timestamp is representable"),
+            MemoryObservationSource::Git(observed_commit),
+            16,
+            not_cancelled(),
+            deadline,
+        )
+        .expect("the target-bound journal receipt should succeed");
+    assert_eq!(after_receipt.evidence().len(), 1);
+    assert_eq!(
+        after_receipt.evidence()[0].source(),
+        MemoryObservationSource::Git(observed_commit)
+    );
+    assert_eq!(after_receipt.coverage(), KnownAtHistoryCoverage::Complete);
+    let evaluated_before = read_local_known_at_history(
+        LocalKnownAtHistoryRequest::new(
+            &repository,
+            &database,
+            repository_identity.as_str(),
+            APPROVAL_TIMESTAMP,
+            MemoryObservationSource::Git(observed_commit),
+        ),
+        not_cancelled(),
+    )
+    .expect("the exact Git object should be checked without reading a projection");
+    assert_eq!(
+        evaluated_before.applicability(),
+        KnownAtApplicability::NotApplicable,
+        "later observed evidence must not leak through the Git object fence"
+    );
+    let evaluated_after = read_local_known_at_history(
+        LocalKnownAtHistoryRequest::new(
+            &repository,
+            &database,
+            repository_identity.as_str(),
+            APPROVAL_TIMESTAMP + 1,
+            MemoryObservationSource::Git(observed_commit),
+        ),
+        not_cancelled(),
+    )
+    .expect("the exact Git object should be checked without reading a projection");
+    assert_eq!(
+        evaluated_after.applicability(),
+        KnownAtApplicability::Applicable,
+        "an existing exact Git object and pre-cutoff observation should apply"
+    );
+    reader.shutdown(deadline).expect("reader should shut down");
+
     let context = build_local_phase2_context(
         LocalPhase2ContextBuildRequest::new(
             &repository,
@@ -125,6 +275,26 @@ fn phase2_history_requires_current_approved_memory_and_an_immutable_git_observat
                 if history.commit() == observed_commit
                     && history.record().effective_state() == MemoryEffectiveState::Current)
     }));
+}
+
+fn retained_active_snapshot(
+    database: &std::path::Path,
+    repository: RepositoryIdentityDigest,
+) -> SourceSnapshotDigest {
+    let connection = Connection::open(database).expect("database should open");
+    let snapshot: Vec<u8> = connection
+        .query_row(
+            "SELECT generation.snapshot_digest
+               FROM workspaces AS workspace
+               JOIN index_generations AS generation
+                 ON generation.generation_id = workspace.active_generation_id
+              WHERE workspace.repository_identity = ?1
+                AND generation.lifecycle_state = 'active'",
+            [repository.as_bytes().as_slice()],
+            |row| row.get(0),
+        )
+        .expect("fixture should retain its active source snapshot");
+    SourceSnapshotDigest::try_from_slice(&snapshot).expect("snapshot should be well formed")
 }
 
 #[test]

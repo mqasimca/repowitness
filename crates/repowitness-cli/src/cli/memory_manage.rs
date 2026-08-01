@@ -11,6 +11,13 @@ enum MemoryManageInvocation {
         record_id: OsString,
         actor: OsString,
     },
+    Sync {
+        repository_root: PathBuf,
+        database: PathBuf,
+        repository_identity: OsString,
+        record_id: OsString,
+        actor: OsString,
+    },
     Review {
         repository_root: PathBuf,
         database: PathBuf,
@@ -22,6 +29,7 @@ enum MemoryManageInvocation {
         target_path: OsString,
         target_artifact: OsString,
         target_fact_ordinal: u64,
+        target_snapshot: Option<OsString>,
         actor: OsString,
     },
     ImportHistory {
@@ -44,6 +52,12 @@ enum CliMemoryManageReport {
         version_inserted: bool,
         observation_inserted: bool,
         approval_inserted: bool,
+        maintenance: CliMemoryMaintenanceStatus,
+    },
+    Sync {
+        revision: String,
+        version_inserted: bool,
+        observation_inserted: bool,
         maintenance: CliMemoryMaintenanceStatus,
     },
     Review {
@@ -158,6 +172,7 @@ fn manage_local_memory(
         MemoryManageInvocation::Approve { .. } => {
             manage_local_memory_approve(invocation, now, cancelled)
         }
+        MemoryManageInvocation::Sync { .. } => manage_local_memory_sync(invocation, now, cancelled),
         MemoryManageInvocation::Review { .. } => {
             manage_local_memory_review(invocation, now, cancelled)
         }
@@ -261,6 +276,44 @@ fn manage_local_memory_approve(
     .map_err(|error| CliMemoryError::from_management(MemoryMutationRequestScope::Approve, error))
 }
 
+fn manage_local_memory_sync(
+    invocation: &MemoryManageInvocation,
+    now: u64,
+    cancelled: Arc<AtomicBool>,
+) -> Result<CliMemoryManageReport, CliMemoryError> {
+    let MemoryManageInvocation::Sync {
+        repository_root,
+        database,
+        repository_identity,
+        record_id,
+        actor,
+    } = invocation else {
+        unreachable!("team-sync dispatcher supplied another operation");
+    };
+    let repository_identity = manage_utf8(repository_identity)?;
+    let record_id = manage_utf8(record_id)?;
+    let actor = manage_utf8(actor)?;
+    sync_local_team_memory(
+        LocalTeamMemorySyncRequest::new(
+            repository_root,
+            database,
+            repository_identity,
+            record_id,
+            actor,
+            now,
+            now,
+        ),
+        cancelled,
+    )
+    .map(|receipt| CliMemoryManageReport::Sync {
+        revision: hex(receipt.revision().as_bytes()),
+        version_inserted: receipt.version_inserted(),
+        observation_inserted: receipt.observation_inserted(),
+        maintenance: cli_memory_maintenance(receipt.maintenance()),
+    })
+    .map_err(|error| CliMemoryError::from_management(MemoryMutationRequestScope::TeamSync, error))
+}
+
 fn manage_local_memory_review(
     invocation: &MemoryManageInvocation,
     now: u64,
@@ -277,6 +330,7 @@ fn manage_local_memory_review(
         target_path,
         target_artifact,
         target_fact_ordinal,
+        target_snapshot,
         actor,
     } = invocation
     else {
@@ -288,8 +342,7 @@ fn manage_local_memory_review(
     let target_path = manage_utf8(target_path)?;
     let target_artifact = manage_utf8(target_artifact)?;
     let actor = manage_utf8(actor)?;
-    review_local_memory_correspondence(
-        LocalMemoryCorrespondenceReviewRequest::new(
+    let request = LocalMemoryCorrespondenceReviewRequest::new(
             repository_root,
             database,
             repository_identity,
@@ -303,9 +356,12 @@ fn manage_local_memory_review(
             actor,
             now,
             now,
-        ),
-        cancelled,
-    )
+        );
+    let request = match target_snapshot {
+        Some(snapshot) => request.with_archival_target_snapshot_sha256(manage_utf8(snapshot)?),
+        None => request,
+    };
+    review_local_memory_correspondence(request, cancelled)
     .map(|receipt| CliMemoryManageReport::Review {
         inserted: receipt.inserted(),
         maintenance: cli_memory_maintenance(receipt.maintenance()),

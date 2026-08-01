@@ -203,6 +203,26 @@ split/merge, and publication-fault matrix passes. A stable public API is still
 deferred. This design-partner alpha does not support a public-beta or
 production-readiness claim.
 
+## Phase 3 durable engineering-memory beta
+
+Phase 3 extends the completed local loop without changing the evidence-first
+trust promise. It adds isolated local personal memory, additional bounded
+memory kinds, reviewed multi-parent team merges, archival and `as-known-at`
+reads, and resumable task/verification receipts. Team records remain
+Git-reviewable; personal records never enter the repository or a default MCP
+response. A procedure becomes verified guidance only after a successful
+evidence-bearing verification receipt. Opt-in MCP Tasks project durable
+application-owned task identities and states; only their bounded result
+payload cache is process-local. Ordinary CLI and polling reads remain the
+mandatory fallback for clients that do not negotiate the extension.
+
+The beta gate is longitudinal: a declared source-only and naive-text-memory
+baseline must show more repeated failures or stale-memory use than the scoped
+memory path, while isolation fixtures show no personal-to-team or
+cross-repository leakage. The opt-in aggregate-only runner validates the
+declared paired execution and receipt shape, but it remains `not-attested` and
+does not by itself satisfy the beta gate.
+
 ## Non-goals for the first public beta
 
 - Matching broad claimed language counts.

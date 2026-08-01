@@ -3,6 +3,7 @@ use repowitness_domain::{
     AnalysisArtifactDigest, CanonicalMemoryDigest, CorrespondenceFingerprintDigest,
     DeclarationDigest, MemoryAuditActorId, MemoryCorrespondenceReviewOperation, MemoryRecordId,
     MemoryRecordedAtUnixMillis, RepositoryIdentityDigest, RepositoryPath, RepositoryPathLimits,
+    SourceSnapshotDigest,
 };
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
@@ -31,6 +32,7 @@ pub(crate) struct PreparedMemoryCorrespondenceReview {
     target_fact_ordinal: u64,
     actor: MemoryAuditActorId,
     recorded_at: MemoryRecordedAtUnixMillis,
+    target_snapshot: Option<SourceSnapshotDigest>,
 }
 
 impl PreparedMemoryCorrespondenceReview {
@@ -61,7 +63,18 @@ impl PreparedMemoryCorrespondenceReview {
             target_fact_ordinal,
             actor,
             recorded_at,
+            target_snapshot: None,
         }
+    }
+
+    /// Pins an archival review to a retained indexed target snapshot.
+    #[must_use]
+    pub(crate) const fn with_archival_target_snapshot(
+        mut self,
+        target_snapshot: SourceSnapshotDigest,
+    ) -> Self {
+        self.target_snapshot = Some(target_snapshot);
+        self
     }
 }
 
@@ -156,16 +169,32 @@ fn append_review_inner(
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|_| control_database_error(control))?;
     let source = load_active_source(&transaction, prepared.repository)?;
-    require_current_write_source(&transaction, source, control)?;
+    if prepared.target_snapshot.is_none() {
+        require_current_write_source(&transaction, source, control)?;
+    }
+    let target_snapshot = prepared.target_snapshot.unwrap_or(source.snapshot());
     let source_occurrence = load_source_occurrence(&transaction, source, prepared, control)?;
-    validate_target_occurrence(&transaction, source, prepared, control)?;
-    if review_exists(&transaction, source, prepared, &source_occurrence, control)? {
+    validate_target_occurrence(
+        &transaction,
+        source.workspace_id(),
+        target_snapshot,
+        prepared,
+        control,
+    )?;
+    if review_exists(
+        &transaction,
+        source,
+        target_snapshot,
+        prepared,
+        &source_occurrence,
+        control,
+    )? {
         transaction
             .commit()
             .map_err(|_| control_database_error(control))?;
         return Ok(MemoryCorrespondenceReviewReceipt { inserted: false });
     }
-    enforce_review_bounds(&transaction, source, prepared, control)?;
+    enforce_review_bounds(&transaction, source, target_snapshot, prepared, control)?;
     check_control(control)?;
     let inserted = transaction
         .execute(
@@ -199,7 +228,7 @@ fn append_review_inner(
                 source_occurrence.path,
                 source_occurrence.artifact,
                 source_occurrence.fact_ordinal,
-                source.snapshot().as_bytes().as_slice(),
+                target_snapshot.as_bytes().as_slice(),
                 prepared.target_path.as_bytes(),
                 prepared.target_artifact.as_bytes().as_slice(),
                 fixed_integer(prepared.target_fact_ordinal)?,
@@ -426,28 +455,34 @@ fn load_source_occurrence(
 
 fn validate_target_occurrence(
     transaction: &rusqlite::Transaction<'_>,
-    source: MemoryProjectionSource,
+    workspace_id: i64,
+    target_snapshot: SourceSnapshotDigest,
     prepared: &PreparedMemoryCorrespondenceReview,
     control: WriteControl<'_>,
 ) -> Result<(), SqliteStoreError> {
     let exists = transaction
         .query_row(
             "SELECT 1
-             FROM generation_files AS file
+             FROM index_generations AS generation
+             JOIN generation_files AS file
+               ON file.generation_id = generation.generation_id
              JOIN analysis_artifacts AS artifact
                ON artifact.artifact_digest = file.artifact_digest
               AND artifact.lifecycle_state = 'complete'
               AND artifact.language = 'rust'
              JOIN artifact_fact_correspondence AS correspondence
                ON correspondence.artifact_digest = file.artifact_digest
-              AND correspondence.fact_ordinal = ?4
+              AND correspondence.fact_ordinal = ?5
               AND correspondence.profile_id = 'rust-name-elided'
               AND correspondence.profile_version = 1
-             WHERE file.generation_id = ?1
-               AND file.repository_path = ?2
-               AND file.artifact_digest = ?3",
+             WHERE generation.workspace_id = ?1
+               AND generation.snapshot_digest = ?2
+               AND generation.lifecycle_state IN ('active', 'retained')
+               AND file.repository_path = ?3
+               AND file.artifact_digest = ?4",
             params![
-                source.generation().get(),
+                workspace_id,
+                target_snapshot.as_bytes().as_slice(),
                 prepared.target_path.as_bytes(),
                 prepared.target_artifact.as_bytes().as_slice(),
                 fixed_integer(prepared.target_fact_ordinal)?,
@@ -462,6 +497,7 @@ fn validate_target_occurrence(
 fn review_exists(
     transaction: &rusqlite::Transaction<'_>,
     source: MemoryProjectionSource,
+    target_snapshot: SourceSnapshotDigest,
     prepared: &PreparedMemoryCorrespondenceReview,
     original: &SourceOccurrence,
     control: WriteControl<'_>,
@@ -496,7 +532,7 @@ fn review_exists(
                 original.path,
                 original.artifact,
                 original.fact_ordinal,
-                source.snapshot().as_bytes().as_slice(),
+                target_snapshot.as_bytes().as_slice(),
                 prepared.target_path.as_bytes(),
                 prepared.target_artifact.as_bytes().as_slice(),
                 fixed_integer(prepared.target_fact_ordinal)?,
@@ -514,6 +550,7 @@ fn review_exists(
 fn enforce_review_bounds(
     transaction: &rusqlite::Transaction<'_>,
     source: MemoryProjectionSource,
+    target_snapshot: SourceSnapshotDigest,
     prepared: &PreparedMemoryCorrespondenceReview,
     control: WriteControl<'_>,
 ) -> Result<(), SqliteStoreError> {
@@ -531,7 +568,7 @@ fn enforce_review_bounds(
                 prepared.record_id.as_bytes().as_slice(),
                 prepared.revision.as_bytes().as_slice(),
                 i64::from(prepared.evidence_ordinal),
-                source.snapshot().as_bytes().as_slice(),
+                target_snapshot.as_bytes().as_slice(),
             ],
             |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?)),
         )

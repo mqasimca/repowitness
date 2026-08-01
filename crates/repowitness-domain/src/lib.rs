@@ -11,11 +11,13 @@ mod evidence;
 mod memory;
 mod memory_revalidation;
 mod path;
+mod personal_memory;
 mod phase2_evidence;
 mod resolution;
 mod result;
 mod scip_overlay;
 mod snapshot;
+mod task;
 mod workspace;
 
 pub use artifact::{AnalysisArtifactKey, AnalysisArtifactKeyVersion};
@@ -54,6 +56,10 @@ pub use path::{
     RepositoryPath, RepositoryPathByteCount, RepositoryPathComponentCount, RepositoryPathError,
     RepositoryPathLimits, RepositoryPathVersion,
 };
+pub use personal_memory::{
+    PersonalMemoryId, PersonalMemoryKind, PersonalMemoryProfileId, PersonalMemoryRecord,
+    PersonalMemoryRevision,
+};
 pub use phase2_evidence::{
     PHASE2_EVIDENCE_BALANCED_PROFILE_ID, PHASE2_EVIDENCE_BALANCED_PROFILE_VERSION,
     Phase2ContextCandidateId, Phase2ContextProfile, Phase2ContextProviderAttribution,
@@ -74,6 +80,10 @@ pub use snapshot::{
     SourceFileCount, SourceFileKind, SourceFileLimit, SourceManifest, SourceManifestEntry,
     SourceManifestError, SourceManifestVersion, SourceSnapshot, SourceSnapshotMetadata,
     SourceSnapshotVersion,
+};
+pub use task::{
+    MAX_TASK_CHECKPOINTS, MAX_TASK_TEXT_BYTES, MAX_TASK_VERIFICATION_OUTPUT_BYTES, TaskCheckpoint,
+    TaskError, TaskId, TaskState, TaskStatus, TaskText, TaskVerification, TaskVerificationOutcome,
 };
 pub use workspace::{
     ConnectedWorkspaceId, SourceSlotId, WORKSPACE_ID_BYTES, WorkspaceIdentityLengthError,

@@ -17,13 +17,16 @@ mod local_graph_index;
 mod local_graph_read;
 mod local_identity;
 mod local_index;
+mod local_known_at_history;
 mod local_memory_recall;
+mod local_personal_memory;
 mod local_phase2_context_build;
 mod local_retention;
 mod local_scip_evidence_read;
 mod local_scip_overlay_import;
 mod local_search;
 mod local_symbol_get;
+mod local_task;
 mod local_watch;
 mod memory_format;
 mod memory_import;
@@ -93,9 +96,18 @@ pub use local_index::{
     LocalIndexError, LocalIndexMutation, LocalIndexReport, LocalIndexRequest,
     index_local_repository, index_local_rust_repository,
 };
+pub use local_known_at_history::{
+    DEFAULT_LOCAL_KNOWN_AT_HISTORY_DEADLINE, LocalKnownAtHistoryError, LocalKnownAtHistoryRequest,
+    read_local_known_at_history,
+};
 pub use local_memory_recall::{
     DEFAULT_LOCAL_MEMORY_RECALL_DEADLINE, LocalMemoryRecallError, LocalMemoryRecallRequest,
     LocalMemoryRecallResult, LocalMemoryRecallSelection, recall_local_memory,
+};
+pub use local_personal_memory::{
+    DEFAULT_LOCAL_PERSONAL_MEMORY_READ_DEADLINE, DEFAULT_LOCAL_PERSONAL_MEMORY_WRITE_DEADLINE,
+    LocalPersonalMemoryAppendRequest, LocalPersonalMemoryError, LocalPersonalMemoryReadRequest,
+    append_local_personal_memory, read_local_personal_memory,
 };
 pub use local_phase2_context_build::{
     DEFAULT_LOCAL_PHASE2_CONTEXT_BUILD_DEADLINE, LocalPhase2ContextBuildError,
@@ -127,6 +139,11 @@ pub use local_symbol_get::{
     LocalSymbolGetResult, LocalSymbolPortError, LocalSymbolSelectorText, Sha256TextError,
     get_local_rust_symbol, get_local_symbol,
 };
+pub use local_task::{
+    DEFAULT_LOCAL_TASK_POLL_DEADLINE, DEFAULT_LOCAL_TASK_WRITE_DEADLINE, LocalTaskCheckpointError,
+    LocalTaskCheckpointRequest, LocalTaskListRequest, LocalTaskPollError, LocalTaskPollRequest,
+    MAX_LOCAL_TASK_LIST_RESULTS, append_local_task_checkpoint, list_local_tasks, poll_local_task,
+};
 pub use local_watch::{
     LOCAL_WATCH_PROFILE_VERSION, LocalWatchError, LocalWatchExit, LocalWatchReconciliation,
     LocalWatchReport, LocalWatchRequest, LocalWatchRequestError, MAX_LOCAL_WATCH_RUNTIME,
@@ -144,9 +161,10 @@ pub use memory_management::{
     LocalMemoryDatabaseIdentity, LocalMemoryFilePublicationStatus, LocalMemoryHistoryImportLimits,
     LocalMemoryHistoryImportReport, LocalMemoryHistoryImportRequest, LocalMemoryMaintenance,
     LocalMemoryMaintenanceStep, LocalMemoryManageError, LocalMemoryMutation,
-    LocalMemoryWriteReceipt, LocalMemoryWriteRequest, MemoryFileIdentityStatus,
-    MemoryFilePublicationStepStatus, approve_local_memory, import_local_memory_history,
-    review_local_memory_correspondence, validate_local_memory_actor, write_local_memory,
+    LocalMemoryWriteReceipt, LocalMemoryWriteRequest, LocalTeamMemorySyncReceipt,
+    LocalTeamMemorySyncRequest, MemoryFileIdentityStatus, MemoryFilePublicationStepStatus,
+    approve_local_memory, import_local_memory_history, review_local_memory_correspondence,
+    sync_local_team_memory, validate_local_memory_actor, write_local_memory,
 };
 pub use memory_revalidation::{
     DEFAULT_LOCAL_MEMORY_CANONICAL_BYTES, DEFAULT_LOCAL_MEMORY_GIT_QUERIES,
@@ -194,7 +212,10 @@ pub use repowitness_application::{Phase2ContextCandidate, Phase2ContextTier};
 pub use repowitness_domain::{
     ConfigurationDigest, ConnectedWorkspaceId, EvidenceLocation, MemoryAssurance, MemoryCommitId,
     MemoryCorrespondenceReviewOperation, MemoryKind, MemoryLifecycle, MemoryObjectFormat,
-    MemoryRevalidationTarget, Phase2ContextProviderAvailability, ResolutionStatus, SourceSlotId,
+    MemoryObservationSource, MemoryRevalidationTarget, PersonalMemoryId, PersonalMemoryKind,
+    PersonalMemoryProfileId, PersonalMemoryRecord, PersonalMemoryRevision,
+    Phase2ContextProviderAvailability, ResolutionStatus, SourceSlotId, SourceSnapshotDigest,
+    TaskId, TaskState, TaskStatus,
 };
 pub use rust_index::{
     DEFAULT_LOCAL_RUST_INDEX_DEADLINE, LocalRustIndexError, LocalRustIndexLimits,
@@ -209,15 +230,17 @@ pub use source_state::{
 pub use sqlite::{
     BackupIdentityStatus, BackupLimits, BackupMaintenanceStatus, BackupOutcome,
     BackupPublicationStatus, CheckpointOutcome, DEFAULT_RETAINED_GENERATIONS_PER_SOURCE_SLOT,
-    GenerationCoverage, GenerationId, GenerationRetentionPolicy, IndexStoreStartup,
-    MAX_CONNECTED_WORKSPACE_SOURCE_SLOTS, MAX_RETAINED_GENERATIONS_PER_SOURCE_SLOT,
-    MAX_RETENTION_BYTES, MAX_RETENTION_GENERATION_CANDIDATES, MAX_RETENTION_GENERATION_PINS,
-    MAX_RETENTION_ROWS, MAX_RETENTION_VIEW_PINS, MAX_SCIP_OVERLAY_DOCUMENTS, OwnedSqliteIndex,
-    OwnedSqliteReader, PinnedWorkspaceView, PinnedWorkspaceViewMember, PreparedRustGraphArtifact,
-    PreparedRustGraphGeneration, PreparedScipOverlay, ProjectionRebuildLimits,
-    ProjectionRebuildOutcome, RETENTION_POLICY_VERSION, RetentionApplyOutcome,
-    RetentionApplyRequest, RetentionLimits, RetentionPins, RetentionPlan, RetentionPlanDigest,
-    RetentionPlanRequest, RetentionPolicyDigest, RustGraphArchitectureSummary,
+    GenerationCoverage, GenerationId, GenerationRetentionPolicy, GitHistoryEvidence,
+    IndexStoreStartup, KnownAtApplicability, KnownAtEvidenceBasis, KnownAtHistoryCoverage,
+    KnownAtHistoryReceipt, KnownAtObservationEvidence, MAX_CONNECTED_WORKSPACE_SOURCE_SLOTS,
+    MAX_RETAINED_GENERATIONS_PER_SOURCE_SLOT, MAX_RETENTION_BYTES,
+    MAX_RETENTION_GENERATION_CANDIDATES, MAX_RETENTION_GENERATION_PINS, MAX_RETENTION_ROWS,
+    MAX_RETENTION_VIEW_PINS, MAX_SCIP_OVERLAY_DOCUMENTS, OwnedSqliteIndex, OwnedSqliteReader,
+    PersonalMemoryReceipt, PinnedWorkspaceView, PinnedWorkspaceViewMember,
+    PreparedRustGraphArtifact, PreparedRustGraphGeneration, PreparedScipOverlay,
+    ProjectionRebuildLimits, ProjectionRebuildOutcome, RETENTION_POLICY_VERSION,
+    RetentionApplyOutcome, RetentionApplyRequest, RetentionLimits, RetentionPins, RetentionPlan,
+    RetentionPlanDigest, RetentionPlanRequest, RetentionPolicyDigest, RustGraphArchitectureSummary,
     RustGraphAvailability, RustGraphCandidateRecord, RustGraphDefinitionRecord, RustGraphDirection,
     RustGraphEdgeKind, RustGraphEdgeKinds, RustGraphEdgeRecord, RustGraphEvidenceResult,
     RustGraphImpactClass, RustGraphImpactResult, RustGraphImpactedDefinition,
@@ -231,8 +254,8 @@ pub use sqlite::{
     ScipRelationshipEvidence, ScipSymbolEvidence, ScipSymbolEvidenceResult,
     ScipSyntaxSymbolResolution, SearchHit, SearchLimits, SearchResults, SourceSlotEpoch,
     SourceSlotGeneration, SourceSlotState, SqliteStoreError, SymbolLookupResults,
-    WorkspaceSourceSlot, WorkspaceViewId, WorkspaceViewMember, create_online_backup,
-    prepare_rust_graph_generation,
+    TaskCheckpointReceipt, TaskVerificationReceipt, WorkspaceSourceSlot, WorkspaceViewId,
+    WorkspaceViewMember, create_online_backup, prepare_rust_graph_generation,
 };
 pub use watch_reconciliation::{
     CompleteReconciliationWork, DEFAULT_WATCHER_DEBOUNCE_MS, DEFAULT_WATCHER_HINT_PATH_BYTES,

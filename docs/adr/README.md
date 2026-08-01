@@ -25,6 +25,11 @@ persistence tables are rooted in the immutable SQLite baseline accepted by
 ADR-0022 and upgraded through the compatible parser-diagnostic migration
 accepted by ADR-0024.
 
+Phase 3 begins from the accepted scoped-memory, historical-correspondence, and
+application-owned task contracts in ADR-0038 through ADR-0040. They retain the
+strict version-1 team record and extend the local-first system through
+compatible migrations and explicit capability negotiation.
+
 The
 [Phase 0 ratification review](../research/phase0-ratification-review-2026-07-28.md)
 recommended accepting ADR-0017, ADR-0019, and ADR-0023. Maintainers adopted
@@ -76,6 +81,9 @@ passed, so maintainers accepted ADR-0018 and then ADR-0021.
 | [0035](0035-phase2-scip-precision-overlay.md) | Import SCIP as a bounded precision overlay | Accepted |
 | [0036](0036-phase2-context-ranking-profiles.md) | Compile Phase 2 context through named evidence-ranking profiles | Accepted |
 | [0037](0037-phase2-scip-overlay-source-slot-scope.md) | Scope each SCIP overlay to one source slot in a pinned workspace view | Accepted |
+| [0038](0038-phase3-memory-scopes-and-kinds.md) | Separate Phase 3 team, personal, and archival memory | Accepted |
+| [0039](0039-phase3-historical-correspondence.md) | Preserve reviewed multi-parent and historical correspondence | Accepted |
+| [0040](0040-phase3-task-checkpoints-and-verification.md) | Keep task checkpoints application-owned and project them through MCP Tasks | Accepted |
 
 Use [0000-template.md](0000-template.md) for a new decision.
 

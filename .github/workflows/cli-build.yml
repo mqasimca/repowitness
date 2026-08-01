@@ -1,0 +1,70 @@
+name: CLI build
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cli-build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.target.name }}
+    runs-on: ${{ matrix.target.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - name: Linux x86_64
+            os: ubuntu-24.04
+            binary: repowitness
+          - name: macOS arm64
+            os: macos-14
+            binary: repowitness
+          - name: Windows x86_64
+            os: windows-2025
+            binary: repowitness.exe
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_TERM_COLOR: always
+    steps:
+      - name: Check out the exact RepoWitness revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: Verify the Rust toolchain
+        run: |
+          set -Eeuo pipefail
+          rustup show active-toolchain
+          rustc --version
+          cargo --version
+
+      - name: Build the release CLI
+        run: cargo build --release --locked -p repowitness-cli --bin repowitness
+
+      - name: Smoke-test the release CLI
+        run: |
+          set -Eeuo pipefail
+          binary="./target/release/${{ matrix.target.binary }}"
+          "$binary" --version
+          "$binary" --help >/dev/null
+
+      - name: Retain the release CLI
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: repowitness-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+          path: target/release/${{ matrix.target.binary }}
+          if-no-files-found: error
+          retention-days: 14

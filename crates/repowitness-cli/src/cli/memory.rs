@@ -58,6 +58,7 @@ const fn memory_mutation_operation(operation: LocalMemoryMutation) -> MemoryMuta
     match operation {
         LocalMemoryMutation::StoreStartup => MemoryMutationOperation::StoreStartup,
         LocalMemoryMutation::Approval => MemoryMutationOperation::Approval,
+        LocalMemoryMutation::TeamSync => MemoryMutationOperation::TeamSync,
         LocalMemoryMutation::HistoryImport => MemoryMutationOperation::HistoryImport,
         LocalMemoryMutation::CorrespondenceReview => MemoryMutationOperation::CorrespondenceReview,
         LocalMemoryMutation::Checkpoint => MemoryMutationOperation::Checkpoint,

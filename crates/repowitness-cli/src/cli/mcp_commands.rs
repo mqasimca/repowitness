@@ -42,8 +42,14 @@ fn run_mcp_server_with_adapters(
             EXIT_IO
         };
     }
-    let (arguments, configuration_invocation) =
-        match extract_configuration_arguments(&arguments, &["--enable-memory-writes"]) {
+    let (arguments, configuration_invocation) = match extract_configuration_arguments(
+        &arguments,
+        &[
+            "--enable-memory-writes",
+            "--enable-native-tasks",
+            "--enable-personal-memory",
+        ],
+    ) {
             Ok(parsed) => parsed,
             Err(message) => return emit_error(stderr, EXIT_USAGE, message),
         };
@@ -136,13 +142,28 @@ impl McpServerLauncher for TokioMcpServerLauncher {
             repository_identity: invocation.repository_identity,
             graph_workspace: invocation.graph_workspace,
             memory_actor: invocation.memory_actor,
+            personal_memory_profile: invocation.personal_memory_profile,
             configuration,
         });
-        let result = runtime.block_on(serve_stdio_with_surface(
-            service,
-            surface,
-            invocation.memory_writes_enabled,
-        ));
+        let result = runtime.block_on(async {
+            if invocation.personal_memory_profile.is_some() {
+                serve_stdio_with_surface_tasks_and_personal_memory(
+                    service,
+                    surface,
+                    invocation.memory_writes_enabled,
+                    invocation.native_tasks_enabled,
+                )
+                .await
+            } else {
+                serve_stdio_with_surface_and_native_tasks(
+                    service,
+                    surface,
+                    invocation.memory_writes_enabled,
+                    invocation.native_tasks_enabled,
+                )
+                .await
+            }
+        });
         result.map_err(McpLaunchError::Serve)
     }
 }
@@ -158,9 +179,15 @@ struct McpServeInvocation {
     repository_identity: String,
     graph_workspace: GraphWorkspaceContext,
     memory_writes_enabled: bool,
+    native_tasks_enabled: bool,
     memory_actor: Option<String>,
+    personal_memory_profile: Option<PersonalMemoryProfileId>,
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "the startup capability grammar is deliberately parsed as one fail-closed option set before any runtime initialization"
+)]
 fn parse_mcp_serve_arguments(arguments: &[OsString]) -> Result<McpServeInvocation, &'static str> {
     let mut root = None;
     let mut database = None;
@@ -168,7 +195,10 @@ fn parse_mcp_serve_arguments(arguments: &[OsString]) -> Result<McpServeInvocatio
     let mut connected_workspace = None;
     let mut source_slot = None;
     let mut memory_writes_enabled = false;
+    let mut native_tasks_enabled = false;
     let mut memory_actor = None;
+    let mut personal_memory_enabled = false;
+    let mut personal_memory_profile = None;
     let mut index = 0_usize;
     while index < arguments.len() {
         let option = &arguments[index];
@@ -179,6 +209,22 @@ fn parse_mcp_serve_arguments(arguments: &[OsString]) -> Result<McpServeInvocatio
                 );
             }
             memory_writes_enabled = true;
+            index += 1;
+            continue;
+        }
+        if option == OsStr::new("--enable-native-tasks") {
+            if native_tasks_enabled {
+                return Err("error: mcp-serve accepts --enable-native-tasks only once\n");
+            }
+            native_tasks_enabled = true;
+            index += 1;
+            continue;
+        }
+        if option == OsStr::new("--enable-personal-memory") {
+            if personal_memory_enabled {
+                return Err("error: mcp-serve accepts --enable-personal-memory only once\n");
+            }
+            personal_memory_enabled = true;
             index += 1;
             continue;
         }
@@ -209,6 +255,10 @@ fn parse_mcp_serve_arguments(arguments: &[OsString]) -> Result<McpServeInvocatio
             if memory_actor.replace(value.clone()).is_some() {
                 return Err("error: mcp-serve accepts --memory-actor only once\n");
             }
+        } else if option == OsStr::new("--personal-memory-profile") {
+            if personal_memory_profile.replace(value.clone()).is_some() {
+                return Err("error: mcp-serve accepts --personal-memory-profile only once\n");
+            }
         } else {
             return Err("error: unknown mcp-serve option; use mcp-serve --help\n");
         }
@@ -236,14 +286,36 @@ fn parse_mcp_serve_arguments(arguments: &[OsString]) -> Result<McpServeInvocatio
         source_slot,
     )?;
     let memory_actor = resolve_mcp_memory_actor(memory_writes_enabled, memory_actor)?;
+    let personal_memory_profile = resolve_mcp_personal_memory_profile(
+        personal_memory_enabled,
+        personal_memory_profile,
+    )?;
     Ok(McpServeInvocation {
         root,
         database,
         repository_identity: repository_identity.to_owned(),
         graph_workspace,
         memory_writes_enabled,
+        native_tasks_enabled,
         memory_actor,
+        personal_memory_profile,
     })
+}
+
+fn resolve_mcp_personal_memory_profile(
+    personal_memory_enabled: bool,
+    profile: Option<OsString>,
+) -> Result<Option<PersonalMemoryProfileId>, &'static str> {
+    match (personal_memory_enabled, profile) {
+        (false, None) => Ok(None),
+        (true, Some(profile)) => profile
+            .to_str()
+            .and_then(parse_personal_memory_profile)
+            .map(Some)
+            .ok_or("error: --enable-personal-memory requires --personal-memory-profile with 32 lowercase hex characters\n"),
+        (true, None) => Err("error: --enable-personal-memory requires --personal-memory-profile\n"),
+        (false, Some(_)) => Err("error: --personal-memory-profile requires --enable-personal-memory\n"),
+    }
 }
 
 fn resolve_mcp_graph_workspace(

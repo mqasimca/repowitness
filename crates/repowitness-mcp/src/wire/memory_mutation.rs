@@ -13,6 +13,8 @@ pub enum MemoryMutationRequestScope {
     Review,
     /// Observation-only bounded Git-history import.
     ImportHistory,
+    /// Repository-authored team-memory synchronization.
+    TeamSync,
     /// Immutable memory-projection rebuild and publication.
     Revalidation,
 }
@@ -26,6 +28,7 @@ impl MemoryMutationRequestScope {
             Self::Approve => "approve",
             Self::Review => "review",
             Self::ImportHistory => "import_history",
+            Self::TeamSync => "team_sync",
             Self::Revalidation => "revalidation",
         }
     }
@@ -45,6 +48,9 @@ impl MemoryMutationRequestScope {
             }
             Self::ImportHistory => {
                 "run read-only database diagnostics, then compare every intended journal revision and Git observation"
+            }
+            Self::TeamSync => {
+                "run read-only database diagnostics, then reload the exact repository-authored revision and observation receipt"
             }
             Self::Revalidation => {
                 "run read-only database diagnostics, then read the active projection for the exact source generation"
@@ -69,6 +75,8 @@ pub enum MemoryMutationOperation {
     CorrespondenceReview,
     /// Observation-only bounded Git-history import.
     HistoryImport,
+    /// Repository-authored team-memory synchronization.
+    TeamSync,
     /// Immutable memory-projection publication.
     ProjectionPublication,
     /// Post-commit WAL checkpoint maintenance.
@@ -86,6 +94,7 @@ impl MemoryMutationOperation {
             Self::Approval => "approval",
             Self::CorrespondenceReview => "correspondence_review",
             Self::HistoryImport => "history_import",
+            Self::TeamSync => "team_sync",
             Self::ProjectionPublication => "projection_publication",
             Self::Checkpoint => "checkpoint",
         }
@@ -112,6 +121,9 @@ impl MemoryMutationOperation {
             }
             Self::HistoryImport => {
                 "reload the immutable memory journal and compare every intended revision and Git observation"
+            }
+            Self::TeamSync => {
+                "reload the exact repository-authored revision and its immutable observation receipt before retrying"
             }
             Self::ProjectionPublication => {
                 "reopen the store and read the active memory projection for the exact source generation"

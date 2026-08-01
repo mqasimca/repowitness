@@ -43,3 +43,4 @@ manifest-pinned public corpus. It emits aggregate workload timing only:
 
 - [Phase 0 Rust evidence and memory](phase0/README.md)
 - [Phase 1 trustworthy local core](phase1/README.md)
+- [Phase 3 durable-memory longitudinal evaluation](phase3/README.md)

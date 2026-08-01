@@ -696,4 +696,10 @@ if (@errors) {
 
 system('perl', './scripts/check-phase1-benchmarks') == 0
   or exit 1;
+system('perl', './scripts/check-phase3-benchmarks') == 0
+  or exit 1;
+system('./scripts/check-phase3-longitudinal-receipt', '--self-test') == 0
+  or exit 1;
+system('./scripts/run-phase3-longitudinal', '--self-test') == 0
+  or exit 1;
 print 'benchmark checks passed for ', scalar(@manifests), " manifest(s)\n";

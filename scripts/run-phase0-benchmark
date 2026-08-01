@@ -210,15 +210,23 @@ case "$(uname -s)" in
         PEAK_RSS_KIB=$(awk '/maximum resident set size/ { print int($1 / 1024); exit }' "$TIME_OUTPUT")
         ;;
     Linux)
-        if ! /usr/bin/time -f 'peak_rss_kib=%M' "$PROBE" \
-            "$WORK_REPOSITORY" "$DATABASE" "$CLI" "$RUNS" \
-            "$MAX_FULL_INDEX_WALL_MS" "$MAX_WARM_QUERY_P95_MS" \
-            "$MAX_MATERIAL_RESULT_BYTES" "$MAX_DATABASE_BYTES" \
-            "$MAX_WAL_BYTES_AFTER_COMPLETION" 2>"$TIME_OUTPUT"; then
-            sed -n '1,120p' "$TIME_OUTPUT" >&2
-            exit 1
+        if [ -x /usr/bin/time ]; then
+            if ! /usr/bin/time -f 'peak_rss_kib=%M' "$PROBE" \
+                "$WORK_REPOSITORY" "$DATABASE" "$CLI" "$RUNS" \
+                "$MAX_FULL_INDEX_WALL_MS" "$MAX_WARM_QUERY_P95_MS" \
+                "$MAX_MATERIAL_RESULT_BYTES" "$MAX_DATABASE_BYTES" \
+                "$MAX_WAL_BYTES_AFTER_COMPLETION" 2>"$TIME_OUTPUT"; then
+                sed -n '1,120p' "$TIME_OUTPUT" >&2
+                exit 1
+            fi
+            PEAK_RSS_KIB=$(sed -n 's/^peak_rss_kib=//p' "$TIME_OUTPUT")
+        else
+            "$PROBE" "$WORK_REPOSITORY" "$DATABASE" "$CLI" "$RUNS" \
+                "$MAX_FULL_INDEX_WALL_MS" "$MAX_WARM_QUERY_P95_MS" \
+                "$MAX_MATERIAL_RESULT_BYTES" "$MAX_DATABASE_BYTES" \
+                "$MAX_WAL_BYTES_AFTER_COMPLETION"
+            PEAK_RSS_KIB=
         fi
-        PEAK_RSS_KIB=$(sed -n 's/^peak_rss_kib=//p' "$TIME_OUTPUT")
         ;;
     *)
         "$PROBE" "$WORK_REPOSITORY" "$DATABASE" "$CLI" "$RUNS" \

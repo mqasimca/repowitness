@@ -24,6 +24,7 @@ impl ConfigurationLoader for StubMcpConfigurationLoader {
 struct RecordingMcpLauncher {
     calls: Cell<u64>,
     memory_writes_enabled: Cell<Option<bool>>,
+    native_tasks_enabled: Cell<Option<bool>>,
     surface: Cell<Option<McpToolSurface>>,
     configuration: RefCell<Option<ResolvedConfiguration>>,
 }
@@ -33,6 +34,7 @@ impl RecordingMcpLauncher {
         Self {
             calls: Cell::new(0),
             memory_writes_enabled: Cell::new(None),
+            native_tasks_enabled: Cell::new(None),
             surface: Cell::new(None),
             configuration: RefCell::new(None),
         }
@@ -49,6 +51,8 @@ impl McpServerLauncher for RecordingMcpLauncher {
         self.calls.set(self.calls.get() + 1);
         self.memory_writes_enabled
             .set(Some(invocation.memory_writes_enabled));
+        self.native_tasks_enabled
+            .set(Some(invocation.native_tasks_enabled));
         self.surface.set(Some(surface));
         self.configuration.replace(Some(configuration));
         Ok(())
@@ -92,7 +96,53 @@ fn mcp_serve_arguments_are_complete_canonical_and_order_independent() {
     assert_eq!(invocation.database, Path::new("../index.db"));
     assert_eq!(invocation.repository_identity, identity);
     assert!(!invocation.memory_writes_enabled);
+    assert!(!invocation.native_tasks_enabled);
     assert_eq!(invocation.memory_actor, None);
+}
+
+#[test]
+fn mcp_native_tasks_require_one_explicit_startup_opt_in() {
+    let mut enabled = mcp_arguments(false);
+    enabled.push(OsString::from("--enable-native-tasks"));
+    let invocation = parse_mcp_serve_arguments(&enabled[2..]).expect("explicit task opt-in");
+    assert!(invocation.native_tasks_enabled);
+
+    enabled.push(OsString::from("--enable-native-tasks"));
+    assert!(parse_mcp_serve_arguments(&enabled[2..]).is_err());
+}
+
+#[test]
+fn mcp_personal_memory_requires_one_explicit_fixed_opaque_profile() {
+    let mut enabled = mcp_arguments(false);
+    enabled.extend([
+        OsString::from("--enable-personal-memory"),
+        OsString::from("--personal-memory-profile"),
+        OsString::from("ab".repeat(16)),
+    ]);
+    let invocation = parse_mcp_serve_arguments(&enabled[2..]).expect("explicit profile capability");
+    assert_eq!(
+        invocation
+            .personal_memory_profile
+            .expect("profile")
+            .as_bytes(),
+        [0xab; 16]
+    );
+
+    let profile = "ab".repeat(16);
+    let uppercase_profile = "AB".repeat(16);
+    for arguments in [
+        vec!["--enable-personal-memory"],
+        vec!["--personal-memory-profile", &profile],
+        vec![
+            "--enable-personal-memory",
+            "--personal-memory-profile",
+            &uppercase_profile,
+        ],
+    ] {
+        let mut incomplete = mcp_arguments(false);
+        incomplete.extend(arguments.into_iter().map(OsString::from));
+        assert!(parse_mcp_serve_arguments(&incomplete[2..]).is_err());
+    }
 }
 
 #[test]
@@ -270,6 +320,7 @@ fn mcp_resolves_explicit_layers_before_launching_the_runtime() {
     assert_eq!(loader.calls.get(), 1);
     assert_eq!(launcher.calls.get(), 1);
     assert_eq!(launcher.memory_writes_enabled.get(), Some(false));
+    assert_eq!(launcher.native_tasks_enabled.get(), Some(false));
     assert_eq!(launcher.surface.get(), Some(McpToolSurface::NativeV1));
     assert_eq!(
         launcher

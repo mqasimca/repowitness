@@ -1,0 +1,140 @@
+#!/usr/bin/env perl
+
+use strict;
+use warnings;
+
+use JSON::PP qw(decode_json);
+
+my $path = 'benchmarks/phase3/manifest.json';
+my @errors;
+
+sub report { push @errors, "$path: $_[0]"; }
+sub object { ref($_[0]) eq 'HASH' }
+sub array { ref($_[0]) eq 'ARRAY' }
+sub positive { defined($_[0]) && !ref($_[0]) && $_[0] =~ /\A[1-9][0-9]*\z/ }
+
+open my $handle, '<:raw', $path or die "$path: cannot read\n";
+local $/;
+my $manifest = eval { decode_json(<$handle>) };
+close $handle;
+die "$path: invalid JSON\n" if $@ || !object($manifest);
+
+report('benchmark_id is invalid')
+  if ($manifest->{benchmark_id} // '') ne 'phase3-durable-memory-longitudinal-v1';
+report('status must remain proposed') if ($manifest->{status} // '') ne 'proposed';
+my $phase3 = $manifest->{phase3_longitudinal};
+report('phase3_longitudinal must be an object') if !object($phase3);
+if (object($phase3)) {
+    report('Phase 3 longitudinal status must remain proposed')
+      if ($phase3->{status} // '') ne 'proposed';
+    report('runner_status must be implemented-not-attested')
+      if ($phase3->{runner_status} // '') ne 'implemented-not-attested';
+    my $runner = $phase3->{runner};
+    report('runner must be an object') if !object($runner);
+    if (object($runner)) {
+        my %expected = (
+            id => 'phase3-codex-longitudinal-v1', execution => 'opt-in-codex',
+            receipt_schema => 'phase3-longitudinal-receipt-v1.schema.json',
+            envelope_schema => 'codex-envelope-v1.schema.json',
+        );
+        for my $key (sort keys %expected) {
+            report("runner $key does not match the proposed contract")
+              if !defined($runner->{$key}) || ref($runner->{$key})
+              || $runner->{$key} ne $expected{$key};
+        }
+        for my $key (qw(max_runs_per_variant max_codex_seconds_per_run max_codex_output_bytes max_envelope_bytes)) {
+            report("runner $key must be positive") if !positive($runner->{$key});
+        }
+        report('runner max_runs_per_variant must be 5 through 10')
+          if !positive($runner->{max_runs_per_variant})
+          || $runner->{max_runs_per_variant} < 5 || $runner->{max_runs_per_variant} > 10;
+        report('runner maximums exceed bounded evaluator policy')
+          if positive($runner->{max_codex_seconds_per_run}) && $runner->{max_codex_seconds_per_run} > 600
+          || positive($runner->{max_codex_output_bytes}) && $runner->{max_codex_output_bytes} > 8 * 1024 * 1024
+          || positive($runner->{max_envelope_bytes}) && $runner->{max_envelope_bytes} > 24 * 1024 * 1024;
+        for my $schema ($runner->{receipt_schema}, $runner->{envelope_schema}) {
+            my $full = "benchmarks/phase3/$schema";
+            report("runner schema $schema is not a regular bounded file")
+              if !defined($schema) || !-f($full) || -l($full) || !defined(-s $full) || -s $full > 1_048_576;
+            next if !defined($schema) || !-f($full) || -l($full);
+            open my $schema_handle, '<:raw', $full or do { report("cannot read runner schema $schema"); next; };
+            local $/;
+            my $value = eval { decode_json(<$schema_handle>) };
+            close $schema_handle;
+            report("runner schema $schema is not a JSON object") if $@ || !object($value);
+        }
+    }
+    my $paired = $phase3->{paired_runs};
+    report('paired_runs must be an object') if !object($paired);
+    if (object($paired)) {
+        report('minimum_complete_runs_per_case must equal five')
+          if !positive($paired->{minimum_complete_runs_per_case})
+          || $paired->{minimum_complete_runs_per_case} != 5;
+        for my $key (qw(same_revision_per_pair same_question_per_pair same_source_evidence_budget_per_pair same_source_evidence_per_pair fresh_disposable_state_per_run)) {
+            report("paired_runs $key must be true")
+              if !JSON::PP::is_bool($paired->{$key}) || !$paired->{$key};
+        }
+    }
+    my %baselines = map { $_->{id} => 1 } @{$manifest->{baselines} // []};
+    my $required = $phase3->{required_baseline_ids};
+    report('required_baseline_ids must name both declared baselines')
+      if !array($required) || @$required != 2
+      || join("\0", sort @$required) ne join("\0", sort keys %baselines);
+    my $outcomes = $phase3->{outcome_requirements};
+    report('outcome_requirements must be an array') if !array($outcomes);
+    if (array($outcomes)) {
+        my %expected = (
+            'repeated-failures' => [qw(source-only naive-memory-text)],
+            'stale-memory-uses' => [qw(naive-memory-text)],
+        );
+        my %seen;
+        for my $outcome (@$outcomes) {
+            if (!object($outcome)) { report('outcome requirement must be an object'); next; }
+            my $id = $outcome->{id};
+            report('outcome requirement is invalid or repeated')
+              if !defined($id) || !$expected{$id} || $seen{$id}++;
+            report("outcome $id candidate maximum must equal zero")
+              if !defined($outcome->{candidate_maximum}) || $outcome->{candidate_maximum} != 0;
+            report("outcome $id baseline relation must be strict")
+              if ($outcome->{baseline_relation} // '') ne 'strictly-greater-than-candidate';
+            next if !defined($id) || !$expected{$id};
+            my @actual = sort @{$outcome->{baseline_ids} // []};
+            report("outcome $id baseline inventory is invalid")
+              if !array($outcome->{baseline_ids})
+              || join("\0", @actual) ne join("\0", sort @{$expected{$id}});
+        }
+        report('outcome requirement inventory is incomplete') if keys(%seen) != keys(%expected);
+    }
+    my $isolation = $phase3->{isolation};
+    report('isolation must be an object') if !object($isolation);
+    if (object($isolation)) {
+        for my $key (qw(max_personal_to_team_leaks max_cross_repository_leaks max_sensitive_scope_output_leaks)) {
+            report("isolation $key must equal zero") if !defined($isolation->{$key}) || $isolation->{$key} != 0;
+        }
+        report('isolation requires_disposable_scope_fixture must be true')
+          if !JSON::PP::is_bool($isolation->{requires_disposable_scope_fixture}) || !$isolation->{requires_disposable_scope_fixture};
+    }
+    my $attestation = $phase3->{attestation};
+    report('attestation must remain not-collected')
+      if !object($attestation) || ($attestation->{status} // '') ne 'not-collected'
+      || !JSON::PP::is_bool($attestation->{public_aggregate_only}) || !$attestation->{public_aggregate_only};
+}
+
+my $decision_path = 'benchmarks/phase3/codex-decision-v2.schema.json';
+open my $decision_handle, '<:raw', $decision_path or die "$decision_path: cannot read\n";
+local $/;
+my $decision = eval { decode_json(<$decision_handle>) };
+close $decision_handle;
+if ($@ || !object($decision)) {
+    report('Codex decision schema is invalid');
+} else {
+    my %required = map { $_ => 1 } @{$decision->{required} // []};
+    for my $key (qw(personal_to_team_leak cross_repository_leak sensitive_scope_output_leak)) {
+        report("Codex decision schema omits required scope signal $key") if !$required{$key};
+        report("Codex decision schema $key must be boolean")
+          if !object($decision->{properties}->{$key}) || ($decision->{properties}->{$key}->{type} // '') ne 'boolean';
+    }
+}
+
+if (@errors) { print STDERR join("\n", @errors), "\n"; exit 1; }
+print "Phase 3 benchmark contract checks passed\n";
