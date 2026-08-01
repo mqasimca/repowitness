@@ -114,6 +114,14 @@ impl CodeSearchPort for PinnedWorkspaceCodeSearchPort<'_> {
 /// Default end-to-end deadline for one local Phase 2 context build.
 pub const DEFAULT_LOCAL_PHASE2_CONTEXT_BUILD_DEADLINE: Duration = Duration::from_secs(10);
 
+/// Maximum complete Rust graph relationship input admitted while expanding one
+/// bounded Phase 2 context request.
+///
+/// This is intentionally independent from the traversal visit cap: the reader
+/// validates its complete immutable graph input before it can retain a small
+/// one-hop result set.
+const PHASE2_CONTEXT_GRAPH_INPUT_EDGE_LIMIT: u64 = 200_000;
+
 const PROVIDER_ID_VERSION: &[u8] = b"repowitness:phase2-provider-id:v1\0";
 const CANDIDATE_ID_VERSION: &[u8] = b"repowitness:phase2-candidate-id:v1\0";
 
@@ -920,7 +928,9 @@ fn graph_relation_candidates(
     // a broad lexical term fan out recursively here would spend the evidence
     // budget on transitive neighbours before each independent tier receives an
     // opportunity to contribute.
-    let limits = RustGraphReadLimits::try_new(
+    let limits = RustGraphReadLimits::try_new_with_input(
+        PHASE2_CONTEXT_GRAPH_INPUT_EDGE_LIMIT,
+        64 * 1024 * 1024,
         1,
         u32::from(max_results),
         10_000,
@@ -1479,6 +1489,33 @@ mod tests {
                             && std::str::from_utf8(relation.candidate().declaration())
                                 .is_ok_and(|source| source.contains("target"))
                 )
+        }));
+    }
+
+    #[test]
+    fn graph_expansion_accepts_complete_input_above_the_traversal_visit_cap() {
+        let directory = TempDirectory::new();
+        let repository = fixture_repository(&directory);
+        let mut source = String::from("pub fn target() {}\npub fn Widget() {\n");
+        source.push_str(&"target();\n".repeat(50_001));
+        source.push_str("}\n");
+        fs::write(repository.join("src/lib.rs"), source).expect("large graph fixture");
+        let database = directory.database();
+        index_local_repository(
+            LocalIndexRequest::new(&repository, &database, REPOSITORY_ID, 0),
+            Arc::new(AtomicBool::new(false)),
+        )
+        .expect("index");
+
+        let result = build_local_phase2_context(
+            LocalPhase2ContextBuildRequest::new(&repository, &database, REPOSITORY_ID, "Widget"),
+            Arc::new(AtomicBool::new(false)),
+        )
+        .expect("graph input above the traversal visit cap remains usable");
+
+        assert!(result.items().iter().any(|item| {
+            item.tier() == Phase2ContextTier::References
+                && matches!(item.payload(), LocalPhase2ContextItem::GraphRelation(_))
         }));
     }
 
