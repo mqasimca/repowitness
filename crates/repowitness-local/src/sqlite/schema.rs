@@ -1,5 +1,5 @@
 pub(super) const APPLICATION_ID: i64 = 0x5257_5031;
-pub(super) const SCHEMA_VERSION: i64 = 5;
+pub(super) const SCHEMA_VERSION: i64 = 6;
 pub(super) const MIGRATION_1_NAME: &str = "phase0_design_partner_baseline";
 pub(super) const MIGRATION_1: &str = concat!(
     include_str!("schema/baseline_1_core.sql"),
@@ -19,6 +19,9 @@ pub(super) const MIGRATION_4_NAME: &str = "phase2_scip_precision_overlay";
 pub(super) const MIGRATION_4: &str = include_str!("migrations/0004_phase2_scip_overlay.sql");
 pub(super) const MIGRATION_5_NAME: &str = "phase3_durable_memory_and_tasks";
 pub(super) const MIGRATION_5: &str = include_str!("migrations/0005_phase3_durable_memory.sql");
+pub(super) const MIGRATION_6_NAME: &str = "linear_graph_site_completion_validation";
+pub(super) const MIGRATION_6: &str =
+    include_str!("migrations/0006_linear_graph_site_completion.sql");
 
 pub(super) const RECREATE_GENERATION_SEARCH: &str = r#"
 DROP TABLE IF EXISTS generation_search;

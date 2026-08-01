@@ -12,9 +12,9 @@ use rusqlite::{Connection, OpenFlags, TransactionBehavior, params};
 
 use super::{
     APPLICATION_ID, MIGRATION_1, MIGRATION_1_NAME, MIGRATION_2, MIGRATION_2_NAME, MIGRATION_3,
-    MIGRATION_3_NAME, MIGRATION_4, MIGRATION_4_NAME, MIGRATION_5, MIGRATION_5_NAME, SCHEMA_VERSION,
-    SqliteStoreError, apply_migration, database_file_identity, migration_checksum, migrations,
-    open_index_writer, open_index_writer_with_identity_and_hook,
+    MIGRATION_3_NAME, MIGRATION_4, MIGRATION_4_NAME, MIGRATION_5, MIGRATION_5_NAME, MIGRATION_6,
+    MIGRATION_6_NAME, SCHEMA_VERSION, SqliteStoreError, apply_migration, database_file_identity,
+    migration_checksum, migrations, open_index_writer, open_index_writer_with_identity_and_hook,
     open_index_writer_with_identity_and_migration_hook,
 };
 
@@ -208,3 +208,4 @@ include!("tests/memory_startup.rs");
 include!("tests/baseline.rs");
 include!("tests/migration_2.rs");
 include!("tests/migration_3.rs");
+include!("tests/migration_6.rs");

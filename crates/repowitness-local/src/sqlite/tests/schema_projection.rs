@@ -41,6 +41,14 @@ fn migration_checksums_are_stable_golden_vectors() {
         ]
     );
     assert_eq!(
+        migration_checksum(MIGRATION_6),
+        [
+            0x74, 0xbe, 0xa1, 0xfd, 0xe3, 0x65, 0xed, 0x16, 0x99, 0x34, 0xbd, 0xcf, 0xe3,
+            0x03, 0x3c, 0x31, 0x3f, 0x83, 0x39, 0x13, 0xfc, 0x72, 0x9e, 0x64, 0x3b, 0xbe,
+            0xcc, 0xe1, 0x90, 0x90, 0xc7, 0xd2,
+        ]
+    );
+    assert_eq!(
         migrations(),
         [
             (1, MIGRATION_1_NAME, MIGRATION_1),
@@ -48,6 +56,7 @@ fn migration_checksums_are_stable_golden_vectors() {
             (3, MIGRATION_3_NAME, MIGRATION_3),
             (4, MIGRATION_4_NAME, MIGRATION_4),
             (5, MIGRATION_5_NAME, MIGRATION_5),
+            (6, MIGRATION_6_NAME, MIGRATION_6),
         ]
     );
     for transitional_statement in ["CREATE TEMP", "ALTER TABLE", "DROP TABLE"] {
@@ -56,7 +65,7 @@ fn migration_checksums_are_stable_golden_vectors() {
 }
 
 #[test]
-fn current_catalog_matches_the_phase_three_version_five_golden() {
+fn current_catalog_matches_the_version_six_golden() {
     let directory = TempDirectory::new();
     let connection =
         open_index_writer(&directory.database(), 123).expect("baseline should succeed");
@@ -89,9 +98,9 @@ fn current_catalog_matches_the_phase_three_version_five_golden() {
     assert_eq!(
         migration_checksum(&canonical_catalog),
         [
-            0x39, 0xf9, 0x42, 0xae, 0x44, 0x26, 0x7c, 0x65, 0x50, 0x05, 0xdb, 0x78, 0x0b, 0x3f,
-            0xd4, 0xd8, 0x69, 0x97, 0x4a, 0xea, 0x97, 0x92, 0xac, 0x3b, 0xca, 0x5a, 0x92, 0x1f,
-            0x39, 0x24, 0xc7, 0xa2,
+            0x36, 0x21, 0x49, 0xbb, 0xdc, 0xdc, 0xd9, 0x3c, 0xcf, 0x7f, 0x55, 0x74, 0x3d, 0xc5,
+            0x5d, 0x2b, 0x6a, 0xdf, 0x68, 0x4b, 0xf5, 0xbb, 0xe7, 0xf8, 0x4c, 0x82, 0xa7, 0xcc,
+            0x63, 0x35, 0x1c, 0x47,
         ]
     );
 }
@@ -435,6 +444,12 @@ fn fresh_database_has_exact_identity_ledger_and_required_schema() {
                 migration_checksum(MIGRATION_5).to_vec(),
                 123
             ),
+            (
+                6,
+                MIGRATION_6_NAME.to_owned(),
+                migration_checksum(MIGRATION_6).to_vec(),
+                123
+            ),
         ]
     );
     assert_eq!(tables, 57);
@@ -566,6 +581,53 @@ fn baseline_rust_correspondence_requires_complete_immutable_companions() {
         connection
             .execute("DELETE FROM artifact_fact_correspondence", [])
             .is_err()
+    );
+}
+
+#[test]
+fn graph_artifact_completion_rejects_missing_site_ordinals() {
+    let directory = TempDirectory::new();
+    let connection =
+        open_index_writer(&directory.database(), 123).expect("migration should succeed");
+    connection
+        .execute_batch(
+            "BEGIN IMMEDIATE;
+             INSERT INTO analysis_artifacts(
+                 artifact_digest, lifecycle_state, source_content_digest,
+                 producer_manifest_digest, configuration_digest,
+                 analysis_schema_digest, canonicalization_version,
+                 fact_count, visited_nodes, syntax_error_nodes,
+                 known_parser_limitation_nodes, payload_digest, language
+              ) VALUES (
+                 zeroblob(32), 'staging', zeroblob(32), zeroblob(32),
+                 zeroblob(32), zeroblob(32), 1, 0, 3, 0, 0,
+                 zeroblob(32), 'rust'
+              );
+             INSERT INTO rust_graph_artifacts(
+                 artifact_digest, site_profile_version, site_count,
+                 max_observed_depth, owned_text_bytes
+              ) VALUES (zeroblob(32), 1, 2, 0, 0);
+             INSERT INTO rust_graph_sites(
+                 artifact_digest, ordinal, site_kind, extraction_evidence,
+                 occurrence_start, occurrence_end, target_start, target_end,
+                 raw_target
+              ) VALUES
+                 (zeroblob(32), 0, 'reference', 'direct_syntax', 0, 1, 0, 1, 'a'),
+                 (zeroblob(32), 2, 'reference', 'direct_syntax', 2, 3, 2, 3, 'b');
+             COMMIT;",
+        )
+        .expect("gapped graph artifact should stage");
+
+    assert!(
+        connection
+            .execute(
+                "UPDATE analysis_artifacts
+                 SET lifecycle_state = 'complete'
+                 WHERE artifact_digest = zeroblob(32)",
+                [],
+            )
+            .is_err(),
+        "completion must reject a graph artifact with a missing site ordinal"
     );
 }
 

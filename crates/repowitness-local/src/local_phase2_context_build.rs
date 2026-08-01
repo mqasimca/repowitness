@@ -1360,6 +1360,7 @@ mod tests {
             Arc,
             atomic::{AtomicBool, AtomicU64, Ordering},
         },
+        time::Duration,
     };
 
     use repowitness_application::{
@@ -1368,8 +1369,8 @@ mod tests {
 
     use crate::{
         LocalCodeSearchRequest, LocalContextBuildRequest, LocalIndexRequest,
-        LocalRustGraphReadOutput, LocalRustGraphReadRequest, build_local_context,
-        index_local_repository, read_local_rust_graph, search_local_index,
+        LocalRustGraphReadOutput, LocalRustGraphReadRequest, LocalRustIndexLimits,
+        build_local_context, index_local_repository, read_local_rust_graph, search_local_index,
     };
 
     use super::*;
@@ -1378,6 +1379,7 @@ mod tests {
         "rwi1:h:",
         "0101010101010101010101010101010101010101010101010101010101010101"
     );
+    const LARGE_GRAPH_TEST_DEADLINE: Duration = Duration::from_secs(180);
     static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
     struct TempDirectory(PathBuf);
@@ -1501,14 +1503,26 @@ mod tests {
         source.push_str("}\n");
         fs::write(repository.join("src/lib.rs"), source).expect("large graph fixture");
         let database = directory.database();
+        let defaults = LocalRustIndexLimits::default();
+        let index_limits = LocalRustIndexLimits::new(
+            LARGE_GRAPH_TEST_DEADLINE,
+            defaults.discovery(),
+            defaults.source_read(),
+            defaults.preparation(),
+        );
+        // This fixture validates context construction above the traversal cap,
+        // not an interactive indexing service-level objective. Give the test a
+        // bounded deadline that remains valid under parallel CI contention.
         index_local_repository(
-            LocalIndexRequest::new(&repository, &database, REPOSITORY_ID, 0),
+            LocalIndexRequest::new(&repository, &database, REPOSITORY_ID, 0)
+                .with_limits(index_limits),
             Arc::new(AtomicBool::new(false)),
         )
         .expect("index");
 
         let result = build_local_phase2_context(
-            LocalPhase2ContextBuildRequest::new(&repository, &database, REPOSITORY_ID, "Widget"),
+            LocalPhase2ContextBuildRequest::new(&repository, &database, REPOSITORY_ID, "Widget")
+                .with_deadline(LARGE_GRAPH_TEST_DEADLINE),
             Arc::new(AtomicBool::new(false)),
         )
         .expect("graph input above the traversal visit cap remains usable");

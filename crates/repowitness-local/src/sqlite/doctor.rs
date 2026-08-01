@@ -99,7 +99,7 @@ fn validate_bounded_migration_ledger(connection: &Connection) -> Result<(), Sqli
                     typeof(checksum),
                     length(checksum),
                     substr(checksum, 1, 32)
-             FROM schema_migrations ORDER BY version LIMIT 5",
+             FROM schema_migrations ORDER BY version LIMIT 7",
         )
         .map_err(|_| SqliteStoreError::MigrationLedgerMismatch)?;
     let mut rows = statement
@@ -257,6 +257,30 @@ mod tests {
             before_bytes
         );
         assert_eq!(directory_entries(directory.path()), before_entries);
+    }
+
+    #[test]
+    fn unexpected_migration_ledger_row_is_rejected_read_only() {
+        let directory = TempDirectory::new();
+        let database = directory.path().join("index.sqlite3");
+        drop(
+            super::super::open_index_writer(&database, 123)
+                .expect("test database should be initialized"),
+        );
+        let connection = Connection::open(&database).expect("database should reopen");
+        connection
+            .execute(
+                "INSERT INTO schema_migrations(version, name, checksum, applied_at_unix_ms)
+                 VALUES (7, 'unexpected', zeroblob(32), 123)",
+                [],
+            )
+            .expect("unexpected ledger row should insert");
+        drop(connection);
+
+        assert!(
+            !validate_database_read_only(&database),
+            "the doctor must reject a ledger that is not exact"
+        );
     }
 
     #[test]

@@ -8,7 +8,8 @@
   [ADR-0027](../adr/0027-phase1-rust-syntax-graph.md),
   [ADR-0028](../adr/0028-reconciliation-watching-and-source-epochs.md), and
   [ADR-0029](../adr/0029-bounded-generation-retention-and-garbage-collection.md)
-- Compatibility: fresh databases and exact supported versions 1, 2, and 3
+- Compatibility: fresh databases and exact supported ledgers through current
+  version 6
 - Accepted predecessor:
   [Phase 0 SQLite schema version 2](phase0-sqlite-current-v2.md)
 
@@ -21,13 +22,15 @@
 The database uses:
 
 - `PRAGMA application_id = 0x52575031` (`RWP1`);
-- `PRAGMA user_version = 3`;
+- `PRAGMA user_version = 6`;
 - the byte-identical accepted migration 1 and migration 2 names, text, and
   checksums documented by the version-2 predecessor; and
 - accepted migration 3
   `phase1_workspace_graph_and_retention_foundation`, assembled in fixed order from
   workspace, graph tables and row guards, graph completion guards, and retention
-  fragments.
+  fragments; and
+- byte-identical compatible migrations 4 through 6, including migration 6
+  `linear_graph_site_completion_validation`.
 
 At the current graph-and-retention-enabled state, migration 3 has SHA-256
 checksum
@@ -35,14 +38,26 @@ checksum
 This vector is an accepted corruption/reopen guard. A checksum change requires
 a new versioned migration and an explicit decision.
 
-Fresh creation applies all three migrations. An exact version-1 or version-2
-database upgrades in one immediate migration-3 transaction. Existing
+Fresh creation applies all six migrations. An exact version-1 or version-2
+database upgrades through the fixed forward migration chain. Existing
 version-2 repository workspaces are backfilled with a byte-identical default
 connected-workspace ID and source-slot ID plus the repository's existing
 source epoch. A workspace with an active generation also receives an immutable
 slot-epoch completion receipt, one published default view carrying that epoch,
 and an active-view pointer. Source, generation, memory, approval, review, and
 audit rows are not rewritten.
+
+## Compatible current-schema migrations
+
+The current writer applies the exact six-entry migration ledger. Migration 6
+has SHA-256 checksum
+`74bea1fde365ed169934bdcfe3033c313f833913fc729e643bbecce19090c7d2` and
+replaces only the graph-artifact completion trigger. It preserves the required
+zero-based contiguous site ordinals by comparing the site count with the
+maximum ordinal plus one. The `rust_graph_sites` primary key makes ordinals
+unique and its `CHECK` constraint makes them nonnegative, so this is equivalent
+to the former correlated check while avoiding quadratic work for large graph
+artifacts. Historical migration text and checksums remain unchanged.
 
 ## Connected workspaces and source slots
 
