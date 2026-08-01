@@ -27,7 +27,7 @@ use crate::{
 };
 
 /// Default end-to-end deadline for one local graph read.
-pub const DEFAULT_LOCAL_RUST_GRAPH_READ_DEADLINE: Duration = Duration::from_secs(5);
+pub const DEFAULT_LOCAL_RUST_GRAPH_READ_DEADLINE: Duration = Duration::from_secs(30);
 
 /// Operation-specific bounded output from the local graph adapter.
 #[derive(Debug, Eq, PartialEq)]

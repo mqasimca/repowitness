@@ -16,6 +16,20 @@ const SOURCE_SLOT_ID: &str = concat!(
 );
 
 #[test]
+fn default_graph_read_deadline_is_explicit_and_sufficient_for_full_graph_reads() {
+    let request = LocalRustGraphReadRequest::new(
+        Path::new("index"),
+        REPOSITORY_ID,
+        RustGraphReadOperation::Status,
+    );
+    assert_eq!(
+        DEFAULT_LOCAL_RUST_GRAPH_READ_DEADLINE,
+        Duration::from_secs(30)
+    );
+    assert_eq!(request.deadline, DEFAULT_LOCAL_RUST_GRAPH_READ_DEADLINE);
+}
+
+#[test]
 fn request_is_bounded_and_redacted() {
     let request = LocalRustGraphReadRequest::new(
         Path::new("/private/graph.sqlite3"),

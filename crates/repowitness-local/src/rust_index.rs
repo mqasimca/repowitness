@@ -39,7 +39,7 @@ pub(crate) use source_snapshot_fence::{
 };
 
 /// Default wall-clock deadline for complete local source index preparation.
-pub const DEFAULT_LOCAL_RUST_INDEX_DEADLINE: Duration = Duration::from_secs(30);
+pub const DEFAULT_LOCAL_RUST_INDEX_DEADLINE: Duration = Duration::from_secs(120);
 
 /// All stage-specific and end-to-end limits for local source preparation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

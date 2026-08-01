@@ -11,8 +11,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::super::{
-    MAX_MCP_INTEROPERABLE_INTEGER, MAX_PATH_BYTES, MAX_PATH_COMPONENTS, MAX_PATH_TEXT_BYTES,
-    validate_timeout,
+    MAX_MCP_INTEROPERABLE_INTEGER, MAX_MCP_TIMEOUT_MS, MAX_PATH_BYTES, MAX_PATH_COMPONENTS,
+    MAX_PATH_TEXT_BYTES,
 };
 
 // Traversal loads the complete immutable relationship set before applying its
@@ -28,6 +28,7 @@ const DEFAULT_VISITED_EDGES: u64 = 200_000;
 const DEFAULT_FRONTIER: u64 = 10_000;
 const DEFAULT_OUTPUT_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_REQUESTED_OUTPUT_BYTES: u64 = 16 * 1024 * 1024;
+const DEFAULT_GRAPH_TIMEOUT_MS: u64 = 30_000;
 
 #[derive(Default, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -435,13 +436,21 @@ impl fmt::Debug for GraphReadServiceRequest {
     }
 }
 
+fn validate_graph_timeout(timeout_ms: Option<u64>) -> Result<Duration, &'static str> {
+    let timeout_ms = timeout_ms.unwrap_or(DEFAULT_GRAPH_TIMEOUT_MS);
+    if !(1..=MAX_MCP_TIMEOUT_MS).contains(&timeout_ms) {
+        return Err("timeout_ms must be between 1 and 30000");
+    }
+    Ok(Duration::from_millis(timeout_ms))
+}
+
 macro_rules! validate_input {
     ($name:ident, $operation:expr) => {
         impl $name {
             /// Validates the strict wire input into one canonical graph operation.
             pub fn validate(self) -> Result<GraphReadServiceRequest, &'static str> {
                 let exact_pin = self.selection.validate()?;
-                let timeout = validate_timeout(self.timeout_ms)?;
+                let timeout = validate_graph_timeout(self.timeout_ms)?;
                 let operation = $operation(self)?;
                 Ok(GraphReadServiceRequest {
                     exact_pin,
@@ -575,7 +584,9 @@ mod tests {
     fn selection_limits_and_unknown_fields_fail_closed() {
         let active: GraphStatusInput =
             serde_json::from_value(serde_json::json!({})).expect("empty input selects active view");
-        assert_eq!(active.validate().expect("valid").exact_pin(), None);
+        let active_request = active.validate().expect("valid");
+        assert_eq!(active_request.exact_pin(), None);
+        assert_eq!(active_request.timeout(), Duration::from_secs(30));
 
         let exact: GraphStatusInput = serde_json::from_value(serde_json::json!({
             "workspace_view": 4,

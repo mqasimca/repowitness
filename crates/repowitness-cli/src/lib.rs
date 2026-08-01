@@ -144,6 +144,7 @@ const HELP: &str = concat!(
     "  repowitness watch --repository-id <id> --database <path> [configuration layer options] [--] <repository>\n",
     "  repowitness gc <plan|apply> --database <path> [retention options]\n",
     "  repowitness context-build --repository-id <id> --database <path> --root <path> --intent <text> [configuration layer options]\n",
+    "  repowitness phase2-context-build --repository-id <id> --database <path> --root <path> --intent <text>\n",
     "  repowitness diagnostics --repository-id <id> --database <path> [configuration layer options]\n",
     "  repowitness graph <status|search|evidence|architecture|trace|impact> <options>\n",
     "  repowitness search --repository-id <id> --database <path> --query <text> [configuration layer options]\n",
@@ -289,7 +290,8 @@ const GRAPH_HELP: &str = concat!(
     "--timeout-ms, configuration layer options, and applicable --max-* bounds. Search\n",
     "accepts --query. Evidence accepts the exact site object emitted previously. Trace\n",
     "accepts a tagged start object; impact accepts an exact definition object. Edge\n",
-    "kinds are import, reference, and call. Output is bounded single-document JSON with\n",
+    "kinds are import, reference, and call. The default graph-read deadline is 30 seconds.\n",
+    "Output is bounded single-document JSON with\n",
     "generation context, publication receipt, evidence, coverage, and truncation.\n",
 );
 

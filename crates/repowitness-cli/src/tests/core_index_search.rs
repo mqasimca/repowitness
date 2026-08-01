@@ -7,6 +7,9 @@ fn help_and_version_are_successful_and_truthful() {
     assert_eq!(code, EXIT_SUCCESS);
     assert!(stdout.contains("bounded Rust/Go/TS/TSX/Python index."));
     assert!(stdout.contains("Search active Rust, Go, TypeScript, TSX, and Python symbols."));
+    assert!(stdout.contains(
+        "repowitness phase2-context-build --repository-id <id> --database <path> --root <path> --intent <text>\n"
+    ));
     assert!(stdout.contains("--repository-id"));
     assert!(stderr.is_empty());
     assert_eq!(inspector.calls.get(), 0);

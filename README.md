@@ -273,7 +273,7 @@ target/debug/repowitness index \
 The ID is an opaque logical repository identity, not a secret and not a digest
 of the path, remote, or commit. Reuse the same ID intentionally across clones
 or linked worktrees that represent the same logical repository. The command
-rejects a database inside the indexed worktree, uses a fixed 30-second
+rejects a database inside the indexed worktree, uses a fixed 120-second
 end-to-end policy, prints only aggregate results, and leaves the previous active
 generation readable if preparation, staging, activation, cancellation, or
 staleness fails. Index writers coordinate through a persistent sibling
@@ -625,7 +625,9 @@ truncation. Copy exact definition or site JSON from one response into
 `--workspace-view` and `--graph-generation` pair to read the same immutable
 context. `trace` and `impact` require one or more `--edge-kind` values from
 `import`, `reference`, and `call`. These are Rust-only syntax-derived
-relationships, not compiler- or package-resolved claims.
+relationships, not compiler- or package-resolved claims. Graph reads use a
+fixed 30-second default deadline; use the bounded `--timeout-ms` option only
+when a caller needs a different explicit budget.
 
 Serve the same active index to Codex over local stdio:
 
