@@ -661,8 +661,8 @@ Those tools then read that exact source slot; the other MCP tools retain the
 configured repository context.
 
 Register the default read-only release binary with Codex. The `CLI build`
-workflow also retains this binary for Linux, macOS, and Windows after a
-successful version-tag build.
+workflow publishes Linux, macOS, and Windows archives plus a `SHA256SUMS` file
+to the GitHub Release after a successful version-tag build.
 
 ```text
 codex mcp add repowitness -- \
