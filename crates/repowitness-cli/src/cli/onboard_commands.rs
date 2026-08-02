@@ -80,12 +80,15 @@ impl OnboardStateDirectory for PrivateOnboardStateDirectory {
         #[cfg(not(unix))]
         {
             let _ = repository_state;
-            return Err(());
+            Err(())
         }
-        ensure_outside_repository(repository_root, &repository_state)?;
-        Ok(PreparedOnboardDatabase {
-            database: repository_state.join(ONBOARD_DATABASE_FILE),
-        })
+        #[cfg(unix)]
+        {
+            ensure_outside_repository(repository_root, &repository_state)?;
+            Ok(PreparedOnboardDatabase {
+                database: repository_state.join(ONBOARD_DATABASE_FILE),
+            })
+        }
     }
 }
 
