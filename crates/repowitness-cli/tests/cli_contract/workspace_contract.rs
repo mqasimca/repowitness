@@ -406,15 +406,11 @@ fn scip_rust_import_derives_the_single_repository_source_slot() {
 fn write_synthetic_rust_analyzer(path: &Path, index: &[u8]) {
     use std::os::unix::fs::PermissionsExt as _;
 
-    let encoded = index
-        .iter()
-        .map(|byte| format!("\\{byte:03o}"))
-        .collect::<String>();
+    fs::write(path.with_extension("scip"), index)
+        .expect("synthetic SCIP fixture should be written");
     fs::write(
         path,
-        format!(
-            "#!/bin/sh\nset -eu\noutput=\nwhile [ $# -gt 0 ]; do\n  if [ \"$1\" = --output ]; then output=$2; shift 2; else shift; fi\ndone\ntest -n \"$output\"\nprintf '{encoded}' >\"$output\"\n"
-        ),
+        "#!/bin/sh\nset -eu\noutput=\nwhile [ $# -gt 0 ]; do\n  if [ \"$1\" = --output ]; then output=$2; shift 2; else shift; fi\ndone\ntest -n \"$output\"\ncp \"$0.scip\" \"$output\"\n",
     )
     .expect("synthetic rust-analyzer should be written");
     fs::set_permissions(path, fs::Permissions::from_mode(0o700))
