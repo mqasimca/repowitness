@@ -133,6 +133,7 @@ fn codex_install_fails_closed_without_private_catalog_state() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn codex_install_preserves_unmanaged_representation_and_reports_no_paths() {
     let directory = CodexTempDirectory::new();

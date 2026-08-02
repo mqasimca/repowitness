@@ -364,6 +364,7 @@ enum CodexIntegrationChange {
     Unchanged,
 }
 
+#[cfg(unix)]
 fn install_codex_catalog(home: &Path) -> Result<CodexIntegrationChange, ()> {
     let configuration_path = home.join(CODEX_CONFIG_FILE);
     let configuration = read_codex_configuration(&configuration_path)?;
@@ -385,6 +386,7 @@ fn install_codex_catalog(home: &Path) -> Result<CodexIntegrationChange, ()> {
     Ok(CodexIntegrationChange::Changed)
 }
 
+#[cfg(unix)]
 fn codex_configuration_has_unmanaged_integration(configuration: &str) -> bool {
     let mut in_mcp_servers = false;
     for line in configuration.lines().map(str::trim) {
@@ -416,6 +418,7 @@ fn codex_configuration_has_unmanaged_integration(configuration: &str) -> bool {
     false
 }
 
+#[cfg(unix)]
 fn codex_integration_toml(home: &Path) -> Result<String, ()> {
     let state_directory = home.join(CODEX_CATALOG_STATE_DIRECTORY);
     let state_directory = state_directory.to_str().ok_or(())?;

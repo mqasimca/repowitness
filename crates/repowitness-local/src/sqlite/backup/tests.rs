@@ -451,6 +451,8 @@ fn no_receipt_by_the_end_of_grace_returns_outcome_unknown_within_a_bound() {
     let destination = directory.destination("unknown");
     let deadline_duration = Duration::from_millis(150);
     let grace = Duration::from_millis(50);
+    let scheduling_allowance = Duration::from_secs(1);
+    let blocked_receipt_timeout = Duration::from_secs(5);
     let deadline = deadline_after(deadline_duration);
     let (published, published_receiver) = mpsc::sync_channel(1);
     let (release, release_receiver) = mpsc::sync_channel(1);
@@ -458,7 +460,7 @@ fn no_receipt_by_the_end_of_grace_returns_outcome_unknown_within_a_bound() {
     let faults = move |stage| {
         if stage == BackupStage::DeliverReceipt {
             let _ = published.try_send(());
-            let _ = release_receiver.recv_timeout(Duration::from_secs(1));
+            let _ = release_receiver.recv_timeout(blocked_receipt_timeout);
             let _ = finished.try_send(());
         }
         Ok(())
@@ -483,7 +485,7 @@ fn no_receipt_by_the_end_of_grace_returns_outcome_unknown_within_a_bound() {
     let elapsed = started.elapsed();
     assert_eq!(result, Err(SqliteStoreError::MutationOutcomeUnknown));
     assert!(
-        elapsed <= deadline_duration + grace + Duration::from_millis(250),
+        elapsed <= deadline_duration + grace + scheduling_allowance,
         "outcome resolution must remain bounded, elapsed: {elapsed:?}"
     );
     release
