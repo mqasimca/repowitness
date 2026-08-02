@@ -121,12 +121,18 @@ The CLI provides memory revalidation and recall, a bounded multi-language source
 architecture map, source-only architecture overview, and path-only repository
 topology inventory, Phase 0 and separately versioned Phase 2 context compilation,
 repository diagnostics, pinned Rust graph reads, contained `scip-import`, and
-package-scoped `scip-evidence` reads, exact-receipt `scip-symbol-resolve`
-navigation, and bounded producer-declared `scip-relationship-trace` traversal.
-`scip-import` accepts one explicit local
-artifact for one connected-workspace source slot, validates it against the
-current exact source view, and leaves the preceding overlay readable if any
-admission, source fence, or publication step fails. The local stdio MCP server
+explicit `scip-rust-import` production/import, package-scoped `scip-evidence`
+reads, exact-receipt `scip-symbol-resolve` navigation, and bounded
+producer-declared `scip-relationship-trace` traversal. `scip-import` accepts
+one explicit local artifact for one connected-workspace source slot, validates
+it against the current exact source view, and leaves the preceding overlay
+readable if any admission, source fence, or publication step fails.
+`scip-rust-import` is a separate direct CLI command: it explicitly invokes an
+already installed `rust-analyzer` to produce a private temporary SCIP artifact,
+then uses that same import fence. For an ordinary indexed repository it accepts
+the familiar `--repository-id`; connected workspaces use their explicit source
+slot selectors. It never runs during source indexing or from the read-only MCP
+server. The local stdio MCP server
 has twenty-four read-only tools:
 `architecture_map`, `architecture_overview`, `code_graph_query`, `code_search`, `context_build`, `phase2_context_build`, `diagnostics`,
 `graph_architecture`, `graph_evidence`, `graph_search`, `graph_status`,

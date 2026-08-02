@@ -49,7 +49,8 @@ Prove that RepoWitness can connect a source change to memory revalidation and a 
 
 ### Explicitly deferred
 
-Languages beyond Rust, Go, TypeScript, TSX, and Python, additional SCIP producers, PostgreSQL,
+Languages beyond Rust, Go, TypeScript, TSX, and Python, additional SCIP producers beyond the
+proposed explicit Rust adapter, PostgreSQL,
 remote MCP, persisted tasks, automatic memory extraction, runtime telemetry,
 UI, extension execution, raw ranking weights, vectors, and general
 `query_graph` compatibility.
@@ -130,6 +131,12 @@ activation.
   inbound or outbound producer-declared rows with explicit depth, edge, node,
   and output coverage. It remains Proposed pending maintainer review and does
   not broaden the native syntax graph or permit general graph queries.
+- The proposed [ADR-0052](adr/0052-explicit-rust-scip-producer-import.md)
+  implementation slice is complete: an explicitly invoked local
+  `rust-analyzer scip` process writes only a private temporary artifact, then
+  passes it through the existing exact source-slot import fence. It is absent
+  from normal indexing and MCP, and does not introduce a producer framework or
+  another language adapter.
 - Initial progress: `phase2-evidence-balanced-v1` has a separate CLI/MCP contract and
   deterministic pinned syntax/current-memory allocation. An explicit exact SCIP symbol can
   contribute one source-verified unambiguous overlay occurrence. Unique in-scope native graph

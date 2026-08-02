@@ -8,6 +8,11 @@ struct ScipImportInvocation {
     timeout: std::time::Duration,
 }
 
+enum ScipImportOverlayError {
+    InvalidWorkspaceView,
+    Import,
+}
+
 fn run_scip_import(
     args: impl Iterator<Item = OsString>,
     stdout: &mut impl Write,
@@ -28,6 +33,22 @@ fn run_scip_import(
         Ok(invocation) => invocation,
         Err(message) => return emit_error(stderr, EXIT_USAGE, message),
     };
+    match import_scip_overlay(&invocation) {
+        Ok(result) => emit_scip_import_output(stdout, result),
+        Err(ScipImportOverlayError::InvalidWorkspaceView) => emit_error(
+            stderr,
+            EXIT_USAGE,
+            "error: scip-import workspace view is invalid\n",
+        ),
+        Err(ScipImportOverlayError::Import) => {
+            emit_error(stderr, EXIT_SOFTWARE, "error: SCIP import failed\n")
+        }
+    }
+}
+
+fn import_scip_overlay(
+    invocation: &ScipImportInvocation,
+) -> Result<repowitness_local::LocalScipOverlayImportResult, ScipImportOverlayError> {
     let mut request = repowitness_local::LocalScipOverlayImportRequest::new(
         &invocation.database,
         &invocation.root,
@@ -40,18 +61,12 @@ fn run_scip_import(
         request = match request.with_exact_view(workspace_view) {
             Ok(request) => request,
             Err(_) => {
-                return emit_error(
-                    stderr,
-                    EXIT_USAGE,
-                    "error: scip-import workspace view is invalid\n",
-                );
+                return Err(ScipImportOverlayError::InvalidWorkspaceView);
             }
         };
     }
-    match repowitness_local::import_local_scip_overlay(request, Arc::new(AtomicBool::new(false))) {
-        Ok(result) => emit_scip_import_output(stdout, result),
-        Err(_) => emit_error(stderr, EXIT_SOFTWARE, "error: SCIP import failed\n"),
-    }
+    repowitness_local::import_local_scip_overlay(request, Arc::new(AtomicBool::new(false)))
+        .map_err(|_| ScipImportOverlayError::Import)
 }
 
 fn parse_scip_import_arguments(

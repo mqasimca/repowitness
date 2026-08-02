@@ -291,6 +291,136 @@ fn scip_import_admits_one_contained_file_and_publishes_an_exact_active_overlay()
     assert_workspace_phase2_context_mcp_with_scip(&fixture);
 }
 
+#[cfg(unix)]
+#[test]
+fn scip_rust_import_produces_then_imports_an_exact_active_overlay() {
+    let directory = TempDirectory::new();
+    let fixture = index_workspace_fixture(&directory);
+    let producer = directory.0.join("rust-analyzer");
+    write_synthetic_rust_analyzer(&producer, &valid_scip_index());
+
+    let imported = repowitness_os([
+        OsStr::new("scip-rust-import"),
+        OsStr::new("--database"),
+        fixture.database.as_os_str(),
+        OsStr::new("--root"),
+        fixture.repository.as_os_str(),
+        OsStr::new("--connected-workspace-id"),
+        OsStr::new(CONNECTED_WORKSPACE_ID),
+        OsStr::new("--source-slot-id"),
+        OsStr::new(SOURCE_SLOT_ID),
+        OsStr::new("--rust-analyzer"),
+        producer.as_os_str(),
+        OsStr::new("--producer-timeout-ms"),
+        OsStr::new("1000"),
+        OsStr::new("--import-timeout-ms"),
+        OsStr::new("1000"),
+    ]);
+    assert!(
+        imported.status.success(),
+        "{}",
+        String::from_utf8_lossy(&imported.stderr)
+    );
+    assert!(imported.stderr.is_empty());
+    let receipt: serde_json::Value =
+        serde_json::from_slice(&imported.stdout).expect("SCIP import receipt JSON");
+    assert_eq!(receipt["connected_workspace"], CONNECTED_WORKSPACE_ID);
+    assert_eq!(receipt["source_slot"], SOURCE_SLOT_ID);
+    assert_eq!(receipt["documents"], 1);
+    assert_eq!(receipt["occurrences"], 1);
+    assert_eq!(receipt["relationships"], 1);
+
+    let evidence = repowitness_os([
+        OsStr::new("scip-evidence"),
+        OsStr::new("--connected-workspace-id"),
+        OsStr::new(CONNECTED_WORKSPACE_ID),
+        OsStr::new("--source-slot-id"),
+        OsStr::new(SOURCE_SLOT_ID),
+        OsStr::new("--database"),
+        fixture.database.as_os_str(),
+        OsStr::new("--symbol"),
+        OsStr::new("scip-rust pkg 0/Widget#"),
+    ]);
+    assert!(
+        evidence.status.success(),
+        "{}",
+        String::from_utf8_lossy(&evidence.stderr)
+    );
+    let evidence: serde_json::Value =
+        serde_json::from_slice(&evidence.stdout).expect("SCIP evidence JSON");
+    assert_eq!(evidence["resolution"], "found");
+    assert_eq!(evidence["relationships"].as_array().map(Vec::len), Some(1));
+}
+
+#[cfg(unix)]
+#[test]
+fn scip_rust_import_derives_the_single_repository_source_slot() {
+    let directory = TempDirectory::new();
+    let repository = fixture_repository(&directory);
+    let database = directory.database();
+    assert!(index(&repository, &database, REPOSITORY_ID).status.success());
+    let producer = directory.0.join("rust-analyzer");
+    write_synthetic_rust_analyzer(&producer, &valid_scip_index());
+
+    let imported = repowitness_os([
+        OsStr::new("scip-rust-import"),
+        OsStr::new("--database"),
+        database.as_os_str(),
+        OsStr::new("--root"),
+        repository.as_os_str(),
+        OsStr::new("--repository-id"),
+        OsStr::new(REPOSITORY_ID),
+        OsStr::new("--rust-analyzer"),
+        producer.as_os_str(),
+        OsStr::new("--producer-timeout-ms"),
+        OsStr::new("1000"),
+        OsStr::new("--import-timeout-ms"),
+        OsStr::new("1000"),
+    ]);
+    assert!(
+        imported.status.success(),
+        "{}",
+        String::from_utf8_lossy(&imported.stderr)
+    );
+
+    let evidence = repowitness_os([
+        OsStr::new("scip-evidence"),
+        OsStr::new("--repository-id"),
+        OsStr::new(REPOSITORY_ID),
+        OsStr::new("--database"),
+        database.as_os_str(),
+        OsStr::new("--symbol"),
+        OsStr::new("scip-rust pkg 0/Widget#"),
+    ]);
+    assert!(
+        evidence.status.success(),
+        "{}",
+        String::from_utf8_lossy(&evidence.stderr)
+    );
+    let evidence: serde_json::Value =
+        serde_json::from_slice(&evidence.stdout).expect("SCIP evidence JSON");
+    assert_eq!(evidence["resolution"], "found");
+}
+
+#[cfg(unix)]
+fn write_synthetic_rust_analyzer(path: &Path, index: &[u8]) {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let encoded = index
+        .iter()
+        .map(|byte| format!("\\{byte:03o}"))
+        .collect::<String>();
+    fs::write(
+        path,
+        format!(
+            "#!/bin/sh\nset -eu\noutput=\nwhile [ $# -gt 0 ]; do\n  if [ \"$1\" = --output ]; then output=$2; shift 2; else shift; fi\ndone\ntest -n \"$output\"\nprintf '{encoded}' >\"$output\"\n"
+        ),
+    )
+    .expect("synthetic rust-analyzer should be written");
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+        .expect("synthetic rust-analyzer should be executable");
+}
+
 fn valid_scip_index() -> Vec<u8> {
     let symbol = b"scip-rust pkg 0/Widget#";
     let relationship_target = b"scip-rust pkg 0/Base#";

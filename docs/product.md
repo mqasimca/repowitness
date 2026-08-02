@@ -117,6 +117,9 @@ TypeScript, TSX, and Python:
 The alpha does not include other languages, PostgreSQL, remote MCP, automatic
 memory extraction, stored tasks, runtime telemetry, a UI, plugin execution,
 vector retrieval, raw ranking weights, or general graph-query compatibility.
+Additional language-specific SCIP producers remain deferred. The proposed
+explicit Rust producer/import CLI in ADR-0052 is not automatic indexing, an MCP
+operation, or a general compiler-execution framework.
 
 ### Implemented and verified
 
@@ -142,7 +145,7 @@ implemented. Its local memory-management base is also implemented:
   and immutable-view Rust graph status, exact-name search, site evidence,
   architecture, trace, and conservative impact application use cases;
 - `index`, `onboard`, `architecture-map`, `architecture-overview`, `repository-topology`, `search`, `locate-relevant-paths`, `symbol-search`, `outbound-sites`, `syntax-site-search`, `test-markers`,
-  `symbol-get`, `scip-symbol-resolve`, `scip-relationship-trace`, `graph`, `memory-manage`, `memory-revalidate`, `memory-recall`,
+  `symbol-get`, `scip-import`, proposed `scip-rust-import`, `scip-symbol-resolve`, `scip-relationship-trace`, `graph`, `memory-manage`, `memory-revalidate`, `memory-recall`,
   `context-build`, `diagnostics`, `mcp-serve`, `codex`, and `inspect-paths` CLI commands,
   plus path-free `config explain` and read-only `doctor`; explicit bounded
   user/workspace/repository configuration is

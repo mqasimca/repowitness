@@ -153,6 +153,9 @@ fn run_with_adapters(
     if command == OsStr::new("scip-import") {
         return run_scip_import(args, &mut stdout, &mut stderr);
     }
+    if command == OsStr::new("scip-rust-import") {
+        return run_scip_rust_import(args, &mut stdout, &mut stderr);
+    }
     if command == OsStr::new("search") {
         return run_search(
             args,
