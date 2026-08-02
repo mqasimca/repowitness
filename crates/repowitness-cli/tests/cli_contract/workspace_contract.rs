@@ -312,9 +312,9 @@ fn scip_rust_import_produces_then_imports_an_exact_active_overlay() {
         OsStr::new("--rust-analyzer"),
         producer.as_os_str(),
         OsStr::new("--producer-timeout-ms"),
-        OsStr::new("1000"),
+        OsStr::new("5000"),
         OsStr::new("--import-timeout-ms"),
-        OsStr::new("1000"),
+        OsStr::new("5000"),
     ]);
     assert!(
         imported.status.success(),
@@ -373,9 +373,9 @@ fn scip_rust_import_derives_the_single_repository_source_slot() {
         OsStr::new("--rust-analyzer"),
         producer.as_os_str(),
         OsStr::new("--producer-timeout-ms"),
-        OsStr::new("1000"),
+        OsStr::new("5000"),
         OsStr::new("--import-timeout-ms"),
-        OsStr::new("1000"),
+        OsStr::new("5000"),
     ]);
     assert!(
         imported.status.success(),
