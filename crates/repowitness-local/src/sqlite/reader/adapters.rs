@@ -20,7 +20,14 @@ impl CodeSearchPort for OwnedSqliteReader {
             cancelled,
             deadline,
         )?;
-        let SearchResults {
+        code_search_port_result_from_search_results(results)
+    }
+}
+
+pub(crate) fn code_search_port_result_from_search_results(
+    results: SearchResults,
+) -> Result<CodeSearchPortResult<GenerationId>, SqliteStoreError> {
+    let SearchResults {
             snapshot,
             generation,
             producer_manifest: _,
@@ -28,35 +35,34 @@ impl CodeSearchPort for OwnedSqliteReader {
             hits,
             total_matches,
             output_bytes,
-        } = results;
-        let mut candidates = Vec::with_capacity(hits.len());
-        for hit in hits.into_vec() {
-            let occurrence = RustSymbolOccurrence::try_new(
-                hit.fact_ordinal,
-                SourceArtifactEvidence::new(hit.artifact_digest, hit.producer_manifest),
-                hit.kind,
-                hit.name,
-                hit.qualified_name,
-                hit.name_span,
-                hit.declaration_span,
-            )
-            .map_err(|_| SqliteStoreError::IntegrityCheckFailed)?
-            .with_language(hit.language);
-            candidates.push(CodeSearchCandidate::new(
-                hit.path,
-                hit.content_digest,
-                occurrence,
-            ));
-        }
-        Ok(CodeSearchPortResult::new(
-            snapshot,
-            generation,
-            index_coverage,
-            candidates,
-            total_matches,
-            output_bytes,
-        ))
+    } = results;
+    let mut candidates = Vec::with_capacity(hits.len());
+    for hit in hits.into_vec() {
+        let occurrence = RustSymbolOccurrence::try_new(
+            hit.fact_ordinal,
+            SourceArtifactEvidence::new(hit.artifact_digest, hit.producer_manifest),
+            hit.kind,
+            hit.name,
+            hit.qualified_name,
+            hit.name_span,
+            hit.declaration_span,
+        )
+        .map_err(|_| SqliteStoreError::IntegrityCheckFailed)?
+        .with_language(hit.language);
+        candidates.push(CodeSearchCandidate::new(
+            hit.path,
+            hit.content_digest,
+            occurrence,
+        ));
     }
+    Ok(CodeSearchPortResult::new(
+        snapshot,
+        generation,
+        index_coverage,
+        candidates,
+        total_matches,
+        output_bytes,
+    ))
 }
 
 impl SymbolSearchPort for OwnedSqliteReader {
@@ -262,6 +268,9 @@ fn execute_reader_command(connection: &mut Connection, command: ReaderCommand) -
         ReaderCommand::ArchitectureMap(command) => {
             execute_architecture_map_command(connection, *command)
         }
+        ReaderCommand::WorkspaceArchitectureMap(command) => {
+            execute_workspace_architecture_map_command(connection, *command)
+        }
         ReaderCommand::ArchitectureOverview(command) => {
             execute_architecture_overview_command(connection, *command)
         }
@@ -270,6 +279,9 @@ fn execute_reader_command(connection: &mut Connection, command: ReaderCommand) -
         }
         ReaderCommand::WorkspaceSearch(command) => {
             execute_workspace_search_command(connection, *command)
+        }
+        ReaderCommand::WorkspaceSymbolSearch(command) => {
+            execute_workspace_symbol_search_command(connection, *command)
         }
         ReaderCommand::GetSymbol(command) => execute_symbol_command(connection, *command),
         ReaderCommand::LoadArtifacts(command) => execute_artifact_command(connection, *command),
@@ -379,6 +391,31 @@ fn execute_workspace_search_command(connection: &mut Connection, command: Worksp
         reply,
     } = command;
     let result = search_workspace_member(
+        connection,
+        &view,
+        source_slot,
+        &query,
+        limits,
+        cancelled,
+        deadline,
+    );
+    let _ = reply.try_send(result);
+}
+
+fn execute_workspace_symbol_search_command(
+    connection: &mut Connection,
+    command: WorkspaceSymbolSearchCommand,
+) {
+    let WorkspaceSymbolSearchCommand {
+        view,
+        source_slot,
+        query,
+        limits,
+        cancelled,
+        deadline,
+        reply,
+    } = command;
+    let result = search_workspace_member_symbols(
         connection,
         &view,
         source_slot,
@@ -625,6 +662,41 @@ fn search_workspace_member(
         )
         .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
     let result = workspace_search_transaction(connection, view, source_slot, query, limits);
+    connection
+        .progress_handler(0, None::<fn() -> bool>)
+        .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
+    match result {
+        Ok(results) => {
+            check_control(&cancelled, deadline)?;
+            Ok(results)
+        }
+        Err(SearchFailure::Sqlite(error)) if is_interrupted(&error) => {
+            check_control(&cancelled, deadline)?;
+            Err(SqliteStoreError::DatabaseOperationFailed)
+        }
+        Err(SearchFailure::Sqlite(_)) => Err(SqliteStoreError::DatabaseOperationFailed),
+        Err(SearchFailure::Store(error)) => Err(error),
+    }
+}
+
+fn search_workspace_member_symbols(
+    connection: &mut Connection,
+    view: &PinnedWorkspaceView,
+    source_slot: repowitness_domain::SourceSlotId,
+    query: &SymbolSearchQuery,
+    limits: SearchLimits,
+    cancelled: Arc<AtomicBool>,
+    deadline: Instant,
+) -> Result<SearchResults, SqliteStoreError> {
+    check_control(&cancelled, deadline)?;
+    let progress_cancelled = Arc::clone(&cancelled);
+    connection
+        .progress_handler(
+            PROGRESS_OPCODES,
+            Some(move || progress_cancelled.load(Ordering::Acquire) || Instant::now() >= deadline),
+        )
+        .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
+    let result = workspace_symbol_search_transaction(connection, view, source_slot, query, limits);
     connection
         .progress_handler(0, None::<fn() -> bool>)
         .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;

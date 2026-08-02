@@ -12,6 +12,29 @@ fn execute_architecture_map_command(connection: &mut Connection, command: Archit
     let _ = reply.try_send(result);
 }
 
+fn execute_workspace_architecture_map_command(
+    connection: &mut Connection,
+    command: WorkspaceArchitectureMapCommand,
+) {
+    let WorkspaceArchitectureMapCommand {
+        view,
+        source_slot,
+        limits,
+        cancelled,
+        deadline,
+        reply,
+    } = command;
+    let result = read_workspace_architecture_map(
+        connection,
+        &view,
+        source_slot,
+        limits,
+        cancelled,
+        deadline,
+    );
+    let _ = reply.try_send(result);
+}
+
 fn read_active_architecture_map(
     connection: &mut Connection,
     repository: RepositoryIdentityDigest,
@@ -45,6 +68,40 @@ fn read_active_architecture_map(
     }
 }
 
+fn read_workspace_architecture_map(
+    connection: &mut Connection,
+    view: &PinnedWorkspaceView,
+    source_slot: repowitness_domain::SourceSlotId,
+    limits: ArchitectureMapLimits,
+    cancelled: Arc<AtomicBool>,
+    deadline: Instant,
+) -> Result<ArchitectureMapPortResult<GenerationId>, SqliteStoreError> {
+    check_control(&cancelled, deadline)?;
+    let progress_cancelled = Arc::clone(&cancelled);
+    connection
+        .progress_handler(
+            PROGRESS_OPCODES,
+            Some(move || progress_cancelled.load(Ordering::Acquire) || Instant::now() >= deadline),
+        )
+        .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
+    let result = workspace_architecture_map_transaction(connection, view, source_slot, limits);
+    connection
+        .progress_handler(0, None::<fn() -> bool>)
+        .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
+    match result {
+        Ok(result) => {
+            check_control(&cancelled, deadline)?;
+            Ok(result)
+        }
+        Err(SearchFailure::Sqlite(error)) if is_interrupted(&error) => {
+            check_control(&cancelled, deadline)?;
+            Err(SqliteStoreError::DatabaseOperationFailed)
+        }
+        Err(SearchFailure::Sqlite(_)) => Err(SqliteStoreError::DatabaseOperationFailed),
+        Err(SearchFailure::Store(error)) => Err(error),
+    }
+}
+
 fn architecture_map_transaction(
     connection: &mut Connection,
     repository: RepositoryIdentityDigest,
@@ -52,6 +109,30 @@ fn architecture_map_transaction(
 ) -> Result<ArchitectureMapPortResult<GenerationId>, SearchFailure> {
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Deferred)?;
     let state = active_generation_state(&transaction, repository)?;
+    let (total_files, total_declarations) = architecture_map_totals(&transaction, state.generation)?;
+    let language_summaries = architecture_map_language_summaries(&transaction, state.generation)?;
+    let (files, output_bytes) = architecture_map_files(&transaction, state.generation, limits)?;
+    transaction.commit()?;
+    Ok(ArchitectureMapPortResult::new(
+        state.snapshot,
+        state.generation,
+        state.index_coverage,
+        files,
+        language_summaries,
+        total_files,
+        total_declarations,
+        output_bytes,
+    ))
+}
+
+fn workspace_architecture_map_transaction(
+    connection: &mut Connection,
+    view: &PinnedWorkspaceView,
+    source_slot: repowitness_domain::SourceSlotId,
+    limits: ArchitectureMapLimits,
+) -> Result<ArchitectureMapPortResult<GenerationId>, SearchFailure> {
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Deferred)?;
+    let state = workspace_search_state(&transaction, view, source_slot)?;
     let (total_files, total_declarations) = architecture_map_totals(&transaction, state.generation)?;
     let language_summaries = architecture_map_language_summaries(&transaction, state.generation)?;
     let (files, output_bytes) = architecture_map_files(&transaction, state.generation, limits)?;

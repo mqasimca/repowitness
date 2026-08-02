@@ -620,6 +620,191 @@ fn tool_contract_is_exact_sorted_versioned_and_read_only() {
     );
 }
 
+#[tokio::test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one transport-level isolation fixture keeps selector-schema, non-invocation, single-surface, and exact-routing assertions auditable together"
+)]
+async fn registry_mode_requires_an_explicit_selector_and_routes_only_to_its_service() {
+    let first_id = "rwi1:h:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    let second_id = "rwi1:h:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
+    let first = Arc::new(FakeService::new());
+    let second = Arc::new(FakeService::new());
+    let server = RepoWitnessMcpServer::with_repository_registry(BTreeMap::from([
+        (
+            first_id.to_owned(),
+            first.clone() as Arc<dyn RepositoryService>,
+        ),
+        (
+            second_id.to_owned(),
+            second.clone() as Arc<dyn RepositoryService>,
+        ),
+    ]))
+    .expect("non-empty bounded registry");
+    assert_eq!(server.tools.len(), 24);
+    assert!(
+        server
+            .tools
+            .iter()
+            .all(|tool| tool.name.as_ref() != MEMORY_MANAGE_TOOL_NAME)
+    );
+    let code_search = server
+        .tools
+        .iter()
+        .find(|tool| tool.name.as_ref() == CODE_SEARCH_TOOL_NAME)
+        .expect("code-search tool");
+    let properties = code_search
+        .input_schema
+        .get("properties")
+        .and_then(serde_json::Value::as_object)
+        .expect("object properties");
+    assert_eq!(
+        properties
+            .get("repository_id")
+            .and_then(|value| value.get("enum")),
+        Some(&serde_json::json!([first_id, second_id]))
+    );
+    assert!(
+        code_search
+            .input_schema
+            .get("required")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|required| required.contains(&serde_json::json!("repository_id")))
+    );
+    let single_repository_server = RepoWitnessMcpServer::new(first.clone());
+    let single_code_search = single_repository_server
+        .tools
+        .iter()
+        .find(|tool| tool.name.as_ref() == CODE_SEARCH_TOOL_NAME)
+        .expect("single-repository code-search tool");
+    assert!(
+        single_code_search
+            .input_schema
+            .get("properties")
+            .and_then(serde_json::Value::as_object)
+            .is_some_and(|properties| !properties.contains_key("repository_id"))
+    );
+
+    let (server_transport, client_transport) = tokio::io::duplex(32 * 1024);
+    let server_task = tokio::spawn(async move {
+        server
+            .serve(server_transport)
+            .await
+            .expect("server starts")
+            .waiting()
+            .await
+            .expect("server stops")
+    });
+    let client = ().serve(client_transport).await.expect("client starts");
+    for arguments in [
+        serde_json::json!({"query": "run"}),
+        serde_json::json!({"query": "run", "repository_id": "unknown"}),
+        serde_json::json!({"query": "run", "repository_id": 7}),
+    ] {
+        client
+            .call_tool(
+                CallToolRequestParams::new(CODE_SEARCH_TOOL_NAME)
+                    .with_arguments(json_object(arguments)),
+            )
+            .await
+            .expect_err("invalid registry selection must be a protocol error");
+    }
+    assert_eq!(first.search_calls.load(Ordering::Relaxed), 0);
+    assert_eq!(second.search_calls.load(Ordering::Relaxed), 0);
+
+    for (repository_id, expected_first_calls, expected_second_calls) in
+        [(first_id, 1, 0), (second_id, 1, 1)]
+    {
+        let response = client
+            .call_tool(
+                CallToolRequestParams::new(CODE_SEARCH_TOOL_NAME).with_arguments(json_object(
+                    serde_json::json!({"query": "run", "repository_id": repository_id}),
+                )),
+            )
+            .await
+            .expect("registered service call succeeds");
+        assert_eq!(response.is_error, Some(false));
+        assert_eq!(
+            first.search_calls.load(Ordering::Relaxed),
+            expected_first_calls
+        );
+        assert_eq!(
+            second.search_calls.load(Ordering::Relaxed),
+            expected_second_calls
+        );
+    }
+
+    client.cancel().await.expect("client closes");
+    server_task.await.expect("server task");
+}
+
+#[tokio::test]
+async fn catalog_mode_defaults_only_to_its_process_fixed_repository() {
+    let first_id = "rwi1:h:CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC";
+    let second_id = "rwi1:h:DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD";
+    let first = Arc::new(FakeService::new());
+    let second = Arc::new(FakeService::new());
+    let server = RepoWitnessMcpServer::with_repository_catalog(
+        BTreeMap::from([
+            (
+                first_id.to_owned(),
+                first.clone() as Arc<dyn RepositoryService>,
+            ),
+            (
+                second_id.to_owned(),
+                second.clone() as Arc<dyn RepositoryService>,
+            ),
+        ]),
+        first_id.to_owned(),
+    )
+    .expect("catalog default names an admitted service");
+    let code_search = server
+        .tools
+        .iter()
+        .find(|tool| tool.name.as_ref() == CODE_SEARCH_TOOL_NAME)
+        .expect("code-search tool");
+    assert!(
+        code_search
+            .input_schema
+            .get("required")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|required| !required.contains(&serde_json::json!("repository_id")))
+    );
+
+    let (server_transport, client_transport) = tokio::io::duplex(32 * 1024);
+    let server_task = tokio::spawn(async move {
+        server
+            .serve(server_transport)
+            .await
+            .expect("server starts")
+            .waiting()
+            .await
+            .expect("server stops")
+    });
+    let client = ().serve(client_transport).await.expect("client starts");
+    client
+        .call_tool(
+            CallToolRequestParams::new(CODE_SEARCH_TOOL_NAME)
+                .with_arguments(json_object(serde_json::json!({"query": "run"}))),
+        )
+        .await
+        .expect("default catalog call succeeds");
+    assert_eq!(first.search_calls.load(Ordering::Relaxed), 1);
+    assert_eq!(second.search_calls.load(Ordering::Relaxed), 0);
+    client
+        .call_tool(
+            CallToolRequestParams::new(CODE_SEARCH_TOOL_NAME).with_arguments(json_object(
+                serde_json::json!({"query": "run", "repository_id": second_id}),
+            )),
+        )
+        .await
+        .expect("explicit catalog call succeeds");
+    assert_eq!(first.search_calls.load(Ordering::Relaxed), 1);
+    assert_eq!(second.search_calls.load(Ordering::Relaxed), 1);
+    client.cancel().await.expect("client closes");
+    server_task.await.expect("server task");
+}
+
 #[test]
 fn encoded_call_tool_result_is_checked_against_the_output_budget() {
     let result = operation_result(Ok(search_output()), 32).expect("serialization succeeds");

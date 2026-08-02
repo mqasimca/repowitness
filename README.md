@@ -723,6 +723,85 @@ together at `mcp-serve` startup to select the graph and SCIP-overlay source.
 Those tools then read that exact source slot; the other MCP tools retain the
 configured repository context.
 
+To use one local MCP entry for several independently indexed repositories,
+create a trusted operator-owned registry. It is strict JSON, has only absolute
+paths, is read once at startup, and is never returned by the server:
+
+```json
+{
+  "schema_version": 1,
+  "repositories": [
+    {
+      "repository_id": "rwi1:h:0000000000000000000000000000000000000000000000000000000000000001",
+      "root": "/absolute/path/to/repository-a",
+      "database": "/absolute/path/to/repowitness-a.sqlite3"
+    },
+    {
+      "repository_id": "rwi1:h:0000000000000000000000000000000000000000000000000000000000000002",
+      "root": "/absolute/path/to/repository-b",
+      "database": "/absolute/path/to/repowitness-b.sqlite3"
+    }
+  ]
+}
+```
+
+Start the read-only registry server with `mcp-serve --registry
+/absolute/path/to/repowitness-mcp-registry.json`. It exposes the same 24
+canonical read tools, but every call must include one exact `repository_id`
+from that tool's schema. There is no default repository and callers cannot
+supply paths, databases, source slots, or mutation/task capabilities. Restart
+the MCP process after changing the registry. See the [registry format](docs/schemas/mcp-repository-registry-v1.md)
+and [ADR-0049](docs/adr/0049-local-multi-repository-mcp-registry.md) for all
+limits and exclusions.
+
+For the normal one-Codex, many-worktree workflow, install the global catalog
+integration instead. Ensure the released `repowitness` binary is on the Codex
+process `PATH`, then run this once:
+
+```text
+repowitness codex install
+```
+
+It adds only a marked global `mcp_servers.repowitness` entry and a short
+`SessionStart` guidance hook to Codex's user configuration. Restart Codex and
+review/trust that hook with `/hooks`, as required by Codex. From then on, every
+Codex session started inside a Git worktree runs one `mcp-serve --catalog`
+process: it indexes or incrementally refreshes only that containing worktree
+into a private Codex-owned state directory before serving MCP, and makes that
+one repository the default. Other catalog entries, if any, still require their exact opaque
+`repository_id`; callers never receive roots, databases, or a catalog listing.
+The catalog has no daemon, watcher, parent/sibling/home scan, remote service,
+or mutation surface. Use `repowitness codex remove` to delete only the marked
+integration records. See the [catalog format](docs/schemas/mcp-catalog-v1.md)
+and [ADR-0050](docs/adr/0050-opt-in-codex-catalog-onboarding.md) for the
+complete boundary.
+
+The private-state catalog currently requires a Unix host. On Windows it fails
+closed until RepoWitness has an equivalent private-state ACL boundary; use the
+explicit single-repository or registry MCP setup below in the meantime.
+
+When several repositories are one explicitly declared local product stack,
+create that stack once (with the same Codex home used by the installation):
+
+```text
+repowitness codex workspace create --name product-stack \
+  --repository /absolute/path/to/repository-a \
+  --repository /absolute/path/to/repository-b
+repowitness codex workspace list
+```
+
+Starting Codex in any declared member then refreshes all members through one
+atomic connected-workspace index and defaults MCP calls to that current member.
+Use the opaque `repository_id` offered by the tool schema to inspect another
+member. The stack is never inferred from sibling directories, imports, or
+package metadata; update membership by removing and recreating its named
+workspace. Shared membership alone does not create cross-repository semantic
+edges: those require attributed supported evidence. The source-view-aware tools
+are code search, relevant paths, typed declaration search, architecture map,
+Rust graph reads, SCIP reads, and Phase 2 context. See the [connected-workspace catalog
+format](docs/schemas/codex-connected-workspace-catalog-v1.md) and
+[ADR-0051](docs/adr/0051-explicit-codex-connected-workspace-catalog.md).
+
 Register the default read-only release binary with Codex. The `CLI build`
 workflow publishes Linux, macOS, and Windows archives plus a `SHA256SUMS` file
 to the GitHub Release after a successful version-tag build.
@@ -734,6 +813,14 @@ codex mcp add repowitness -- \
   --database /absolute/path/to/repowitness.sqlite3 \
   --root /absolute/path/to/repository
 codex mcp list
+```
+
+For the multi-repository registry mode, use one Codex entry instead:
+
+```text
+codex mcp add repowitness-all -- \
+  /absolute/path/to/repowitness/target/release/repowitness mcp-serve \
+  --registry /absolute/path/to/repowitness-mcp-registry.json
 ```
 
 Alternatively, place the following in a trusted repository's

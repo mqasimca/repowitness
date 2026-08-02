@@ -13,7 +13,10 @@ use repowitness_application::{
     RelevantPathsResult, ResolvedConfiguration, locate_relevant_paths,
 };
 
-use crate::{GenerationId, LocalCodeSearchError, LocalCodeSearchRequest, search_local_index};
+use crate::{
+    GenerationId, LocalCodeSearchError, LocalCodeSearchRequest,
+    local_search::LocalCodeSearchWorkspace, search_local_index,
+};
 
 /// Default end-to-end deadline for one local lexical path-navigation request.
 pub const DEFAULT_LOCAL_RELEVANT_PATHS_DEADLINE: Duration = Duration::from_secs(5);
@@ -25,7 +28,7 @@ pub type LocalRelevantPathsResult = RelevantPathsResult<GenerationId>;
 #[derive(Clone, Copy)]
 pub struct LocalRelevantPathsRequest<'a> {
     database: &'a Path,
-    repository_identity: &'a str,
+    workspace: LocalCodeSearchWorkspace<'a>,
     query: &'a str,
     limits: RelevantPathsLimits,
     configuration: Option<&'a ResolvedConfiguration>,
@@ -38,7 +41,30 @@ impl<'a> LocalRelevantPathsRequest<'a> {
     pub fn new(database: &'a Path, repository_identity: &'a str, query: &'a str) -> Self {
         Self {
             database,
-            repository_identity,
+            workspace: LocalCodeSearchWorkspace::SingleRepository {
+                repository_identity,
+            },
+            query,
+            limits: RelevantPathsLimits::default(),
+            configuration: None,
+            deadline: DEFAULT_LOCAL_RELEVANT_PATHS_DEADLINE,
+        }
+    }
+
+    /// Constructs a path-navigation projection for one connected source slot.
+    #[must_use]
+    pub fn for_connected_workspace(
+        database: &'a Path,
+        connected_workspace: &'a str,
+        source_slot: &'a str,
+        query: &'a str,
+    ) -> Self {
+        Self {
+            database,
+            workspace: LocalCodeSearchWorkspace::ConnectedWorkspace {
+                connected_workspace,
+                source_slot,
+            },
             query,
             limits: RelevantPathsLimits::default(),
             configuration: None,
@@ -76,7 +102,7 @@ impl fmt::Debug for LocalRelevantPathsRequest<'_> {
         formatter
             .debug_struct("LocalRelevantPathsRequest")
             .field("database", &"<redacted-path>")
-            .field("repository_identity", &"<redacted-identity>")
+            .field("workspace", &self.workspace)
             .field("query", &"<redacted-query>")
             .field("limits", &self.limits)
             .field(
@@ -133,11 +159,23 @@ pub fn locate_local_relevant_paths(
     request: LocalRelevantPathsRequest<'_>,
     cancelled: Arc<AtomicBool>,
 ) -> Result<LocalRelevantPathsResult, LocalRelevantPathsError> {
-    let search =
-        LocalCodeSearchRequest::new(request.database, request.repository_identity, request.query)
-            .with_max_results(request.candidate_limit())
-            .map_err(|source| LocalRelevantPathsError::CandidateLimit { source })?
-            .with_deadline(request.deadline);
+    let search = match request.workspace {
+        LocalCodeSearchWorkspace::SingleRepository {
+            repository_identity,
+        } => LocalCodeSearchRequest::new(request.database, repository_identity, request.query),
+        LocalCodeSearchWorkspace::ConnectedWorkspace {
+            connected_workspace,
+            source_slot,
+        } => LocalCodeSearchRequest::for_connected_workspace(
+            request.database,
+            connected_workspace,
+            source_slot,
+            request.query,
+        ),
+    }
+    .with_max_results(request.candidate_limit())
+    .map_err(|source| LocalRelevantPathsError::CandidateLimit { source })?
+    .with_deadline(request.deadline);
     let search = match request.configuration {
         Some(configuration) => search.with_configuration(configuration),
         None => search,

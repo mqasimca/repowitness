@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use super::*;
 
 mod bounded_file;
+mod codex;
 mod configuration;
 mod context;
 mod core_index_search;

@@ -785,7 +785,9 @@ validate_scip_relationship_trace_not_produced() {
         exit 1 if !defined($result->{workspace_view}) || ref($result->{workspace_view})
           || $result->{workspace_view} !~ /\A[1-9][0-9]*\z/;
         exit 1 if ($result->{resolution} // q{}) ne q{not_produced};
-        exit 1 if defined($result->{overlay}) || defined($result->{package_scope_sha256});
+        for my $field (qw(overlay package_scope_sha256)) {
+            exit 1 if !exists($result->{$field}) || defined($result->{$field});
+        }
         exit 1 if ($result->{direction} // q{}) ne q{outgoing};
         for my $field (qw(max_depth max_edges)) {
             exit 1 if !defined($result->{$field}) || ref($result->{$field})

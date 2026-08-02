@@ -6,6 +6,14 @@ accepted or explicitly proposed ADRs.
 - [Local configuration version 1](configuration-v1.md) — strict bounded TOML
   admission, deterministic preference provenance, monotonic policy resolution,
   and canonical semantic identity under accepted ADR-0025
+- [Local MCP repository registry version 1](mcp-repository-registry-v1.md) —
+  strict bounded JSON admission and fixed read-only multi-repository routing
+  under proposed ADR-0049
+- [Local MCP catalog version 1](mcp-catalog-v1.md) — private bounded current-
+  worktree admission and process-fixed default selection under proposed ADR-0050
+- [Codex connected-workspace catalog version 1](codex-connected-workspace-catalog-v1.md) —
+  private explicit product-stack admission and atomic source-slot refresh under
+  proposed ADR-0051
 - [Phase 0 engineering-memory record version 1](phase0-memory-v1.md) — accepted
   production domain, parser, canonicalizer, generated-YAML format, and
   worktree-import/write boundary; bounded observation-only Git-tree history

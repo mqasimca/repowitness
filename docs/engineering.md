@@ -33,9 +33,11 @@ Manual SQLite resource/timing probes and longer memory resource/fuzz campaigns
 remain opt-in and are not release budgets.
 
 Cross-platform CI, Miri, Loom, sanitizer-backed fuzzing, general coverage,
-`cargo-vet`, SemVer checks, packaging smoke tests, and latest-dependency
-automation remain release/scheduled requirements rather than completed local
-infrastructure.
+`cargo-vet`, SemVer checks, and latest-dependency automation remain
+release/scheduled requirements rather than completed local infrastructure. The
+tag-triggered release workflow verifies each packaged archive on its native
+runner with `--version`, `--help`, and a temporary Git repository
+index-and-search smoke before it uploads release assets.
 
 ## Toolchain and workspace
 
@@ -330,6 +332,25 @@ contained SCIP import, read-only annotations, exact view/generation pinning,
 exact declaration-receipt-to-SCIP navigation, categorical evidence, bounded producer-row traversal, coverage,
 truncation, cancellation, backpressure, and
 encoded-output bounds.
+The proposed local multi-repository registry mode adds strict bounded
+control-file admission, exact opaque-selector schema, missing/unknown-selector
+non-invocation, two-service routing isolation, unchanged single-repository
+schemas, and installed-binary two-repository stdio coverage. Its fixtures must
+assert path-free diagnostics and must never record real local registry paths.
+The proposed Codex catalog mode additionally requires synthetic installed-binary
+first and repeat current-worktree admissions, complete-index-before-catalog
+publication, non-worktree failure before transport startup, default-selector
+isolation, and path-free outputs. Its install/remove tests must prove that only
+its exact marked global Codex configuration records change, an unmanaged
+same-name entry is preserved, and the SessionStart hook is non-mutating.
+The proposed explicit Codex connected-workspace catalog adds synthetic
+installed-binary create/list/remove coverage, bounded private manifest and
+catalog admission, complete atomic multi-source publish before MCP startup,
+default/current-member and explicit-other-member routing, source-slot/generation
+pinning for code search, relevant paths, and typed declaration search, and
+path-free responses. Private sibling-repository validation may report only
+aggregate outcomes and must run through the repository script; no source,
+path, identity, or measurement from that corpus belongs in fixtures or logs.
 Stdout is parsed only as JSON-RPC and shutdown must leave stderr empty. A
 durable ignored variant exercises the same index-to-exact-retrieval-and-context
 path against a configured real supported-language worktree:

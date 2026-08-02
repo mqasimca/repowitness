@@ -10,9 +10,9 @@ use repowitness_local::{
     ARCHITECTURE_MAP_PROFILE_VERSION, ARCHITECTURE_OVERVIEW_PROFILE_VERSION, ArchitectureMapFile,
     ArchitectureMapLimits, ArchitectureOverviewEntryPointCandidate, ArchitectureOverviewLimits,
     ArchitectureOverviewSourceRoot, CODE_SEARCH_PROFILE_VERSION, CONTEXT_BUILD_RRF_K,
-    CodeGraphQueryOperation, CodeGraphQueryResult, CodeSearchLimits, CodeSearchQuery,
-    ConfigurationFileLayer, ConfigurationLayer, ConfigurationLayerKind, ConnectedWorkspaceIdTextV1,
-    ContextItem, ContextOmission, ContextProvider, DEFAULT_ARCHITECTURE_MAP_FILES,
+    CodeGraphQueryOperation, CodeGraphQueryResult, ConfigurationFileLayer, ConfigurationLayer,
+    ConfigurationLayerKind, ConnectedWorkspaceIdTextV1, ContextItem, ContextOmission,
+    ContextProvider, DEFAULT_ARCHITECTURE_MAP_FILES,
     DEFAULT_ARCHITECTURE_OVERVIEW_ENTRY_POINT_CANDIDATES, DEFAULT_ARCHITECTURE_OVERVIEW_FILES,
     DEFAULT_ARCHITECTURE_OVERVIEW_ROOTS, DEFAULT_CONTEXT_BUILD_BUDGET_UNITS,
     DEFAULT_LOCAL_CONTEXT_PROVIDER_RESULTS, EvidenceLocation, GeneratedLocalIdentity,
@@ -52,7 +52,7 @@ use repowitness_local::{
     MemoryRecallReason, MemoryRecallRecord, MemoryRecordIdTextV1, MemoryRevalidationTarget,
     OUTBOUND_SITES_PROFILE_VERSION, OutboundSitesAvailability, OutboundSyntaxSite,
     PersonalMemoryKind, PersonalMemoryProfileId, Phase2ContextCandidate, Phase2ContextTier,
-    PolicyValue, RELEVANT_PATHS_PROFILE_VERSION, RelevantPathsLimits, RepositoryIdentityTextV1,
+    PolicyValue, RELEVANT_PATHS_PROFILE_VERSION, RepositoryIdentityTextV1,
     RepositoryPathTextByteLimit, RepositoryPathTextV1, ResolutionStatus, ResolvedConfiguration,
     ResolvedPreference, ResolvedToolProfilePreference, RustGraphAvailability,
     RustGraphCandidateRecord, RustGraphDefinitionRecord, RustGraphEvidenceResult,
@@ -122,8 +122,10 @@ use repowitness_mcp::{
     ScipSymbolResolveOutput, ScipSymbolResolveServiceRequest, SymbolGetOutput,
     SymbolGetServiceRequest, SymbolSearchOutput, SymbolSearchServiceRequest, SymbolSelectorOutput,
     SyntaxSiteSearchOutput, SyntaxSiteSearchServiceRequest, TestMarkersOutput,
+    serve_stdio_with_repository_catalog, serve_stdio_with_repository_registry,
     serve_stdio_with_surface_and_native_tasks, serve_stdio_with_surface_tasks_and_personal_memory,
 };
+use serde::{Deserialize, Serialize};
 
 const EXIT_SUCCESS: u8 = 0;
 const EXIT_USAGE: u8 = 64;
@@ -154,6 +156,7 @@ const MAX_SYMBOL_SEARCH_ARGUMENTS: usize = 18 + CONFIGURATION_LAYER_ARGUMENTS;
 const MAX_ARCHITECTURE_MAP_ARGUMENTS: usize = 6;
 const MAX_REPOSITORY_TOPOLOGY_ARGUMENTS: usize = 6;
 const MAX_ONBOARD_ARGUMENTS: usize = 6;
+const MAX_CODEX_ARGUMENTS: usize = 70;
 const MAX_ARCHITECTURE_OVERVIEW_ARGUMENTS: usize = 12;
 const MAX_SYMBOL_GET_ARGUMENTS: usize = 18;
 const MAX_OUTBOUND_SITES_ARGUMENTS: usize = 18;
@@ -190,6 +193,7 @@ const HELP: &str = concat!(
     "      [--repository <path> --database <path>]\n",
     "  repowitness identity generate <repository|connected-workspace|source-slot>\n",
     "  repowitness onboard --root <path> [--state-dir <path>] [--repository-id <id>]\n",
+    "  repowitness codex <install|remove|session-start> [--codex-home <path>]\n",
     "  repowitness inspect-paths [--] <repository>\n",
     "  repowitness index --repository-id <id> --database <path> [configuration layer options] [--] <repository>\n",
     "  repowitness workspace index --manifest <path> --database <path> [configuration layer options]\n",
@@ -219,7 +223,7 @@ const HELP: &str = concat!(
     "  repowitness personal-memory <append|read> <options>\n",
     "  repowitness task-status --repository-id <id> --database <path> --task-id <hex>\n",
     "  repowitness task <create|checkpoint> <options>\n",
-    "  repowitness mcp-serve --repository-id <id> --database <path> --root <path> [configuration layer options]\n",
+    "  repowitness mcp-serve (--repository-id <id> --database <path> --root <path>|--registry <path>|--catalog) [configuration layer options]\n",
     "      [--enable-memory-writes --memory-actor <local-actor>]\n",
     "      [--enable-personal-memory --personal-memory-profile <32 lowercase hex characters>]\n",
     "      [--enable-native-tasks]\n\n",
@@ -313,8 +317,12 @@ const MCP_SERVE_HELP: &str = concat!(
     "      [--connected-workspace-id <id> --source-slot-id <id>]\n",
     "      [--user-config <path>] [--workspace-config <path>]\n",
     "      [--repository-config <path>]\n",
-    "      [--enable-memory-writes --memory-actor <local-actor>]\n\n",
+    "      [--enable-memory-writes --memory-actor <local-actor>]\n",
     "      [--enable-personal-memory --personal-memory-profile <32 lowercase hex characters>]\n\n",
+    "  repowitness mcp-serve --registry <path>\n",
+    "      [--user-config <path>] [--workspace-config <path>]\n\n",
+    "  repowitness mcp-serve --catalog [--catalog-state-dir <path>]\n",
+    "      [--user-config <path>] [--workspace-config <path>]\n\n",
     "Stdout is reserved exclusively for newline-delimited MCP JSON-RPC. The\n",
     "configured repository, database, identities, and optional graph source slot are fixed for the process;\n",
     "tool callers cannot select arbitrary local paths. The default server exposes\n",
@@ -330,6 +338,16 @@ const MCP_SERVE_HELP: &str = concat!(
     "a restart, while bounded process-local result payloads do not.\n",
     "The default canonical profile is unchanged. A user-owned configuration may\n",
     "opt into incumbent-compatible, which adds seven bounded read-only aliases.\n",
+    "Registry mode is a separate canonical read-only surface for 1 through 32\n",
+    "explicit independently indexed repositories. Every tool call must supply\n",
+    "one registered repository_id; it has no default repository and rejects\n",
+    "repository configuration, source slots, aliases, memory writes, personal\n",
+    "memory, and native tasks.\n",
+    "Catalog mode is an opt-in private user-state experience for one Codex MCP\n",
+    "entry. It resolves and incrementally indexes only the current process Git\n",
+    "worktree before startup, keeps no caller-selected paths, and defaults tool\n",
+    "calls only to that process-fixed repository. Supply repository_id to select\n",
+    "another repository admitted by the loaded catalog snapshot.\n",
 );
 
 const DIAGNOSTICS_HELP: &str = concat!(
@@ -599,6 +617,7 @@ include!("cli/identity_commands.rs");
 include!("cli/identity_output.rs");
 include!("cli/onboard_commands.rs");
 include!("cli/bounded_file.rs");
+include!("cli/codex_commands.rs");
 include!("cli/configuration.rs");
 include!("cli/config_commands.rs");
 include!("cli/config_output.rs");
@@ -621,6 +640,7 @@ include!("cli/memory_manage_commands.rs");
 include!("cli/known_at_history_commands.rs");
 include!("cli/task_commands.rs");
 include!("cli/personal_memory_commands.rs");
+include!("cli/mcp_registry.rs");
 include!("cli/mcp_commands.rs");
 include!("cli/mcp_memory_manage.rs");
 include!("cli/watch_commands.rs");

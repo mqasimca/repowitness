@@ -152,12 +152,24 @@ impl RepositoryService for LocalMcpRepositoryService {
         request: CodeSearchServiceRequest,
         cancelled: Arc<AtomicBool>,
     ) -> Result<CodeSearchOutput, RepositoryServiceError> {
-        let local_request =
-            LocalCodeSearchRequest::new(&self.database, &self.repository_identity, request.query())
-                .with_max_results(request.max_results())
-                .map_err(|_| RepositoryServiceError::CodeSearch)?
-                .with_configuration(&self.configuration)
-                .with_deadline(request.timeout());
+        let local_request = match &self.graph_workspace {
+            GraphWorkspaceContext::SingleRepository(repository_identity) => {
+                LocalCodeSearchRequest::new(&self.database, repository_identity, request.query())
+            }
+            GraphWorkspaceContext::ConnectedWorkspace {
+                connected_workspace,
+                source_slot,
+            } => LocalCodeSearchRequest::for_connected_workspace(
+                &self.database,
+                connected_workspace,
+                source_slot,
+                request.query(),
+            ),
+        }
+        .with_max_results(request.max_results())
+        .map_err(|_| RepositoryServiceError::CodeSearch)?
+        .with_configuration(&self.configuration)
+        .with_deadline(request.timeout());
         search_local_index(local_request, cancelled)
             .map_err(|_| RepositoryServiceError::CodeSearch)
             .and_then(|result| {
@@ -170,11 +182,20 @@ impl RepositoryService for LocalMcpRepositoryService {
         request: RelevantPathsServiceRequest,
         cancelled: Arc<AtomicBool>,
     ) -> Result<RelevantPathsOutput, RepositoryServiceError> {
-        let local_request = LocalRelevantPathsRequest::new(
-            &self.database,
-            &self.repository_identity,
-            request.query(),
-        )
+        let local_request = match &self.graph_workspace {
+            GraphWorkspaceContext::SingleRepository(repository_identity) => {
+                LocalRelevantPathsRequest::new(&self.database, repository_identity, request.query())
+            }
+            GraphWorkspaceContext::ConnectedWorkspace {
+                connected_workspace,
+                source_slot,
+            } => LocalRelevantPathsRequest::for_connected_workspace(
+                &self.database,
+                connected_workspace,
+                source_slot,
+                request.query(),
+            ),
+        }
         .with_max_paths(request.max_paths())
         .map_err(|_| RepositoryServiceError::RelevantPaths)?
         .with_configuration(&self.configuration)
@@ -352,28 +373,11 @@ impl RepositoryService for LocalMcpRepositoryService {
                     cancelled,
                 )
             }
-            CodeGraphQueryServiceRequest::RelevantPaths(request) => {
-                let query = CodeSearchQuery::try_new(request.query())
-                    .map_err(|_| RepositoryServiceError::CodeGraphQuery)?;
-                let path_limits = RelevantPathsLimits::try_new(request.max_paths())
-                    .map_err(|_| RepositoryServiceError::CodeGraphQuery)?;
-                let defaults = CodeSearchLimits::default();
-                let search_limits = CodeSearchLimits::try_new(
-                    path_limits.candidate_limit(),
-                    defaults.max_output_bytes(),
-                )
-                .map_err(|_| RepositoryServiceError::CodeGraphQuery)?;
-                LocalMcpRepositoryService::code_graph_query(
-                    self,
-                    CodeGraphQueryOperation::RelevantPaths {
-                        query,
-                        search_limits,
-                        path_limits,
-                    },
-                    request.timeout(),
-                    cancelled,
-                )
-            }
+            CodeGraphQueryServiceRequest::RelevantPaths(request) => self
+                .relevant_paths(request, cancelled)
+                .map(CodeGraphQueryResultOutput::RelevantPaths)
+                .map(CodeGraphQueryOutput::new)
+                .map_err(|_| RepositoryServiceError::CodeGraphQuery),
         }
     }
 
@@ -382,7 +386,19 @@ impl RepositoryService for LocalMcpRepositoryService {
         request: ArchitectureMapServiceRequest,
         cancelled: Arc<AtomicBool>,
     ) -> Result<ArchitectureMapOutput, RepositoryServiceError> {
-        let local_request = LocalArchitectureMapRequest::new(&self.database, &self.repository_identity)
+        let local_request = match &self.graph_workspace {
+            GraphWorkspaceContext::SingleRepository(repository_identity) => {
+                LocalArchitectureMapRequest::new(&self.database, repository_identity)
+            }
+            GraphWorkspaceContext::ConnectedWorkspace {
+                connected_workspace,
+                source_slot,
+            } => LocalArchitectureMapRequest::for_connected_workspace(
+                &self.database,
+                connected_workspace,
+                source_slot,
+            ),
+        }
             .with_max_files(request.max_files())
             .map_err(|_| RepositoryServiceError::ArchitectureMap)?
             .with_deadline(request.timeout());

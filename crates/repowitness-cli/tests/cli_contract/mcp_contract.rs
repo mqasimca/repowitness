@@ -168,6 +168,595 @@ fn mcp_memory_manage_is_process_level_default_deny_and_explicitly_enabled() {
 }
 
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one installed-binary fixture must keep registry admission, schema, isolation, and path-redaction assertions in one auditable transport round-trip"
+)]
+fn mcp_registry_routes_two_independent_indexes_without_default_or_path_disclosure() {
+    let directory = TempDirectory::new();
+    let first_repository = fixture_repository(&directory);
+    fs::write(
+        first_repository.join("src/lib.rs"),
+        "pub fn registry_first() {}\n",
+    )
+    .expect("first fixture source");
+    let status = Command::new("git")
+        .current_dir(&first_repository)
+        .args(["add", "--", "src/lib.rs"])
+        .status()
+        .expect("Git should start");
+    assert!(status.success());
+    let first_database = directory.database();
+    let first_id = REPOSITORY_ID;
+    assert!(index(&first_repository, &first_database, first_id).status.success());
+
+    let second_repository = directory.0.join("repository-two");
+    fs::create_dir_all(second_repository.join("src")).expect("second fixture directory");
+    let status = Command::new("git")
+        .args(["init", "--quiet"])
+        .arg(&second_repository)
+        .status()
+        .expect("Git should start");
+    assert!(status.success());
+    fs::write(
+        second_repository.join("src/lib.rs"),
+        "pub fn registry_second() {}\n",
+    )
+    .expect("second fixture source");
+    let status = Command::new("git")
+        .current_dir(&second_repository)
+        .args(["add", "--", "src/lib.rs"])
+        .status()
+        .expect("Git should start");
+    assert!(status.success());
+    let second_database = directory.0.join("index-two.sqlite3");
+    let second_id = concat!(
+        "rwi1:h:",
+        "C3C3C3C3C3C3C3C3C3C3C3C3C3C3C3C3C3C3C3C3C3C3C3C3C3C3C3C3C3C3C3C3"
+    );
+    assert!(
+        index(&second_repository, &second_database, second_id)
+            .status
+            .success()
+    );
+
+    let registry = directory.0.join("mcp-registry.json");
+    fs::write(
+        &registry,
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": 1,
+            "repositories": [
+                {"repository_id": first_id, "root": first_repository, "database": first_database},
+                {"repository_id": second_id, "root": second_repository, "database": second_database}
+            ]
+        }))
+        .expect("registry JSON"),
+    )
+    .expect("write registry");
+
+    let (child, mut input, mut output) = start_mcp_with_registry(&registry);
+    initialize_mcp(&mut input, &mut output);
+    let listed = mcp_request(
+        &mut input,
+        &mut output,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 200,
+            "method": "tools/list",
+            "params": {}
+        }),
+    );
+    let tools = listed["result"]["tools"].as_array().expect("tool list");
+    assert_eq!(tools.len(), 24);
+    assert!(tools.iter().all(|tool| tool["name"] != "memory_manage"));
+    let code_search = tools
+        .iter()
+        .find(|tool| tool["name"] == "code_search")
+        .expect("code search schema");
+    assert_eq!(
+        code_search["inputSchema"]["properties"]["repository_id"]["enum"],
+        serde_json::json!([first_id, second_id])
+    );
+    assert!(code_search["inputSchema"]["required"]
+        .as_array()
+        .is_some_and(|required| required.contains(&serde_json::json!("repository_id"))));
+
+    for arguments in [
+        serde_json::json!({"query": "registry_first"}),
+        serde_json::json!({"query": "registry_first", "repository_id": "unknown"}),
+    ] {
+        let response = mcp_request(
+            &mut input,
+            &mut output,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 201,
+                "method": "tools/call",
+                "params": {"name": "code_search", "arguments": arguments}
+            }),
+        );
+        assert!(response.get("error").is_some());
+        let response = response.to_string();
+        assert!(!response.contains(directory.0.to_string_lossy().as_ref()));
+    }
+
+    for (id, query, expected_name) in [
+        (first_id, "registry_first", "registry_first"),
+        (second_id, "registry_second", "registry_second"),
+    ] {
+        let response = mcp_request(
+            &mut input,
+            &mut output,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 202,
+                "method": "tools/call",
+                "params": {
+                    "name": "code_search",
+                    "arguments": {"repository_id": id, "query": query, "max_results": 5}
+                }
+            }),
+        );
+        assert_eq!(response["result"]["isError"], serde_json::json!(false));
+        assert!(response.to_string().contains(expected_name));
+    }
+    stop_mcp(child, input, output);
+}
+
+#[test]
+fn malformed_mcp_registry_fails_before_transport_startup_without_path_disclosure() {
+    let directory = TempDirectory::new();
+    let registry = directory.0.join("malformed-registry.json");
+    fs::write(&registry, b"{not JSON").expect("write malformed registry");
+    let result = Command::new(env!("CARGO_BIN_EXE_repowitness"))
+        .args(["mcp-serve", "--registry"])
+        .arg(&registry)
+        .output()
+        .expect("registry startup should return");
+    assert_eq!(result.status.code(), Some(70));
+    assert!(result.stdout.is_empty());
+    assert_eq!(
+        result.stderr,
+        b"error: MCP repository registry admission failed\n"
+    );
+    assert!(!String::from_utf8_lossy(&result.stderr).contains(directory.0.to_string_lossy().as_ref()));
+}
+
+#[cfg(unix)]
+#[test]
+fn mcp_catalog_onboards_the_current_worktree_and_defaults_to_it() {
+    let directory = TempDirectory::new();
+    use std::os::unix::fs::PermissionsExt;
+
+    fs::set_permissions(&directory.0, fs::Permissions::from_mode(0o700))
+        .expect("fixture parent should be private");
+    let repository = fixture_repository(&directory);
+    let state_directory = directory.0.join("private-state");
+    let (child, mut input, mut output) = start_mcp_with_catalog(&repository, &state_directory);
+    initialize_mcp(&mut input, &mut output);
+    let listed = mcp_request(
+        &mut input,
+        &mut output,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 230,
+            "method": "tools/list",
+            "params": {}
+        }),
+    );
+    let code_search = listed["result"]["tools"]
+        .as_array()
+        .expect("tool list")
+        .iter()
+        .find(|tool| tool["name"] == "code_search")
+        .expect("code-search tool");
+    assert!(code_search["inputSchema"]["required"]
+        .as_array()
+        .is_some_and(|required| !required.contains(&serde_json::json!("repository_id"))));
+    assert_eq!(
+        code_search["inputSchema"]["properties"]["repository_id"]["enum"]
+            .as_array()
+            .map(Vec::len),
+        Some(1)
+    );
+    let response = mcp_request(
+        &mut input,
+        &mut output,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 231,
+            "method": "tools/call",
+            "params": {"name": "code_search", "arguments": {"query": "Widget"}}
+        }),
+    );
+    assert_eq!(response["result"]["isError"], serde_json::json!(false));
+    assert!(response.to_string().contains("Widget"));
+    assert!(!response
+        .to_string()
+        .contains(directory.0.to_string_lossy().as_ref()));
+    stop_mcp(child, input, output);
+
+    let catalog = state_directory.join("repowitness/mcp-catalog-v1.json");
+    let catalog = fs::read(catalog).expect("private catalog");
+    let catalog: serde_json::Value = serde_json::from_slice(&catalog).expect("catalog JSON");
+    assert_eq!(catalog["schema_version"], serde_json::json!(1));
+    assert_eq!(catalog["repositories"].as_array().map(Vec::len), Some(1));
+
+    let (child, mut input, mut output) = start_mcp_with_catalog(&repository, &state_directory);
+    initialize_mcp(&mut input, &mut output);
+    let listed = mcp_request(
+        &mut input,
+        &mut output,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 232,
+            "method": "tools/list",
+            "params": {}
+        }),
+    );
+    let code_search = listed["result"]["tools"]
+        .as_array()
+        .expect("tool list")
+        .iter()
+        .find(|tool| tool["name"] == "code_search")
+        .expect("code-search tool");
+    assert_eq!(
+        code_search["inputSchema"]["properties"]["repository_id"]["enum"]
+            .as_array()
+            .map(Vec::len),
+        Some(1)
+    );
+    stop_mcp(child, input, output);
+}
+
+#[cfg(unix)]
+#[test]
+#[allow(
+    clippy::cognitive_complexity,
+    clippy::too_many_lines,
+    reason = "one installed-binary fixture keeps explicit product-workspace admission, atomic catalog refresh, cross-member routing, source-view receipts, and path-redaction assertions together"
+)]
+fn codex_workspace_catalog_refreshes_declared_members_and_routes_connected_source_slots() {
+    let directory = TempDirectory::new();
+    use std::os::unix::fs::PermissionsExt;
+
+    fs::set_permissions(&directory.0, fs::Permissions::from_mode(0o700))
+        .expect("fixture parent should be private");
+    let first_repository = fixture_repository(&directory);
+    let status = Command::new("git")
+        .current_dir(&first_repository)
+        .args([
+            "-c",
+            "user.name=RepoWitness Test",
+            "-c",
+            "user.email=repowitness-test@example.invalid",
+            "commit",
+            "--quiet",
+            "-m",
+            "first connected source",
+        ])
+        .status()
+        .expect("first fixture should commit");
+    assert!(status.success());
+
+    let second_repository = directory.0.join("repository-two");
+    fs::create_dir_all(second_repository.join("src")).expect("second fixture directory");
+    let status = Command::new("git")
+        .args(["init", "--quiet"])
+        .arg(&second_repository)
+        .status()
+        .expect("second repository should initialize");
+    assert!(status.success());
+    fs::write(
+        second_repository.join("src/lib.rs"),
+        "pub struct ConnectedWidget;\npub fn connected_entry() {}\n",
+    )
+    .expect("second fixture source");
+    let status = Command::new("git")
+        .current_dir(&second_repository)
+        .args([
+            "add",
+            "--",
+            "src/lib.rs",
+        ])
+        .status()
+        .expect("second fixture should stage");
+    assert!(status.success());
+    let status = Command::new("git")
+        .current_dir(&second_repository)
+        .args([
+            "-c",
+            "user.name=RepoWitness Test",
+            "-c",
+            "user.email=repowitness-test@example.invalid",
+            "commit",
+            "--quiet",
+            "-m",
+            "second connected source",
+        ])
+        .status()
+        .expect("second fixture should commit");
+    assert!(status.success());
+
+    let created = Command::new(env!("CARGO_BIN_EXE_repowitness"))
+        .args(["codex", "workspace", "create", "--name", "product-stack"])
+        .arg("--repository")
+        .arg(&first_repository)
+        .arg("--repository")
+        .arg(&second_repository)
+        .arg("--codex-home")
+        .arg(&directory.0)
+        .output()
+        .expect("Codex workspace creation should start");
+    assert!(
+        created.status.success(),
+        "{}",
+        String::from_utf8_lossy(&created.stderr)
+    );
+    assert!(created.stderr.is_empty());
+    let created = String::from_utf8(created.stdout).expect("workspace receipt");
+    assert!(created.contains("operation=codex-workspace-create\n"));
+    assert!(created.contains("workspace=product-stack\n"));
+    assert!(created.contains("members=2\nindex=published\n"));
+    for sensitive in [
+        first_repository.to_string_lossy().as_ref(),
+        second_repository.to_string_lossy().as_ref(),
+        directory.0.to_string_lossy().as_ref(),
+    ] {
+        assert!(!created.contains(sensitive));
+    }
+
+    let listed = Command::new(env!("CARGO_BIN_EXE_repowitness"))
+        .args(["codex", "workspace", "list", "--codex-home"])
+        .arg(&directory.0)
+        .output()
+        .expect("Codex workspace list should start");
+    assert!(listed.status.success());
+    assert_eq!(
+        listed.stdout,
+        b"status=ok\noperation=codex-workspace-list\nworkspaces=1\nworkspace_0=product-stack\nworkspace_0_members=2\n"
+    );
+    assert!(listed.stderr.is_empty());
+
+    let state_directory = directory.0.join("repowitness-state");
+    let (child, mut input, mut output) = start_mcp_with_catalog(&first_repository, &state_directory);
+    initialize_mcp(&mut input, &mut output);
+    let listed = mcp_request(
+        &mut input,
+        &mut output,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 240,
+            "method": "tools/list",
+            "params": {}
+        }),
+    );
+    let tools = listed["result"]["tools"].as_array().expect("tool list");
+    let code_search = tools
+        .iter()
+        .find(|tool| tool["name"] == "code_search")
+        .expect("code search schema");
+    let identities = code_search["inputSchema"]["properties"]["repository_id"]["enum"]
+        .as_array()
+        .expect("connected member identities");
+    assert_eq!(identities.len(), 2);
+    assert!(code_search["inputSchema"]["required"]
+        .as_array()
+        .is_some_and(|required| !required.contains(&serde_json::json!("repository_id"))));
+
+    let first = mcp_request(
+        &mut input,
+        &mut output,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 241,
+            "method": "tools/call",
+            "params": {
+                "name": "code_search",
+                "arguments": {"query": "Widget", "max_results": 5}
+            }
+        }),
+    );
+    assert_eq!(
+        first["result"]["isError"],
+        serde_json::json!(false),
+        "default connected-workspace code search failed: {first}"
+    );
+    assert!(first.to_string().contains("Widget"));
+
+    let second_identity = identities
+        .iter()
+        .find(|identity| {
+            let response = mcp_request(
+                &mut input,
+                &mut output,
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 242,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "code_search",
+                        "arguments": {
+                            "repository_id": identity,
+                            "query": "ConnectedWidget",
+                            "max_results": 5
+                        }
+                    }
+                }),
+            );
+            response["result"]["isError"] == serde_json::json!(false)
+                && response.to_string().contains("ConnectedWidget")
+        })
+        .cloned()
+        .expect("one explicit connected member should expose its own facts");
+    let relevant_paths = mcp_request(
+        &mut input,
+        &mut output,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 245,
+            "method": "tools/call",
+            "params": {
+                "name": "locate_relevant_paths",
+                "arguments": {
+                    "repository_id": second_identity,
+                    "query": "ConnectedWidget",
+                    "max_paths": 5
+                }
+            }
+        }),
+    );
+    assert_eq!(
+        relevant_paths["result"]["isError"],
+        serde_json::json!(false),
+        "connected relevant-path search response: {relevant_paths}"
+    );
+    assert!(relevant_paths["result"]["structuredContent"]["matches_returned"]
+        .as_u64()
+        .is_some_and(|count| count > 0));
+    let code_graph_relevant_paths = mcp_request(
+        &mut input,
+        &mut output,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 246,
+            "method": "tools/call",
+            "params": {
+                "name": "code_graph_query",
+                "arguments": {
+                    "repository_id": second_identity,
+                    "operation": "relevant_paths",
+                    "query": "ConnectedWidget",
+                    "max_paths": 5
+                }
+            }
+        }),
+    );
+    assert_eq!(
+        code_graph_relevant_paths["result"]["isError"],
+        serde_json::json!(false),
+        "connected code-graph relevant-path response: {code_graph_relevant_paths}"
+    );
+    assert_eq!(
+        code_graph_relevant_paths["result"]["structuredContent"]["operation"],
+        serde_json::json!("relevant_paths")
+    );
+    let architecture_map = mcp_request(
+        &mut input,
+        &mut output,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 247,
+            "method": "tools/call",
+            "params": {
+                "name": "architecture_map",
+                "arguments": {"repository_id": second_identity, "max_files": 5}
+            }
+        }),
+    );
+    assert_eq!(
+        architecture_map["result"]["isError"],
+        serde_json::json!(false),
+        "connected architecture-map response: {architecture_map}"
+    );
+    assert!(architecture_map["result"]["structuredContent"]["files_returned"]
+        .as_u64()
+        .is_some_and(|count| count > 0));
+    let graph = mcp_request(
+        &mut input,
+        &mut output,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 243,
+            "method": "tools/call",
+            "params": {
+                "name": "graph_status",
+                "arguments": {"repository_id": second_identity}
+            }
+        }),
+    );
+    assert_eq!(graph["result"]["isError"], serde_json::json!(false));
+    let graph = &graph["result"]["structuredContent"];
+    assert!(graph["context"]["connected_workspace"]
+        .as_str()
+        .is_some_and(|identity| identity.starts_with("cwi1:h:")));
+    let symbols = mcp_request(
+        &mut input,
+        &mut output,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 244,
+            "method": "tools/call",
+            "params": {
+                "name": "symbol_search",
+                "arguments": {
+                    "repository_id": second_identity,
+                    "name": "ConnectedWidget",
+                    "match_mode": "exact",
+                    "max_results": 5
+                }
+            }
+        }),
+    );
+    assert_eq!(
+        symbols["result"]["isError"],
+        serde_json::json!(false),
+        "symbol search response: {symbols}"
+    );
+    let symbols = &symbols["result"]["structuredContent"];
+    assert!(symbols["source_slot"]
+        .as_str()
+        .is_some_and(|identity| identity.starts_with("ssi1:h:")));
+    let response = format!("{graph}{symbols}");
+    assert!(!response.contains(first_repository.to_string_lossy().as_ref()));
+    assert!(!response.contains(second_repository.to_string_lossy().as_ref()));
+    stop_mcp(child, input, output);
+
+    let removed = Command::new(env!("CARGO_BIN_EXE_repowitness"))
+        .args([
+            "codex",
+            "workspace",
+            "remove",
+            "--name",
+            "product-stack",
+            "--codex-home",
+        ])
+        .arg(&directory.0)
+        .output()
+        .expect("Codex workspace removal should start");
+    assert!(removed.status.success());
+    assert_eq!(
+        removed.stdout,
+        b"status=ok\noperation=codex-workspace-remove\nregistration=removed\nindex_retained=true\n"
+    );
+    assert!(removed.stderr.is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn mcp_catalog_rejects_a_non_worktree_before_transport_startup_without_path_disclosure() {
+    let directory = TempDirectory::new();
+    use std::os::unix::fs::PermissionsExt;
+
+    fs::set_permissions(&directory.0, fs::Permissions::from_mode(0o700))
+        .expect("fixture parent should be private");
+    let state_directory = directory.0.join("private-state");
+    let result = Command::new(env!("CARGO_BIN_EXE_repowitness"))
+        .current_dir(&directory.0)
+        .args(["mcp-serve", "--catalog", "--catalog-state-dir"])
+        .arg(&state_directory)
+        .output()
+        .expect("catalog startup should return");
+    assert_eq!(result.status.code(), Some(70));
+    assert!(result.stdout.is_empty());
+    assert_eq!(result.stderr, b"error: MCP catalog admission failed\n");
+    assert!(
+        !String::from_utf8_lossy(&result.stderr).contains(directory.0.to_string_lossy().as_ref())
+    );
+    assert!(!state_directory.exists());
+}
+
+#[test]
 fn mcp_configuration_policy_fails_before_transport_startup() {
     let directory = TempDirectory::new();
     let repository = directory.repository();
@@ -461,6 +1050,41 @@ fn start_mcp(
         .stderr(Stdio::piped())
         .spawn()
         .expect("MCP server must start");
+    let input = child.stdin.take().expect("piped stdin");
+    let output = BufReader::new(child.stdout.take().expect("piped stdout"));
+    (child, input, output)
+}
+
+fn start_mcp_with_registry(
+    registry: &Path,
+) -> (std::process::Child, ChildStdin, BufReader<ChildStdout>) {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_repowitness"))
+        .args(["mcp-serve", "--registry"])
+        .arg(registry)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("registry MCP server must start");
+    let input = child.stdin.take().expect("piped stdin");
+    let output = BufReader::new(child.stdout.take().expect("piped stdout"));
+    (child, input, output)
+}
+
+#[cfg(unix)]
+fn start_mcp_with_catalog(
+    repository: &Path,
+    state_directory: &Path,
+) -> (std::process::Child, ChildStdin, BufReader<ChildStdout>) {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_repowitness"))
+        .current_dir(repository)
+        .args(["mcp-serve", "--catalog", "--catalog-state-dir"])
+        .arg(state_directory)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("catalog MCP server must start");
     let input = child.stdin.take().expect("piped stdin");
     let output = BufReader::new(child.stdout.take().expect("piped stdout"));
     (child, input, output)

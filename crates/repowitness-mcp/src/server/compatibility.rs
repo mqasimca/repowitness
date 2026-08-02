@@ -327,7 +327,12 @@ fn compatibility_operation_result<T: Serialize>(
     )
 }
 
-fn server_instructions(surface: McpToolSurface, memory_writes_enabled: bool) -> String {
+fn server_instructions(
+    surface: McpToolSurface,
+    memory_writes_enabled: bool,
+    registry_mode: bool,
+    catalog_mode: bool,
+) -> String {
     let memory = if memory_writes_enabled {
         " memory_manage is explicitly enabled for one fixed local actor."
     } else {
@@ -338,8 +343,17 @@ fn server_instructions(surface: McpToolSurface, memory_writes_enabled: bool) -> 
     } else {
         ""
     };
+    let registry = if registry_mode {
+        if catalog_mode {
+            " Tool calls default only to the catalog repository fixed at this process startup; pass one exact repository_id from the input schema to select another admitted repository."
+        } else {
+            " Each tool call must include one exact repository_id from its input schema; no default repository is selected."
+        }
+    } else {
+        ""
+    };
     format!(
-        "RepoWitness MCP profile={} surface={}. Use context_build for deterministic source-and-memory context; use code_search/graph_search before exact retrieval or traversal. Results are generation-pinned and evidence-bearing.{compatibility}{memory}",
+        "RepoWitness MCP profile={} surface={}. Use context_build for deterministic source-and-memory context; use code_search/graph_search before exact retrieval or traversal. Results are generation-pinned and evidence-bearing.{compatibility}{memory}{registry}",
         surface.profile(),
         surface.identifier(),
     )

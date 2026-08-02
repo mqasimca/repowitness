@@ -1,7 +1,7 @@
 # Product
 
 - Status: Draft
-- Last reviewed: 2026-07-30
+- Last reviewed: 2026-08-02
 
 ## Definition
 
@@ -143,13 +143,29 @@ implemented. Its local memory-management base is also implemented:
   architecture, trace, and conservative impact application use cases;
 - `index`, `onboard`, `architecture-map`, `architecture-overview`, `repository-topology`, `search`, `locate-relevant-paths`, `symbol-search`, `outbound-sites`, `syntax-site-search`, `test-markers`,
   `symbol-get`, `scip-symbol-resolve`, `scip-relationship-trace`, `graph`, `memory-manage`, `memory-revalidate`, `memory-recall`,
-  `context-build`, `diagnostics`, `mcp-serve`, and `inspect-paths` CLI commands,
+  `context-build`, `diagnostics`, `mcp-serve`, `codex`, and `inspect-paths` CLI commands,
   plus path-free `config explain` and read-only `doctor`; explicit bounded
   user/workspace/repository configuration is
   resolved once and enforced by indexing, retrieval, graph reads, context,
   diagnostics, and MCP startup, with twenty-four read-only retrieval, graph,
   context, and diagnostic tools exposed by default over local stdio MCP and an
   explicitly enabled, fixed-actor `memory_manage` mutation tool;
+- a proposed local multi-repository MCP registry mode that routes each
+  read-only tool request through one explicit opaque registered repository ID;
+  it does not accept paths from callers, cross-query repositories, alter an
+  index, or broaden the single-repository startup contract;
+- a proposed opt-in Codex catalog mode and idempotent install/remove command:
+  one global local MCP connection admits and refreshes only the current Git
+  worktree at process startup, keeps its bounded private catalog path-free to
+  callers, and defaults only that process-fixed repository without adding a
+  daemon, watcher, home/sibling scan, remote service, or MCP mutation;
+- a proposed explicit Codex connected-workspace catalog: an operator may name
+  two through thirty-two supplied worktrees as one product stack; starting in
+  any member refreshes and atomically publishes that full source-slot view,
+  while cross-member inspection uses opaque selectors and only attributed
+  producer evidence can claim a cross-repository relationship. It never
+  infers stack membership from layout or imports, exposes paths, or adds a
+  generic cross-repository query;
 - the accepted bounded version-1 memory domain, hostile-YAML parser,
   canonicalizer, deterministic writer, and capability-contained exact-file
   worktree admission;

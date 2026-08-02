@@ -1,7 +1,7 @@
 # Roadmap
 
 - Status: Proposed
-- Last reviewed: 2026-07-30
+- Last reviewed: 2026-08-02
 
 ## Sequencing rule
 
@@ -178,6 +178,45 @@ beta exit claim remains withheld until independently reviewed longitudinal
 evidence is collected.
 
 Exit when longitudinal tests show fewer repeated failures and less stale-memory use than source-only and naive text-memory baselines, with no cross-scope leakage. This is the first recommended public beta.
+
+## Proposed local multi-repository MCP registry
+
+The proposed [ADR-0049](adr/0049-local-multi-repository-mcp-registry.md)
+addresses local operator ergonomics independently of the connected-workspace
+indexing contract. It keeps one local stdio connection read-only and routes
+each tool call only after an explicit registered opaque repository selection.
+Its acceptance gate requires strict hostile-registry admission, path-free
+diagnostics, no default or caller-path authority, two-repository isolation,
+unchanged single-repository schemas, and installed-binary stdio coverage.
+It deliberately defers connected-workspace selection, cross-repository queries,
+per-entry configuration, registry reload/mutation, compatibility aliases, and
+remote/team transport.
+
+## Proposed opt-in Codex catalog onboarding
+
+The proposed [ADR-0050](adr/0050-opt-in-codex-catalog-onboarding.md) makes the
+local evidence surface practical across normal Codex worktrees without changing
+the storage or MCP trust model. One explicit global installation owns only
+marked Codex MCP and SessionStart records. A catalog server admits exactly the
+process-current Git worktree before stdio starts, incrementally refreshes its
+private isolated index, and defaults only that fixed entry. The acceptance gate
+requires no parent/sibling/home discovery, no catalog mutation before complete
+activation, exact cross-catalog selectors, path-free errors, repeat-session
+coverage, reversible config ownership, and an explicitly reviewed non-mutating
+Codex hook. Daemons, automatic watchers, remote/team catalog state, general
+cross-repository queries, and MCP write tools remain deferred.
+
+## Proposed explicit Codex connected-workspace catalog
+
+The proposed [ADR-0051](adr/0051-explicit-codex-connected-workspace-catalog.md)
+extends the one-entry Codex experience to an operator-declared product stack
+without changing accepted connected-workspace semantics. Its acceptance gate
+requires strict private catalog/manifest admission, two-member synthetic
+installed-binary coverage, all-source atomic refresh before catalog startup,
+default-current-member and explicit-other-member routing, source-slot receipts,
+and no host-path disclosure. It deliberately defers membership inference,
+automatic updates, catalog reload, background coordination, generic
+cross-repository queries, and cross-source relationship heuristics.
 
 ## Phase 4 — demand-gated team server
 

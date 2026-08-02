@@ -45,6 +45,7 @@ fn run_mcp_server_with_adapters(
     let (arguments, configuration_invocation) = match extract_configuration_arguments(
         &arguments,
         &[
+            "--catalog",
             "--enable-memory-writes",
             "--enable-native-tasks",
             "--enable-personal-memory",
@@ -57,6 +58,13 @@ fn run_mcp_server_with_adapters(
         Ok(invocation) => invocation,
         Err(message) => return emit_error(stderr, EXIT_USAGE, message),
     };
+    if invocation.is_multi_repository() && configuration_invocation.repository.is_some() {
+        return emit_error(
+            stderr,
+            EXIT_USAGE,
+            "error: --repository-config is unavailable with --registry or --catalog\n",
+        );
+    }
     let configuration = match configuration_loader.load(&configuration_invocation) {
         Ok(configuration) => configuration,
         Err(_) => {
@@ -77,6 +85,16 @@ fn run_mcp_server_with_adapters(
             stderr,
             EXIT_SOFTWARE,
             "error: MCP runtime initialization failed\n",
+        ),
+        Err(McpLaunchError::Registry) => emit_error(
+            stderr,
+            EXIT_SOFTWARE,
+            "error: MCP repository registry admission failed\n",
+        ),
+        Err(McpLaunchError::Catalog) => emit_error(
+            stderr,
+            EXIT_SOFTWARE,
+            "error: MCP catalog admission failed\n",
         ),
         Err(McpLaunchError::Serve(error)) => {
             if writeln!(stderr, "error: {error}").is_ok() {
@@ -101,6 +119,9 @@ fn validate_mcp_startup_configuration(
         ) => McpToolSurface::NativeV1PlusIncumbentSubsetV1,
         _ => return Err("error: configured MCP tool profile is unavailable\n"),
     };
+    if invocation.is_multi_repository() && surface != McpToolSurface::NativeV1 {
+        return Err("error: --registry and --catalog require the canonical MCP tool profile\n");
+    }
     if invocation.memory_writes_enabled
         && *configuration.policy().deny_memory_writes().effective()
     {
@@ -127,6 +148,25 @@ impl McpServerLauncher for TokioMcpServerLauncher {
         configuration: ResolvedConfiguration,
         surface: McpToolSurface,
     ) -> Result<(), McpLaunchError> {
+        let registry = match &invocation.target {
+            McpServeTarget::Single { .. } | McpServeTarget::Catalog { .. } => None,
+            McpServeTarget::Registry { path } => Some(
+                build_mcp_registry_services(path, &configuration)
+                    .map_err(|_| McpLaunchError::Registry)?,
+            ),
+        };
+        let catalog = match &invocation.target {
+            McpServeTarget::Catalog { state_dir } => Some(
+                prepare_current_worktree_mcp_catalog(state_dir.as_deref(), &configuration)
+                    .and_then(|catalog| {
+                        let default_repository_identity = catalog.default_repository_identity;
+                        build_mcp_repository_services(catalog.repositories, &configuration)
+                            .map(|services| (services, default_repository_identity))
+                    })
+                    .map_err(|_| McpLaunchError::Catalog)?,
+            ),
+            McpServeTarget::Single { .. } | McpServeTarget::Registry { .. } => None,
+        };
         let runtime = match tokio::runtime::Builder::new_multi_thread()
             .worker_threads(MCP_RUNTIME_WORKER_THREADS)
             .max_blocking_threads(MCP_RUNTIME_BLOCKING_THREADS)
@@ -136,52 +176,130 @@ impl McpServerLauncher for TokioMcpServerLauncher {
             Ok(runtime) => runtime,
             Err(_) => return Err(McpLaunchError::RuntimeInitialization),
         };
-        let service: Arc<dyn RepositoryService> = Arc::new(LocalMcpRepositoryService {
-            root: invocation.root,
-            database: invocation.database,
-            repository_identity: invocation.repository_identity,
-            graph_workspace: invocation.graph_workspace,
-            memory_actor: invocation.memory_actor,
-            personal_memory_profile: invocation.personal_memory_profile,
-            configuration,
-        });
-        let result = runtime.block_on(async {
-            if invocation.personal_memory_profile.is_some() {
-                serve_stdio_with_surface_tasks_and_personal_memory(
-                    service,
-                    surface,
-                    invocation.memory_writes_enabled,
-                    invocation.native_tasks_enabled,
-                )
-                .await
-            } else {
-                serve_stdio_with_surface_and_native_tasks(
-                    service,
-                    surface,
-                    invocation.memory_writes_enabled,
-                    invocation.native_tasks_enabled,
-                )
-                .await
+        let result = match (invocation.target, registry, catalog) {
+            (
+                McpServeTarget::Catalog { .. },
+                None,
+                Some((catalog, default_repository_identity)),
+            ) => runtime.block_on(serve_stdio_with_repository_catalog(
+                catalog,
+                default_repository_identity,
+            )),
+            (McpServeTarget::Registry { .. }, Some(registry), None) => {
+                runtime.block_on(serve_stdio_with_repository_registry(registry))
             }
-        });
+            (
+                McpServeTarget::Single {
+                    root,
+                    database,
+                    repository_identity,
+                    graph_workspace,
+                },
+                None,
+                None,
+            ) => {
+                let service: Arc<dyn RepositoryService> = Arc::new(LocalMcpRepositoryService {
+                    root,
+                    database,
+                    repository_identity,
+                    graph_workspace,
+                    memory_actor: invocation.memory_actor,
+                    personal_memory_profile: invocation.personal_memory_profile,
+                    configuration,
+                });
+                runtime.block_on(async {
+                    if invocation.personal_memory_profile.is_some() {
+                        serve_stdio_with_surface_tasks_and_personal_memory(
+                            service,
+                            surface,
+                            invocation.memory_writes_enabled,
+                            invocation.native_tasks_enabled,
+                        )
+                        .await
+                    } else {
+                        serve_stdio_with_surface_and_native_tasks(
+                            service,
+                            surface,
+                            invocation.memory_writes_enabled,
+                            invocation.native_tasks_enabled,
+                        )
+                        .await
+                    }
+                })
+            }
+            _ => return Err(McpLaunchError::Registry),
+        };
         result.map_err(McpLaunchError::Serve)
     }
 }
 
 enum McpLaunchError {
     RuntimeInitialization,
+    Registry,
+    Catalog,
     Serve(repowitness_mcp::McpServeError),
 }
 
 struct McpServeInvocation {
-    root: PathBuf,
-    database: PathBuf,
-    repository_identity: String,
-    graph_workspace: GraphWorkspaceContext,
+    target: McpServeTarget,
     memory_writes_enabled: bool,
     native_tasks_enabled: bool,
     memory_actor: Option<String>,
     personal_memory_profile: Option<PersonalMemoryProfileId>,
+}
+
+enum McpServeTarget {
+    Single {
+        root: PathBuf,
+        database: PathBuf,
+        repository_identity: String,
+        graph_workspace: GraphWorkspaceContext,
+    },
+    Registry {
+        path: PathBuf,
+    },
+    Catalog {
+        state_dir: Option<PathBuf>,
+    },
+}
+
+impl McpServeInvocation {
+    const fn is_multi_repository(&self) -> bool {
+        matches!(
+            self.target,
+            McpServeTarget::Registry { .. } | McpServeTarget::Catalog { .. }
+        )
+    }
+}
+
+fn build_mcp_registry_services(
+    registry_path: &Path,
+    configuration: &ResolvedConfiguration,
+) -> Result<std::collections::BTreeMap<String, Arc<dyn RepositoryService>>, ()> {
+    build_mcp_repository_services(read_mcp_repository_registry(registry_path)?, configuration)
+}
+
+fn build_mcp_repository_services(
+    repositories: Vec<RegisteredMcpRepository>,
+    configuration: &ResolvedConfiguration,
+) -> Result<std::collections::BTreeMap<String, Arc<dyn RepositoryService>>, ()> {
+    let mut services = std::collections::BTreeMap::new();
+    for repository in repositories {
+        let repository_identity = repository.repository_identity;
+        let service: Arc<dyn RepositoryService> = Arc::new(LocalMcpRepositoryService {
+            root: repository.root,
+            database: repository.database,
+            graph_workspace: repository.graph_workspace,
+            repository_identity: repository_identity.clone(),
+            memory_actor: None,
+            personal_memory_profile: None,
+            configuration: configuration.clone(),
+        });
+        if services.insert(repository_identity, service).is_some() {
+            return Err(());
+        }
+    }
+    Ok(services)
 }
 
 #[allow(
@@ -192,6 +310,9 @@ fn parse_mcp_serve_arguments(arguments: &[OsString]) -> Result<McpServeInvocatio
     let mut root = None;
     let mut database = None;
     let mut repository_identity = None;
+    let mut registry = None;
+    let mut catalog = false;
+    let mut catalog_state_dir = None;
     let mut connected_workspace = None;
     let mut source_slot = None;
     let mut memory_writes_enabled = false;
@@ -202,6 +323,14 @@ fn parse_mcp_serve_arguments(arguments: &[OsString]) -> Result<McpServeInvocatio
     let mut index = 0_usize;
     while index < arguments.len() {
         let option = &arguments[index];
+        if option == OsStr::new("--catalog") {
+            if catalog {
+                return Err("error: mcp-serve accepts --catalog only once\n");
+            }
+            catalog = true;
+            index += 1;
+            continue;
+        }
         if option == OsStr::new("--enable-memory-writes") {
             if memory_writes_enabled {
                 return Err(
@@ -243,6 +372,14 @@ fn parse_mcp_serve_arguments(arguments: &[OsString]) -> Result<McpServeInvocatio
             if repository_identity.replace(value.clone()).is_some() {
                 return Err("error: mcp-serve accepts --repository-id only once\n");
             }
+        } else if option == OsStr::new("--registry") {
+            if registry.replace(PathBuf::from(value)).is_some() {
+                return Err("error: mcp-serve accepts --registry only once\n");
+            }
+        } else if option == OsStr::new("--catalog-state-dir") {
+            if catalog_state_dir.replace(PathBuf::from(value)).is_some() {
+                return Err("error: mcp-serve accepts --catalog-state-dir only once\n");
+            }
         } else if option == OsStr::new("--connected-workspace-id") {
             if connected_workspace.replace(value.clone()).is_some() {
                 return Err("error: mcp-serve accepts --connected-workspace-id only once\n");
@@ -265,36 +402,85 @@ fn parse_mcp_serve_arguments(arguments: &[OsString]) -> Result<McpServeInvocatio
         index += 2;
     }
 
-    let root = root.ok_or("error: mcp-serve requires --root\n")?;
-    let database = database.ok_or("error: mcp-serve requires --database\n")?;
-    let repository_identity =
-        repository_identity.ok_or("error: mcp-serve requires --repository-id\n")?;
-    if root.as_os_str().is_empty()
-        || database.as_os_str().is_empty()
-        || repository_identity.is_empty()
-    {
-        return Err("error: mcp-serve option values must not be empty\n");
-    }
-    let repository_identity = repository_identity
-        .to_str()
-        .ok_or("error: mcp-serve repository identity must be UTF-8\n")?;
-    RepositoryIdentityTextV1::decode(repository_identity)
-        .map_err(|_| "error: mcp-serve repository identity is invalid\n")?;
-    let graph_workspace = resolve_mcp_graph_workspace(
-        repository_identity,
-        connected_workspace,
-        source_slot,
-    )?;
+    let target = if catalog {
+        if registry.is_some()
+            || root.is_some()
+            || database.is_some()
+            || repository_identity.is_some()
+            || connected_workspace.is_some()
+            || source_slot.is_some()
+        {
+            return Err("error: --catalog cannot be combined with registry or single-repository options\n");
+        }
+        if catalog_state_dir
+            .as_ref()
+            .is_some_and(|path: &PathBuf| path.as_os_str().is_empty())
+        {
+            return Err("error: mcp-serve option values must not be empty\n");
+        }
+        if memory_writes_enabled || native_tasks_enabled || personal_memory_enabled {
+            return Err("error: --catalog supports read-only tools only\n");
+        }
+        McpServeTarget::Catalog {
+            state_dir: catalog_state_dir,
+        }
+    } else if let Some(path) = registry {
+        if catalog_state_dir.is_some() {
+            return Err("error: --catalog-state-dir requires --catalog\n");
+        }
+        if path.as_os_str().is_empty() {
+            return Err("error: mcp-serve option values must not be empty\n");
+        }
+        if root.is_some()
+            || database.is_some()
+            || repository_identity.is_some()
+            || connected_workspace.is_some()
+            || source_slot.is_some()
+        {
+            return Err("error: --registry cannot be combined with single-repository options\n");
+        }
+        if memory_writes_enabled || native_tasks_enabled || personal_memory_enabled {
+            return Err("error: --registry supports read-only tools only\n");
+        }
+        McpServeTarget::Registry { path }
+    } else {
+        if catalog_state_dir.is_some() {
+            return Err("error: --catalog-state-dir requires --catalog\n");
+        }
+        let root = root.ok_or("error: mcp-serve requires --root\n")?;
+        let database = database.ok_or("error: mcp-serve requires --database\n")?;
+        let repository_identity =
+            repository_identity.ok_or("error: mcp-serve requires --repository-id\n")?;
+        if root.as_os_str().is_empty()
+            || database.as_os_str().is_empty()
+            || repository_identity.is_empty()
+        {
+            return Err("error: mcp-serve option values must not be empty\n");
+        }
+        let repository_identity = repository_identity
+            .to_str()
+            .ok_or("error: mcp-serve repository identity must be UTF-8\n")?;
+        RepositoryIdentityTextV1::decode(repository_identity)
+            .map_err(|_| "error: mcp-serve repository identity is invalid\n")?;
+        let graph_workspace = resolve_mcp_graph_workspace(
+            repository_identity,
+            connected_workspace,
+            source_slot,
+        )?;
+        McpServeTarget::Single {
+            root,
+            database,
+            repository_identity: repository_identity.to_owned(),
+            graph_workspace,
+        }
+    };
     let memory_actor = resolve_mcp_memory_actor(memory_writes_enabled, memory_actor)?;
     let personal_memory_profile = resolve_mcp_personal_memory_profile(
         personal_memory_enabled,
         personal_memory_profile,
     )?;
     Ok(McpServeInvocation {
-        root,
-        database,
-        repository_identity: repository_identity.to_owned(),
-        graph_workspace,
+        target,
         memory_writes_enabled,
         native_tasks_enabled,
         memory_actor,

@@ -14,10 +14,17 @@ use crate::{
 
 use super::{LocalConnectedWorkspaceIndexError, LocalConnectedWorkspaceRequestErrorKind};
 
-/// Conservative deadline for one source slot's complete coordinator work.
-pub const DEFAULT_LOCAL_CONNECTED_WORKSPACE_SOURCE_DEADLINE: Duration = Duration::from_secs(30);
-/// Conservative deadline for one complete atomic connected-workspace attempt.
-pub const DEFAULT_LOCAL_CONNECTED_WORKSPACE_DEADLINE: Duration = Duration::from_secs(60);
+/// Default shared deadline for every source slot participating in one atomic
+/// connected-workspace attempt.
+///
+/// The coordinator prepares and publishes source slots serially so that all
+/// readers retain a single immutable view. A source deadline shorter than the
+/// encompassing attempt can therefore expire while another declared source is
+/// being prepared. Keep the defaults identical and large enough for a normal
+/// local product-stack refresh, while retaining one explicit, finite bound.
+pub const DEFAULT_LOCAL_CONNECTED_WORKSPACE_SOURCE_DEADLINE: Duration = Duration::from_secs(300);
+/// Default deadline for one complete atomic connected-workspace attempt.
+pub const DEFAULT_LOCAL_CONNECTED_WORKSPACE_DEADLINE: Duration = Duration::from_secs(300);
 
 /// Complete per-source indexing, selector, and coordinator resource bounds.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

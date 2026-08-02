@@ -1,7 +1,7 @@
 # Architecture
 
 - Status: Proposed
-- Last reviewed: 2026-07-30
+- Last reviewed: 2026-08-02
 
 ## Architectural objective
 
@@ -458,8 +458,40 @@ policy permits memory writes, and the requested canonical tool profile remains
 authorized. Unsupported or unauthorized profiles and effective write denials
 fail before runtime initialization. Repository identity, database, contained
 source root, actor, resolved configuration, and resource policy are fixed at
-process startup rather than accepted from tool callers. The transport rejects
-a protocol line over 3 MiB; every result envelope has a bounded encoded size.
+process startup rather than accepted from tool callers. Proposed
+[ADR-0049](adr/0049-local-multi-repository-mcp-registry.md) adds a separate
+local read-only registry mode: a bounded no-follow startup registry fixes at
+most 32 independent repository/root/database triples, every native tool
+requires one exact registered opaque `repository_id`, and routing removes that
+selector before the normal request validation. It exposes neither registry
+paths nor a default repository, reloads only on process restart, and excludes
+memory mutation, personal memory, native tasks, compatibility aliases,
+connected-workspace source slots, shared-database workspace selection, and
+cross-repository queries. The single-repository process and its schemas remain
+unchanged. The proposed
+[ADR-0050](adr/0050-opt-in-codex-catalog-onboarding.md) catalog composition
+keeps the same canonical read-only surface and private-state boundary, but
+resolves only the process current directory to its containing Git worktree
+before stdio starts. It incrementally refreshes that one worktree, fixes it as
+the process default selector, and never accepts caller filesystem selection or
+scans a parent, sibling, home, or configured-root set. Other catalog entries
+still require an exact opaque selector. It excludes reload, background watches,
+daemon coordination, root scanning, remote/catalog mutation, source slots,
+compatibility aliases, and all write/task/personal-memory capabilities. The
+proposed [ADR-0051](adr/0051-explicit-codex-connected-workspace-catalog.md)
+adds a distinct explicit opt-in composition: a private catalog records only
+operator-supplied two-to-thirty-two-member connected workspaces and recognizes
+the process-current member at startup. It regenerates and atomically publishes
+the complete source-slot view before stdio starts; it never discovers sibling
+or dependency repositories. The member's opaque selector routes source-view-
+aware lexical search, relevant paths, typed declarations, architecture maps,
+graph/SCIP reads, and Phase 2 context to its exact slot. Membership is not a cross-repository
+relationship claim, and tools without a source-view receipt contract stay out
+of this mode until they have one. Catalog membership mutation, reload,
+watchers, daemons, root scanning, and generic cross-repository queries remain
+excluded.
+transport rejects a protocol line over 3 MiB; every result envelope has a
+bounded encoded size.
 A version-1 `memory_manage` request produces a version-2 receipt. The output
 version change is explicit because database-backed receipts now report
 checkpoint, shutdown, and final database-path identity truth. The identity

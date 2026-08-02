@@ -10,6 +10,34 @@ mod fixtures;
 use fixtures::*;
 
 #[test]
+fn default_connected_workspace_deadlines_share_one_finite_refresh_budget() {
+    let directory = TempDirectory::new();
+    fixture_repository(directory.path(), "repo");
+    let text = manifest(0xA1, &[source_table(1, 1, "repo")]);
+    let (contents, parent) = admit_manifest(directory.path(), "workspace.toml", &text);
+    let database = directory.join("index.sqlite3");
+    let configuration = default_configuration();
+    let request = request(&contents, &parent, &database, &configuration);
+
+    assert_eq!(
+        request.source_limits().deadline(),
+        DEFAULT_LOCAL_CONNECTED_WORKSPACE_SOURCE_DEADLINE
+    );
+    assert_eq!(
+        request.deadline(),
+        DEFAULT_LOCAL_CONNECTED_WORKSPACE_DEADLINE
+    );
+    assert_eq!(
+        DEFAULT_LOCAL_CONNECTED_WORKSPACE_SOURCE_DEADLINE,
+        DEFAULT_LOCAL_CONNECTED_WORKSPACE_DEADLINE
+    );
+    assert_eq!(
+        DEFAULT_LOCAL_CONNECTED_WORKSPACE_DEADLINE,
+        Duration::from_secs(300)
+    );
+}
+
+#[test]
 fn facade_publishes_two_sources_and_returns_only_aggregate_coverage() {
     let directory = TempDirectory::new();
     fixture_repository(directory.path(), "repo-a");

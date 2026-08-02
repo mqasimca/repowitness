@@ -92,12 +92,147 @@ fn mcp_serve_arguments_are_complete_canonical_and_order_independent() {
         OsString::from("../index.db"),
     ];
     let invocation = parse_mcp_serve_arguments(&arguments).expect("valid configuration");
-    assert_eq!(invocation.root, Path::new("../repository"));
-    assert_eq!(invocation.database, Path::new("../index.db"));
-    assert_eq!(invocation.repository_identity, identity);
+    assert!(matches!(
+        invocation.target,
+        McpServeTarget::Single {
+            root,
+            database,
+            repository_identity,
+            ..
+        } if root == Path::new("../repository")
+            && database == Path::new("../index.db")
+            && repository_identity == identity
+    ));
     assert!(!invocation.memory_writes_enabled);
     assert!(!invocation.native_tasks_enabled);
     assert_eq!(invocation.memory_actor, None);
+}
+
+#[test]
+fn mcp_registry_startup_is_exclusive_and_read_only() {
+    let registry = PathBuf::from("/absolute/registry.json");
+    let invocation = parse_mcp_serve_arguments(&[
+        OsString::from("--registry"),
+        registry.clone().into_os_string(),
+    ])
+    .expect("registry startup is valid");
+    assert!(matches!(
+        invocation.target,
+        McpServeTarget::Registry { path } if path == registry
+    ));
+    assert!(!invocation.memory_writes_enabled);
+    assert!(!invocation.native_tasks_enabled);
+    assert!(invocation.personal_memory_profile.is_none());
+
+    let identity = format!("rwi1:h:{}", "AB".repeat(32));
+    for arguments in [
+        vec!["--registry", "/registry.json", "--root", "/repository"],
+        vec![
+            "--registry",
+            "/registry.json",
+            "--repository-id",
+            identity.as_str(),
+        ],
+        vec!["--registry", "/registry.json", "--enable-memory-writes"],
+        vec!["--registry", "/registry.json", "--enable-native-tasks"],
+        vec!["--registry", "/registry.json", "--enable-personal-memory"],
+    ] {
+        assert!(
+            parse_mcp_serve_arguments(
+                &arguments
+                    .into_iter()
+                    .map(OsString::from)
+                    .collect::<Vec<_>>(),
+            )
+            .is_err()
+        );
+    }
+}
+
+#[test]
+fn mcp_catalog_startup_is_exclusive_and_read_only() {
+    let state_dir = PathBuf::from("/absolute/private-state");
+    let invocation = parse_mcp_serve_arguments(&[
+        OsString::from("--catalog"),
+        OsString::from("--catalog-state-dir"),
+        state_dir.clone().into_os_string(),
+    ])
+    .expect("catalog startup is valid");
+    assert!(matches!(
+        invocation.target,
+        McpServeTarget::Catalog { state_dir: Some(path) } if path == state_dir
+    ));
+    assert!(!invocation.memory_writes_enabled);
+    assert!(!invocation.native_tasks_enabled);
+    assert!(invocation.personal_memory_profile.is_none());
+
+    for arguments in [
+        vec!["--catalog", "--registry", "/registry.json"],
+        vec!["--catalog", "--root", "/repository"],
+        vec!["--catalog", "--enable-memory-writes"],
+        vec!["--catalog", "--enable-native-tasks"],
+        vec!["--catalog", "--enable-personal-memory"],
+        vec!["--catalog-state-dir", "/private-state"],
+    ] {
+        assert!(
+            parse_mcp_serve_arguments(
+                &arguments
+                    .into_iter()
+                    .map(OsString::from)
+                    .collect::<Vec<_>>(),
+            )
+            .is_err()
+        );
+    }
+}
+
+#[test]
+fn mcp_registry_reader_is_strict_bounded_and_path_free() {
+    let unique = format!(
+        "repowitness-mcp-registry-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time after epoch")
+            .as_nanos(),
+    );
+    let directory = std::env::temp_dir().join(unique);
+    std::fs::create_dir(&directory).expect("temporary registry directory");
+    let registry = directory.join("registry.json");
+    let root = directory.join("repository");
+    let database = directory.join("index.sqlite3");
+    let first_id = format!("rwi1:h:{}", "AB".repeat(32));
+    let second_id = format!("rwi1:h:{}", "CD".repeat(32));
+    let document = serde_json::json!({
+        "schema_version": 1,
+        "repositories": [
+            {"repository_id": first_id, "root": root, "database": database},
+            {"repository_id": second_id, "root": directory.join("repository-two"), "database": directory.join("index-two.sqlite3")}
+        ]
+    });
+    std::fs::write(
+        &registry,
+        serde_json::to_vec(&document).expect("registry JSON"),
+    )
+    .expect("write registry");
+    let parsed = read_mcp_repository_registry(&registry).expect("registry parses");
+    assert_eq!(parsed.len(), 2);
+    assert!(parsed.iter().all(|entry| entry.root.is_absolute()));
+    assert!(parsed.iter().all(|entry| entry.database.is_absolute()));
+
+    for invalid in [
+        br#"{"schema_version":1,"repositories":[]}"#.as_slice(),
+        br#"{"schema_version":1,"repositories":[],"unknown":true}"#.as_slice(),
+        br#"{"schema_version":1,"schema_version":1,"repositories":[]}"#.as_slice(),
+        br#"{"schema_version":1,"repositories":[{"repository_id":"rwi1:h:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","root":"relative","database":"/absolute/database"}]}"#.as_slice(),
+    ] {
+        std::fs::write(&registry, invalid).expect("rewrite invalid registry");
+        assert!(read_mcp_repository_registry(&registry).is_err());
+    }
+    std::fs::write(&registry, vec![b' '; MAX_MCP_REPOSITORY_REGISTRY_BYTES + 1])
+        .expect("write oversized registry");
+    assert!(read_mcp_repository_registry(&registry).is_err());
+    std::fs::remove_dir_all(&directory).expect("remove temporary registry directory");
 }
 
 #[test]
@@ -163,10 +298,13 @@ fn mcp_serve_admits_one_explicit_connected_graph_source_slot() {
     ];
     let invocation = parse_mcp_serve_arguments(&arguments).expect("valid graph context");
     assert!(matches!(
-        invocation.graph_workspace,
-        GraphWorkspaceContext::ConnectedWorkspace {
+        invocation.target,
+        McpServeTarget::Single {
+            graph_workspace: GraphWorkspaceContext::ConnectedWorkspace {
             ref connected_workspace,
             ref source_slot,
+            },
+            ..
         } if connected_workspace == &expected_connected_workspace
             && source_slot == &expected_source_slot
     ));
@@ -517,14 +655,15 @@ fn mcp_serve_preserves_non_utf8_paths_but_rejects_non_utf8_trust_text() {
         OsString::from(&identity),
     ];
     let invocation = parse_mcp_serve_arguments(&arguments).expect("byte paths are supported");
-    assert_eq!(
-        invocation.root.as_os_str().as_bytes(),
-        root.as_os_str().as_bytes()
-    );
-    assert_eq!(
-        invocation.database.as_os_str().as_bytes(),
-        database.as_os_str().as_bytes()
-    );
+    assert!(matches!(
+        invocation.target,
+        McpServeTarget::Single {
+            root: parsed_root,
+            database: parsed_database,
+            ..
+        } if parsed_root.as_os_str().as_bytes() == root.as_os_str().as_bytes()
+            && parsed_database.as_os_str().as_bytes() == database.as_os_str().as_bytes()
+    ));
 
     for option in ["--repository-id", "--memory-actor"] {
         let mut arguments = vec![

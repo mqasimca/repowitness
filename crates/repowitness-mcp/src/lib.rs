@@ -10,8 +10,10 @@ mod transport;
 mod wire;
 
 pub use server::{
-    DEFAULT_MCP_OPERATION_CONCURRENCY, McpServeError, McpToolSurface, RepoWitnessMcpServer,
-    serve_stdio, serve_stdio_with_memory_writes, serve_stdio_with_surface,
+    DEFAULT_MCP_OPERATION_CONCURRENCY, MAX_MCP_REGISTERED_REPOSITORIES, McpRepositoryRegistryError,
+    McpServeError, McpToolSurface, RepoWitnessMcpServer, serve_stdio,
+    serve_stdio_with_memory_writes, serve_stdio_with_repository_catalog,
+    serve_stdio_with_repository_registry, serve_stdio_with_surface,
     serve_stdio_with_surface_and_native_tasks, serve_stdio_with_surface_tasks_and_personal_memory,
 };
 pub use transport::{BoundedLineReader, BoundedLineReaderLimitError, MAX_MCP_INPUT_LINE_BYTES};

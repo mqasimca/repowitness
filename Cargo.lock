@@ -1692,7 +1692,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "repowitness-analysis"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "repowitness-domain",
  "sha2",
@@ -1705,7 +1705,7 @@ dependencies = [
 
 [[package]]
 name = "repowitness-application"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "repowitness-analysis",
  "repowitness-domain",
@@ -1714,24 +1714,25 @@ dependencies = [
 
 [[package]]
 name = "repowitness-cli"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "cap-fs-ext",
  "cap-std",
  "repowitness-local",
  "repowitness-mcp",
  "rustix",
+ "serde",
  "serde_json",
  "tokio",
 ]
 
 [[package]]
 name = "repowitness-domain"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 
 [[package]]
 name = "repowitness-local"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "cap-fs-ext",
  "cap-primitives",
@@ -1755,7 +1756,7 @@ dependencies = [
 
 [[package]]
 name = "repowitness-mcp"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "repowitness-application",
  "rmcp",

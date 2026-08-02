@@ -12,12 +12,14 @@ use std::{
 };
 
 use repowitness_application::{
-    CodeSearchError, CodeSearchLimitError, CodeSearchLimits, CodeSearchQuery, CodeSearchQueryError,
-    CodeSearchRequest, CodeSearchResult, RepositoryIdentityTextError, RepositoryIdentityTextV1,
-    ResolvedConfiguration, code_search,
+    CodeSearchError, CodeSearchLimitError, CodeSearchLimits, CodeSearchPort, CodeSearchPortResult,
+    CodeSearchQuery, CodeSearchQueryError, CodeSearchRequest, CodeSearchResult,
+    ConnectedWorkspaceIdTextV1, RepositoryIdentityTextError, RepositoryIdentityTextV1,
+    ResolvedConfiguration, SourceSlotIdTextV1, WorkspaceIdentityTextError, code_search,
 };
+use repowitness_domain::{ConnectedWorkspaceId, RepositoryIdentityDigest, SourceSlotId};
 
-use crate::{GenerationId, OwnedSqliteReader, SqliteStoreError};
+use crate::{GenerationId, OwnedSqliteReader, PinnedWorkspaceView, SearchLimits, SqliteStoreError};
 
 /// Default end-to-end deadline for one local lexical query.
 pub const DEFAULT_LOCAL_CODE_SEARCH_DEADLINE: Duration = Duration::from_secs(5);
@@ -25,11 +27,28 @@ pub const DEFAULT_LOCAL_CODE_SEARCH_DEADLINE: Duration = Duration::from_secs(5);
 /// Proof-carrying local search result pinned to one SQLite generation.
 pub type LocalCodeSearchResult = CodeSearchResult<GenerationId>;
 
+/// Explicit single-repository or connected-source-slot query context.
+#[derive(Clone, Copy)]
+pub enum LocalCodeSearchWorkspace<'a> {
+    /// One repository's compatible single-source workspace.
+    SingleRepository {
+        /// Canonical repository identity text.
+        repository_identity: &'a str,
+    },
+    /// One selected member of a connected workspace.
+    ConnectedWorkspace {
+        /// Canonical connected-workspace identity text.
+        connected_workspace: &'a str,
+        /// Canonical source-slot identity text.
+        source_slot: &'a str,
+    },
+}
+
 /// Explicit inputs for one local database query.
 #[derive(Clone, Copy)]
 pub struct LocalCodeSearchRequest<'a> {
     database: &'a Path,
-    repository_identity: &'a str,
+    workspace: LocalCodeSearchWorkspace<'a>,
     query: &'a str,
     limits: CodeSearchLimits,
     configuration: Option<&'a ResolvedConfiguration>,
@@ -42,7 +61,30 @@ impl<'a> LocalCodeSearchRequest<'a> {
     pub fn new(database: &'a Path, repository_identity: &'a str, query: &'a str) -> Self {
         Self {
             database,
-            repository_identity,
+            workspace: LocalCodeSearchWorkspace::SingleRepository {
+                repository_identity,
+            },
+            query,
+            limits: CodeSearchLimits::default(),
+            configuration: None,
+            deadline: DEFAULT_LOCAL_CODE_SEARCH_DEADLINE,
+        }
+    }
+
+    /// Constructs a search pinned to one selected source slot of a connected workspace.
+    #[must_use]
+    pub fn for_connected_workspace(
+        database: &'a Path,
+        connected_workspace: &'a str,
+        source_slot: &'a str,
+        query: &'a str,
+    ) -> Self {
+        Self {
+            database,
+            workspace: LocalCodeSearchWorkspace::ConnectedWorkspace {
+                connected_workspace,
+                source_slot,
+            },
             query,
             limits: CodeSearchLimits::default(),
             configuration: None,
@@ -76,7 +118,7 @@ impl fmt::Debug for LocalCodeSearchRequest<'_> {
         formatter
             .debug_struct("LocalCodeSearchRequest")
             .field("database", &"<redacted-path>")
-            .field("repository_identity", &"<redacted-identity>")
+            .field("workspace", &self.workspace)
             .field("query", &"<redacted-query>")
             .field("limits", &self.limits)
             .field(
@@ -88,6 +130,19 @@ impl fmt::Debug for LocalCodeSearchRequest<'_> {
     }
 }
 
+impl fmt::Debug for LocalCodeSearchWorkspace<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let kind = match self {
+            Self::SingleRepository { .. } => "single_repository",
+            Self::ConnectedWorkspace { .. } => "connected_workspace",
+        };
+        formatter
+            .debug_struct("LocalCodeSearchWorkspace")
+            .field("kind", &kind)
+            .finish_non_exhaustive()
+    }
+}
+
 /// Stable one-shot local search failure.
 #[derive(Debug)]
 pub enum LocalCodeSearchError {
@@ -95,6 +150,16 @@ pub enum LocalCodeSearchError {
     RepositoryIdentity {
         /// Stable boundary validation failure.
         source: RepositoryIdentityTextError,
+    },
+    /// The connected-workspace identity text is malformed or non-canonical.
+    ConnectedWorkspaceIdentity {
+        /// Stable boundary validation failure.
+        source: WorkspaceIdentityTextError,
+    },
+    /// The source-slot identity text is malformed or non-canonical.
+    SourceSlotIdentity {
+        /// Stable boundary validation failure.
+        source: WorkspaceIdentityTextError,
     },
     /// The query violates the shared literal profile.
     Query {
@@ -113,6 +178,15 @@ pub enum LocalCodeSearchError {
         /// Stable SQLite boundary failure.
         source: SqliteStoreError,
     },
+    /// The selected connected workspace or source slot is unavailable.
+    WorkspaceUnavailable,
+    /// Pinning the selected workspace view failed.
+    Workspace {
+        /// Stable SQLite boundary failure.
+        source: SqliteStoreError,
+    },
+    /// The selected source slot changed after view selection.
+    WorkspaceGenerationChanged,
     /// The shared application query failed.
     Search {
         /// Stable application or SQLite boundary failure.
@@ -129,10 +203,17 @@ impl fmt::Display for LocalCodeSearchError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
             Self::RepositoryIdentity { .. } => "repository identity is invalid",
+            Self::ConnectedWorkspaceIdentity { .. } => "connected workspace identity is invalid",
+            Self::SourceSlotIdentity { .. } => "source slot identity is invalid",
             Self::Query { .. } => "code-search query is invalid",
             Self::Limits { .. } => "code-search limits are invalid",
             Self::DeadlineNotRepresentable => "code-search deadline cannot be represented",
             Self::ReaderStart { .. } => "local index reader could not start",
+            Self::WorkspaceUnavailable => "code-search workspace view is unavailable",
+            Self::Workspace { .. } => "code-search workspace view read failed",
+            Self::WorkspaceGenerationChanged => {
+                "code-search source changed after workspace-view selection"
+            }
             Self::Search { .. } => "local code search failed",
             Self::Shutdown { .. } => "local index reader could not shut down",
         })
@@ -143,12 +224,18 @@ impl Error for LocalCodeSearchError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::RepositoryIdentity { source } => Some(source),
+            Self::ConnectedWorkspaceIdentity { source } | Self::SourceSlotIdentity { source } => {
+                Some(source)
+            }
             Self::Query { source } => Some(source),
             Self::Limits { source } => Some(source),
             Self::ReaderStart { source } => Some(source),
+            Self::Workspace { source } => Some(source),
             Self::Search { source } => Some(source),
             Self::Shutdown { source } => Some(source),
-            Self::DeadlineNotRepresentable => None,
+            Self::DeadlineNotRepresentable
+            | Self::WorkspaceUnavailable
+            | Self::WorkspaceGenerationChanged => None,
         }
     }
 }
@@ -158,8 +245,7 @@ pub fn search_local_rust_index(
     request: LocalCodeSearchRequest<'_>,
     cancelled: Arc<AtomicBool>,
 ) -> Result<LocalCodeSearchResult, LocalCodeSearchError> {
-    let repository = RepositoryIdentityTextV1::decode(request.repository_identity)
-        .map_err(|source| LocalCodeSearchError::RepositoryIdentity { source })?;
+    validate_workspace_identity(request.workspace)?;
     let query = CodeSearchQuery::try_new(request.query)
         .map_err(|source| LocalCodeSearchError::Query { source })?;
     let limits = effective_search_limits(&request)
@@ -170,13 +256,47 @@ pub fn search_local_rust_index(
     check_facade_control(&cancelled, deadline)?;
     let reader = OwnedSqliteReader::start(request.database, deadline)
         .map_err(|source| LocalCodeSearchError::ReaderStart { source })?;
-    let result = code_search(
-        &reader,
-        CodeSearchRequest::new(repository, query, limits, cancelled, deadline),
-    );
+    let workspace =
+        match selected_workspace(&reader, request.workspace, Arc::clone(&cancelled), deadline) {
+            Ok(workspace) => workspace,
+            Err(error) => {
+                let shutdown = reader.shutdown(deadline);
+                return match shutdown {
+                    Ok(()) => Err(error),
+                    Err(source) => Err(LocalCodeSearchError::Shutdown { source }),
+                };
+            }
+        };
+    let result = match workspace.view.as_ref() {
+        None => code_search(
+            &reader,
+            CodeSearchRequest::new(
+                workspace.repository,
+                query,
+                limits,
+                Arc::clone(&cancelled),
+                deadline,
+            ),
+        ),
+        Some(view) => code_search(
+            &ConnectedWorkspaceCodeSearchPort {
+                reader: &reader,
+                view,
+                source_slot: workspace.source_slot,
+            },
+            CodeSearchRequest::new(
+                workspace.repository,
+                query,
+                limits,
+                Arc::clone(&cancelled),
+                deadline,
+            ),
+        ),
+    };
     let shutdown = reader.shutdown(deadline);
     match (result, shutdown) {
-        (Ok(result), Ok(())) => Ok(result),
+        (Ok(result), Ok(())) if *result.generation() == workspace.generation => Ok(result),
+        (Ok(_), Ok(())) => Err(LocalCodeSearchError::WorkspaceGenerationChanged),
         (Err(source), _) => Err(LocalCodeSearchError::Search { source }),
         (Ok(_), Err(source)) => Err(LocalCodeSearchError::Shutdown { source }),
     }
@@ -210,6 +330,122 @@ pub fn search_local_index(
     cancelled: Arc<AtomicBool>,
 ) -> Result<LocalCodeSearchResult, LocalCodeSearchError> {
     search_local_rust_index(request, cancelled)
+}
+
+struct SelectedWorkspace {
+    repository: RepositoryIdentityDigest,
+    generation: GenerationId,
+    source_slot: SourceSlotId,
+    view: Option<PinnedWorkspaceView>,
+}
+
+fn validate_workspace_identity(
+    workspace: LocalCodeSearchWorkspace<'_>,
+) -> Result<(), LocalCodeSearchError> {
+    match workspace {
+        LocalCodeSearchWorkspace::SingleRepository {
+            repository_identity,
+        } => {
+            RepositoryIdentityTextV1::decode(repository_identity)
+                .map_err(|source| LocalCodeSearchError::RepositoryIdentity { source })?;
+        }
+        LocalCodeSearchWorkspace::ConnectedWorkspace {
+            connected_workspace,
+            source_slot,
+        } => {
+            ConnectedWorkspaceIdTextV1::decode(connected_workspace)
+                .map_err(|source| LocalCodeSearchError::ConnectedWorkspaceIdentity { source })?;
+            SourceSlotIdTextV1::decode(source_slot)
+                .map_err(|source| LocalCodeSearchError::SourceSlotIdentity { source })?;
+        }
+    }
+    Ok(())
+}
+
+fn selected_workspace(
+    reader: &OwnedSqliteReader,
+    workspace: LocalCodeSearchWorkspace<'_>,
+    cancelled: Arc<AtomicBool>,
+    deadline: Instant,
+) -> Result<SelectedWorkspace, LocalCodeSearchError> {
+    let (connected_workspace, requested_slot) = match workspace {
+        LocalCodeSearchWorkspace::SingleRepository {
+            repository_identity,
+        } => {
+            let repository = RepositoryIdentityTextV1::decode(repository_identity)
+                .map_err(|source| LocalCodeSearchError::RepositoryIdentity { source })?;
+            (
+                ConnectedWorkspaceId::for_single_repository(repository),
+                None,
+            )
+        }
+        LocalCodeSearchWorkspace::ConnectedWorkspace {
+            connected_workspace,
+            source_slot,
+        } => (
+            ConnectedWorkspaceIdTextV1::decode(connected_workspace)
+                .map_err(|source| LocalCodeSearchError::ConnectedWorkspaceIdentity { source })?,
+            Some(
+                SourceSlotIdTextV1::decode(source_slot)
+                    .map_err(|source| LocalCodeSearchError::SourceSlotIdentity { source })?,
+            ),
+        ),
+    };
+    let view = reader
+        .pin_workspace_view(connected_workspace, None, cancelled, deadline)
+        .map_err(|source| LocalCodeSearchError::Workspace { source })?
+        .ok_or(LocalCodeSearchError::WorkspaceUnavailable)?;
+    let member = match requested_slot {
+        Some(source_slot) => view
+            .members()
+            .iter()
+            .find(|member| member.source_slot() == source_slot)
+            .ok_or(LocalCodeSearchError::WorkspaceUnavailable)?,
+        None => {
+            let [member] = view.members() else {
+                return Err(LocalCodeSearchError::WorkspaceUnavailable);
+            };
+            member
+        }
+    };
+    Ok(SelectedWorkspace {
+        repository: member.repository(),
+        generation: member.generation(),
+        source_slot: member.source_slot(),
+        view: requested_slot.map(|_| view),
+    })
+}
+
+struct ConnectedWorkspaceCodeSearchPort<'a> {
+    reader: &'a OwnedSqliteReader,
+    view: &'a PinnedWorkspaceView,
+    source_slot: SourceSlotId,
+}
+
+impl CodeSearchPort for ConnectedWorkspaceCodeSearchPort<'_> {
+    type Generation = GenerationId;
+    type Error = SqliteStoreError;
+
+    fn search(
+        &self,
+        _repository: RepositoryIdentityDigest,
+        query: &CodeSearchQuery,
+        limits: CodeSearchLimits,
+        cancelled: Arc<AtomicBool>,
+        deadline: Instant,
+    ) -> Result<CodeSearchPortResult<Self::Generation>, Self::Error> {
+        let storage_limits =
+            SearchLimits::try_new(limits.max_results(), limits.max_output_bytes())?;
+        let result = self.reader.search_workspace_member(
+            self.view,
+            self.source_slot,
+            query.as_str(),
+            storage_limits,
+            cancelled,
+            deadline,
+        )?;
+        crate::sqlite::code_search_port_result_from_search_results(result)
+    }
 }
 
 fn check_facade_control(

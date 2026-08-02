@@ -16,13 +16,13 @@ use repowitness_analysis::RustSymbolKind;
 use repowitness_application::{
     CodeSearchLimitError, CodeSearchLimits, ConnectedWorkspaceIdTextV1,
     RepositoryIdentityTextError, RepositoryIdentityTextV1, ResolvedConfiguration, SourceLanguage,
-    SourceSlotIdTextV1, SymbolSearchError, SymbolSearchNameMatch, SymbolSearchQuery,
-    SymbolSearchQueryError, SymbolSearchRequest, SymbolSearchResult, WorkspaceIdentityTextError,
-    symbol_search,
+    SourceSlotIdTextV1, SymbolSearchError, SymbolSearchNameMatch, SymbolSearchPort,
+    SymbolSearchPortResult, SymbolSearchQuery, SymbolSearchQueryError, SymbolSearchRequest,
+    SymbolSearchResult, WorkspaceIdentityTextError, symbol_search,
 };
 use repowitness_domain::{ConnectedWorkspaceId, RepositoryIdentityDigest, SourceSlotId};
 
-use crate::{GenerationId, OwnedSqliteReader, SqliteStoreError};
+use crate::{GenerationId, OwnedSqliteReader, PinnedWorkspaceView, SearchLimits, SqliteStoreError};
 
 /// Default end-to-end deadline for one local typed declaration search.
 pub const DEFAULT_LOCAL_SYMBOL_SEARCH_DEADLINE: Duration = Duration::from_secs(5);
@@ -313,6 +313,7 @@ pub fn search_local_symbols(
     request: LocalSymbolSearchRequest<'_>,
     cancelled: Arc<AtomicBool>,
 ) -> Result<LocalSymbolSearchResult, LocalSymbolSearchError> {
+    validate_workspace_identity(request.workspace)?;
     let query = SymbolSearchQuery::try_new_with_filters(
         request.name,
         request.name_match,
@@ -339,16 +340,32 @@ pub fn search_local_symbols(
                 };
             }
         };
-    let result = symbol_search(
-        &reader,
-        SymbolSearchRequest::new(
-            workspace.repository,
-            query,
-            limits,
-            Arc::clone(&cancelled),
-            deadline,
+    let result = match workspace.view.as_ref() {
+        None => symbol_search(
+            &reader,
+            SymbolSearchRequest::new(
+                workspace.repository,
+                query,
+                limits,
+                Arc::clone(&cancelled),
+                deadline,
+            ),
         ),
-    );
+        Some(view) => symbol_search(
+            &ConnectedWorkspaceSymbolSearchPort {
+                reader: &reader,
+                view,
+                source_slot: workspace.source_slot,
+            },
+            SymbolSearchRequest::new(
+                workspace.repository,
+                query,
+                limits,
+                Arc::clone(&cancelled),
+                deadline,
+            ),
+        ),
+    };
     let shutdown = reader.shutdown(deadline);
     match (result, shutdown) {
         (Ok(result), Ok(())) => {
@@ -373,6 +390,30 @@ struct SelectedWorkspace {
     workspace_view: i64,
     source_slot: SourceSlotId,
     generation: GenerationId,
+    view: Option<PinnedWorkspaceView>,
+}
+
+fn validate_workspace_identity(
+    workspace: LocalSymbolSearchWorkspace<'_>,
+) -> Result<(), LocalSymbolSearchError> {
+    match workspace {
+        LocalSymbolSearchWorkspace::SingleRepository {
+            repository_identity,
+        } => {
+            RepositoryIdentityTextV1::decode(repository_identity)
+                .map_err(LocalSymbolSearchError::RepositoryIdentity)?;
+        }
+        LocalSymbolSearchWorkspace::ConnectedWorkspace {
+            connected_workspace,
+            source_slot,
+        } => {
+            ConnectedWorkspaceIdTextV1::decode(connected_workspace)
+                .map_err(LocalSymbolSearchError::ConnectedWorkspaceIdentity)?;
+            SourceSlotIdTextV1::decode(source_slot)
+                .map_err(LocalSymbolSearchError::SourceSlotIdentity)?;
+        }
+    }
+    Ok(())
 }
 
 fn selected_workspace(
@@ -408,6 +449,7 @@ fn selected_workspace(
         .pin_workspace_view(connected_workspace, None, cancelled, deadline)
         .map_err(LocalSymbolSearchError::Workspace)?
         .ok_or(LocalSymbolSearchError::WorkspaceUnavailable)?;
+    let is_connected_workspace = requested_slot.is_some();
     let member = match requested_slot {
         Some(source_slot) => view
             .members()
@@ -427,7 +469,40 @@ fn selected_workspace(
         workspace_view: view.view().get(),
         source_slot: member.source_slot(),
         generation: member.generation(),
+        view: is_connected_workspace.then_some(view),
     })
+}
+
+struct ConnectedWorkspaceSymbolSearchPort<'a> {
+    reader: &'a OwnedSqliteReader,
+    view: &'a PinnedWorkspaceView,
+    source_slot: SourceSlotId,
+}
+
+impl SymbolSearchPort for ConnectedWorkspaceSymbolSearchPort<'_> {
+    type Generation = GenerationId;
+    type Error = SqliteStoreError;
+
+    fn search_symbols(
+        &self,
+        _repository: RepositoryIdentityDigest,
+        query: &SymbolSearchQuery,
+        limits: CodeSearchLimits,
+        cancelled: Arc<AtomicBool>,
+        deadline: Instant,
+    ) -> Result<SymbolSearchPortResult<Self::Generation>, Self::Error> {
+        let storage_limits =
+            SearchLimits::try_new(limits.max_results(), limits.max_output_bytes())?;
+        let result = self.reader.search_workspace_member_symbols(
+            self.view,
+            self.source_slot,
+            query.clone(),
+            storage_limits,
+            cancelled,
+            deadline,
+        )?;
+        crate::sqlite::code_search_port_result_from_search_results(result)
+    }
 }
 
 fn effective_search_limits(
@@ -469,7 +544,8 @@ mod tests {
     use repowitness_application::SymbolSearchNameMatch;
 
     use super::{
-        DEFAULT_LOCAL_SYMBOL_SEARCH_DEADLINE, LocalSymbolSearchRequest, search_local_symbols,
+        DEFAULT_LOCAL_SYMBOL_SEARCH_DEADLINE, LocalSymbolSearchError, LocalSymbolSearchRequest,
+        search_local_symbols,
     };
 
     const REPOSITORY_ID: &str = concat!(
@@ -497,17 +573,18 @@ mod tests {
 
     #[test]
     fn malformed_identity_fails_before_opening_the_database() {
-        assert!(
+        assert!(matches!(
             search_local_symbols(
-                LocalSymbolSearchRequest::new(
+                LocalSymbolSearchRequest::for_connected_workspace(
                     Path::new("/not/opened.sqlite3"),
+                    "invalid",
                     "invalid",
                     "name",
                     SymbolSearchNameMatch::Exact,
                 ),
                 Arc::new(AtomicBool::new(false)),
-            )
-            .is_err()
-        );
+            ),
+            Err(LocalSymbolSearchError::ConnectedWorkspaceIdentity(_))
+        ));
     }
 }

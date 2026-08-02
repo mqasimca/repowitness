@@ -92,6 +92,9 @@ passed, so maintainers accepted ADR-0018 and then ADR-0021.
 | [0046](0046-bounded-lexical-path-navigation.md) | Group bounded lexical declaration evidence into canonical paths | Proposed |
 | [0047](0047-bounded-raw-syntax-target-search.md) | Navigate exact all-language raw syntax targets without relationship inference | Proposed |
 | [0048](0048-bounded-scip-relationship-traversal.md) | Traverse validated SCIP relationships through a bounded precision profile | Proposed |
+| [0049](0049-local-multi-repository-mcp-registry.md) | Serve explicitly registered local repositories through one read-only MCP process | Proposed |
+| [0050](0050-opt-in-codex-catalog-onboarding.md) | Admit the current Codex worktree into a private local MCP catalog | Proposed |
+| [0051](0051-explicit-codex-connected-workspace-catalog.md) | Compose explicitly declared Codex product stacks through connected source slots | Proposed |
 
 Use [0000-template.md](0000-template.md) for a new decision.
 

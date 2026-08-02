@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+if [[ "$#" -ne 2 ]]; then
+  printf '%s\n' "usage: $0 <archive> <binary-name>" >&2
+  exit 64
+fi
+
+archive=$1
+binary_name=$2
+
+if [[ ! -f "$archive" ]]; then
+  printf '%s\n' "error: release archive does not exist" >&2
+  exit 66
+fi
+
+smoke_root=$(mktemp -d)
+trap 'rm -rf "$smoke_root"' EXIT
+
+case "$archive" in
+  *.tar.gz)
+    tar -xzf "$archive" -C "$smoke_root"
+    ;;
+  *.zip)
+    if command -v unzip >/dev/null 2>&1; then
+      unzip -q "$archive" -d "$smoke_root"
+    elif command -v 7z >/dev/null 2>&1; then
+      7z x -bd -o"$smoke_root" "$archive" >/dev/null
+    else
+      printf '%s\n' "error: no ZIP extraction tool is available" >&2
+      exit 69
+    fi
+    ;;
+  *)
+    printf '%s\n' "error: unsupported release archive format" >&2
+    exit 64
+    ;;
+esac
+
+binary="$smoke_root/$binary_name"
+if [[ ! -f "$binary" ]]; then
+  printf '%s\n' "error: release archive does not contain the expected CLI" >&2
+  exit 65
+fi
+
+version=$(
+  "$binary" --version
+)
+if [[ "$version" != repowitness\ * ]]; then
+  printf '%s\n' "error: release archive did not provide a RepoWitness CLI" >&2
+  exit 65
+fi
+"$binary" --help >/dev/null
+
+repository="$smoke_root/repository"
+database="$smoke_root/repowitness.sqlite3"
+repository_id="rwi1:h:0000000000000000000000000000000000000000000000000000000000000001"
+
+mkdir -p "$repository/src"
+git init --quiet "$repository"
+printf '%s\n' 'pub fn release_artifact_smoke() {}' >"$repository/src/lib.rs"
+git -C "$repository" add -- src/lib.rs
+git -C "$repository" \
+  -c user.name='RepoWitness release smoke' \
+  -c user.email='release-smoke@example.invalid' \
+  commit --quiet -m 'release smoke fixture'
+
+"$binary" index \
+  --repository-id "$repository_id" \
+  --database "$database" \
+  "$repository" >"$smoke_root/index.out"
+grep -Fq 'status=ok' "$smoke_root/index.out"
+grep -Fq 'operation=index' "$smoke_root/index.out"
+
+"$binary" search \
+  --repository-id "$repository_id" \
+  --database "$database" \
+  --query release_artifact_smoke \
+  --limit 1 >"$smoke_root/search.out"
+grep -Fq 'status=ok' "$smoke_root/search.out"
+grep -Fq 'operation=search' "$smoke_root/search.out"
+grep -Fq 'matches_returned=1' "$smoke_root/search.out"

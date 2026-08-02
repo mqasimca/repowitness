@@ -77,6 +77,9 @@ use crate::{
 /// Maximum synchronous repository operations admitted concurrently by default.
 pub const DEFAULT_MCP_OPERATION_CONCURRENCY: usize = 4;
 
+/// Maximum independently indexed repositories admitted by one local registry server.
+pub const MAX_MCP_REGISTERED_REPOSITORIES: usize = 32;
+
 /// Maximum number of native MCP task payload records retained at once.
 ///
 /// Durable engineering-task state is authoritative and survives this registry;
@@ -177,6 +180,8 @@ impl Error for McpServeError {}
 #[derive(Clone)]
 pub struct RepoWitnessMcpServer {
     service: Arc<dyn RepositoryService>,
+    registry: Option<Arc<BTreeMap<String, Arc<dyn RepositoryService>>>>,
+    default_repository_id: Option<Arc<str>>,
     operations: Arc<Semaphore>,
     tools: Arc<[Tool]>,
     memory_writes_enabled: bool,
@@ -184,6 +189,17 @@ pub struct RepoWitnessMcpServer {
     tasks_enabled: bool,
     tasks: Arc<Mutex<NativeTasks>>,
     surface: McpToolSurface,
+}
+
+/// Fixed registry construction error for the local multi-repository server.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum McpRepositoryRegistryError {
+    /// A registry must admit at least one service.
+    Empty,
+    /// Registry cardinality exceeds the fixed local bound.
+    TooMany,
+    /// The fixed catalog default does not name an admitted service.
+    DefaultMissing,
 }
 
 struct NativeTasks {
@@ -222,6 +238,14 @@ impl fmt::Debug for RepoWitnessMcpServer {
         formatter
             .debug_struct("RepoWitnessMcpServer")
             .field("service", &"<injected-repository-service>")
+            .field(
+                "registered_repository_count",
+                &self.registry.as_ref().map_or(0, |registry| registry.len()),
+            )
+            .field(
+                "has_default_repository",
+                &self.default_repository_id.is_some(),
+            )
             .field("available_permits", &self.operations.available_permits())
             .field("tool_count", &self.tools.len())
             .field("memory_writes_enabled", &self.memory_writes_enabled)
@@ -333,6 +357,92 @@ impl RepoWitnessMcpServer {
         )
     }
 
+    /// Constructs the fixed canonical read-only local multi-repository surface.
+    ///
+    /// Callers provide an already validated registry of opaque repository IDs
+    /// to isolated services. Every tool request must select one exact key.
+    pub fn with_repository_registry(
+        registry: BTreeMap<String, Arc<dyn RepositoryService>>,
+    ) -> Result<Self, McpRepositoryRegistryError> {
+        if registry.is_empty() {
+            return Err(McpRepositoryRegistryError::Empty);
+        }
+        if registry.len() > MAX_MCP_REGISTERED_REPOSITORIES {
+            return Err(McpRepositoryRegistryError::TooMany);
+        }
+        let service = registry
+            .values()
+            .next()
+            .expect("a non-empty registry has one service")
+            .clone();
+        let repository_ids = registry.keys().cloned().collect::<Vec<_>>();
+        Ok(Self {
+            service,
+            registry: Some(Arc::new(registry)),
+            default_repository_id: None,
+            operations: Arc::new(Semaphore::new(DEFAULT_MCP_OPERATION_CONCURRENCY)),
+            tools: Arc::from(tools(
+                false,
+                false,
+                McpToolSurface::NativeV1,
+                false,
+                Some((&repository_ids, true)),
+            )),
+            memory_writes_enabled: false,
+            personal_memory_enabled: false,
+            tasks_enabled: false,
+            tasks: Arc::new(Mutex::new(NativeTasks {
+                entries: BTreeMap::new(),
+            })),
+            surface: McpToolSurface::NativeV1,
+        })
+    }
+
+    /// Constructs the fixed canonical catalog surface with one process-fixed default.
+    ///
+    /// The default is selected only when a caller omits `repository_id`; explicit
+    /// selection still routes exclusively through the admitted catalog snapshot.
+    pub fn with_repository_catalog(
+        registry: BTreeMap<String, Arc<dyn RepositoryService>>,
+        default_repository_id: String,
+    ) -> Result<Self, McpRepositoryRegistryError> {
+        if registry.is_empty() {
+            return Err(McpRepositoryRegistryError::Empty);
+        }
+        if registry.len() > MAX_MCP_REGISTERED_REPOSITORIES {
+            return Err(McpRepositoryRegistryError::TooMany);
+        }
+        if !registry.contains_key(&default_repository_id) {
+            return Err(McpRepositoryRegistryError::DefaultMissing);
+        }
+        let service = registry
+            .values()
+            .next()
+            .expect("a non-empty catalog has one service")
+            .clone();
+        let repository_ids = registry.keys().cloned().collect::<Vec<_>>();
+        Ok(Self {
+            service,
+            registry: Some(Arc::new(registry)),
+            default_repository_id: Some(Arc::from(default_repository_id)),
+            operations: Arc::new(Semaphore::new(DEFAULT_MCP_OPERATION_CONCURRENCY)),
+            tools: Arc::from(tools(
+                false,
+                false,
+                McpToolSurface::NativeV1,
+                false,
+                Some((&repository_ids, false)),
+            )),
+            memory_writes_enabled: false,
+            personal_memory_enabled: false,
+            tasks_enabled: false,
+            tasks: Arc::new(Mutex::new(NativeTasks {
+                entries: BTreeMap::new(),
+            })),
+            surface: McpToolSurface::NativeV1,
+        })
+    }
+
     fn configured(
         service: Arc<dyn RepositoryService>,
         operation_concurrency: usize,
@@ -364,12 +474,15 @@ impl RepoWitnessMcpServer {
         );
         Self {
             service,
+            registry: None,
+            default_repository_id: None,
             operations: Arc::new(Semaphore::new(operation_concurrency)),
             tools: Arc::from(tools(
                 memory_writes_enabled,
                 personal_memory_enabled,
                 surface,
                 tasks_enabled,
+                None,
             )),
             memory_writes_enabled,
             personal_memory_enabled,
@@ -378,6 +491,50 @@ impl RepoWitnessMcpServer {
                 entries: BTreeMap::new(),
             })),
             surface,
+        }
+    }
+
+    fn selected_service(
+        &self,
+        arguments: Option<JsonObject>,
+    ) -> Result<(Arc<dyn RepositoryService>, Option<JsonObject>), McpError> {
+        let Some(registry) = self.registry.as_ref() else {
+            return Ok((Arc::clone(&self.service), arguments));
+        };
+        let mut arguments = arguments.unwrap_or_default();
+        let repository_id = match arguments.remove("repository_id") {
+            None => self
+                .default_repository_id
+                .as_deref()
+                .map(ToOwned::to_owned)
+                .ok_or_else(|| {
+                    McpError::invalid_params(
+                        "repository_id must name one registered repository",
+                        None,
+                    )
+                })?,
+            Some(value) => value.as_str().map(ToOwned::to_owned).ok_or_else(|| {
+                McpError::invalid_params("repository_id must name one registered repository", None)
+            })?,
+        };
+        let service = registry.get(&repository_id).cloned().ok_or_else(|| {
+            McpError::invalid_params("repository_id must name one registered repository", None)
+        })?;
+        Ok((service, Some(arguments)))
+    }
+
+    fn with_selected_service(&self, service: Arc<dyn RepositoryService>) -> Self {
+        Self {
+            service,
+            registry: None,
+            default_repository_id: None,
+            operations: Arc::clone(&self.operations),
+            tools: Arc::clone(&self.tools),
+            memory_writes_enabled: self.memory_writes_enabled,
+            personal_memory_enabled: self.personal_memory_enabled,
+            tasks_enabled: self.tasks_enabled,
+            tasks: Arc::clone(&self.tasks),
+            surface: self.surface,
         }
     }
 
@@ -772,43 +929,12 @@ include!("server/operation_supervisor.rs");
 include!("server/graph.rs");
 include!("server/compatibility.rs");
 
-impl ServerHandler for RepoWitnessMcpServer {
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(if self.tasks_enabled {
-            ServerCapabilities::builder()
-                .enable_tools()
-                .enable_tasks()
-                .build()
-        } else {
-            ServerCapabilities::builder().enable_tools().build()
-        })
-        .with_protocol_version(ProtocolVersion::V_2025_11_25)
-        .with_server_info(Implementation::new(
-            "repowitness",
-            env!("CARGO_PKG_VERSION"),
-        ))
-        .with_instructions(server_instructions(
-            self.surface,
-            self.memory_writes_enabled,
-        ))
-    }
-
-    async fn list_tools(
-        &self,
-        _request: Option<PaginatedRequestParams>,
-        _context: RequestContext<RoleServer>,
-    ) -> Result<ListToolsResult, McpError> {
-        Ok(ListToolsResult {
-            tools: self.tools.iter().cloned().collect(),
-            ..ListToolsResult::default()
-        })
-    }
-
+impl RepoWitnessMcpServer {
     #[allow(
         clippy::too_many_lines,
-        reason = "the complete versioned tool dispatch is intentionally one auditable closed match over fixed capabilities"
+        reason = "the fixed native read-only tool dispatch is shared by the single-repository and registry surfaces so their request validation cannot drift"
     )]
-    async fn call_tool(
+    async fn call_selected_tool(
         &self,
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
@@ -905,20 +1031,6 @@ impl ServerHandler for RepoWitnessMcpServer {
                     .map_err(|message| McpError::invalid_params(message, None))?;
                 self.call_historical_memory(request, context).await
             }
-            MEMORY_MANAGE_TOOL_NAME if self.memory_writes_enabled => {
-                let input = parse_arguments::<MemoryManageInput>(request.arguments)?;
-                let request = input
-                    .validate()
-                    .map_err(|message| McpError::invalid_params(message, None))?;
-                self.call_memory_manage(request, context).await
-            }
-            PERSONAL_MEMORY_TOOL_NAME if self.personal_memory_enabled => {
-                let input = parse_arguments::<PersonalMemoryInput>(request.arguments)?;
-                let request = input
-                    .validate()
-                    .map_err(|message| McpError::invalid_params(message, None))?;
-                self.call_personal_memory(request, context).await
-            }
             SCIP_EVIDENCE_TOOL_NAME => {
                 let input = parse_arguments::<ScipEvidenceInput>(request.arguments)?;
                 let request = input
@@ -946,6 +1058,106 @@ impl ServerHandler for RepoWitnessMcpServer {
                     .validate()
                     .map_err(|message| McpError::invalid_params(message, None))?;
                 self.call_symbol_get(request, context).await
+            }
+            _ => Err(McpError::invalid_params("unknown RepoWitness tool", None)),
+        }
+    }
+}
+
+impl ServerHandler for RepoWitnessMcpServer {
+    fn get_info(&self) -> ServerInfo {
+        ServerInfo::new(if self.tasks_enabled {
+            ServerCapabilities::builder()
+                .enable_tools()
+                .enable_tasks()
+                .build()
+        } else {
+            ServerCapabilities::builder().enable_tools().build()
+        })
+        .with_protocol_version(ProtocolVersion::V_2025_11_25)
+        .with_server_info(Implementation::new(
+            "repowitness",
+            env!("CARGO_PKG_VERSION"),
+        ))
+        .with_instructions(server_instructions(
+            self.surface,
+            self.memory_writes_enabled,
+            self.registry.is_some(),
+            self.default_repository_id.is_some(),
+        ))
+    }
+
+    async fn list_tools(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListToolsResult, McpError> {
+        Ok(ListToolsResult {
+            tools: self.tools.iter().cloned().collect(),
+            ..ListToolsResult::default()
+        })
+    }
+
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the complete versioned tool dispatch is intentionally one auditable closed match over fixed capabilities"
+    )]
+    async fn call_tool(
+        &self,
+        mut request: CallToolRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        if self.registry.is_some() {
+            let (service, arguments) = self.selected_service(request.arguments)?;
+            request.arguments = arguments;
+            return self
+                .with_selected_service(service)
+                .call_selected_tool(request, context)
+                .await;
+        }
+        if matches!(
+            request.name.as_ref(),
+            ARCHITECTURE_MAP_TOOL_NAME
+                | ARCHITECTURE_OVERVIEW_TOOL_NAME
+                | REPOSITORY_TOPOLOGY_TOOL_NAME
+                | CODE_SEARCH_TOOL_NAME
+                | RELEVANT_PATHS_TOOL_NAME
+                | SYMBOL_SEARCH_TOOL_NAME
+                | OUTBOUND_SITES_TOOL_NAME
+                | SYNTAX_SITE_SEARCH_TOOL_NAME
+                | CODE_GRAPH_QUERY_TOOL_NAME
+                | CONTEXT_BUILD_TOOL_NAME
+                | PHASE2_CONTEXT_BUILD_TOOL_NAME
+                | DIAGNOSTICS_TOOL_NAME
+                | GRAPH_STATUS_TOOL_NAME
+                | GRAPH_SEARCH_TOOL_NAME
+                | GRAPH_EVIDENCE_TOOL_NAME
+                | GRAPH_ARCHITECTURE_TOOL_NAME
+                | GRAPH_TRACE_TOOL_NAME
+                | IMPACT_ANALYZE_TOOL_NAME
+                | MEMORY_RECALL_TOOL_NAME
+                | HISTORICAL_MEMORY_TOOL_NAME
+                | SCIP_EVIDENCE_TOOL_NAME
+                | SCIP_RELATIONSHIP_TRACE_TOOL_NAME
+                | SCIP_SYMBOL_RESOLVE_TOOL_NAME
+                | SYMBOL_GET_TOOL_NAME
+        ) {
+            return self.call_selected_tool(request, context).await;
+        }
+        match request.name.as_ref() {
+            MEMORY_MANAGE_TOOL_NAME if self.memory_writes_enabled => {
+                let input = parse_arguments::<MemoryManageInput>(request.arguments)?;
+                let request = input
+                    .validate()
+                    .map_err(|message| McpError::invalid_params(message, None))?;
+                self.call_memory_manage(request, context).await
+            }
+            PERSONAL_MEMORY_TOOL_NAME if self.personal_memory_enabled => {
+                let input = parse_arguments::<PersonalMemoryInput>(request.arguments)?;
+                let request = input
+                    .validate()
+                    .map_err(|message| McpError::invalid_params(message, None))?;
+                self.call_personal_memory(request, context).await
             }
             _ if self.surface.includes_compatibility_aliases() => {
                 self.call_compatibility_tool(request, context).await
@@ -1312,6 +1524,51 @@ pub async fn serve_stdio_with_surface_tasks_and_personal_memory(
     .await
 }
 
+/// Serves the fixed canonical read-only registry surface over local stdio.
+///
+/// Each tool invocation must name one exact registered opaque repository ID;
+/// callers never provide local paths or storage targets.
+pub async fn serve_stdio_with_repository_registry(
+    registry: BTreeMap<String, Arc<dyn RepositoryService>>,
+) -> Result<(), McpServeError> {
+    let input = BoundedLineReader::try_new(tokio::io::stdin(), MAX_MCP_INPUT_LINE_BYTES)
+        .expect("the fixed MCP input-line limit is positive");
+    let server = RepoWitnessMcpServer::with_repository_registry(registry)
+        .map_err(|_| McpServeError::Initialize)?;
+    let running = server
+        .serve((input, tokio::io::stdout()))
+        .await
+        .map_err(|_| McpServeError::Initialize)?;
+    running
+        .waiting()
+        .await
+        .map_err(|_| McpServeError::Runtime)?;
+    Ok(())
+}
+
+/// Serves one fixed catalog snapshot over local stdio.
+///
+/// A catalog process has one startup-fixed default repository; callers can
+/// still select another admitted opaque ID explicitly.
+pub async fn serve_stdio_with_repository_catalog(
+    registry: BTreeMap<String, Arc<dyn RepositoryService>>,
+    default_repository_id: String,
+) -> Result<(), McpServeError> {
+    let input = BoundedLineReader::try_new(tokio::io::stdin(), MAX_MCP_INPUT_LINE_BYTES)
+        .expect("the fixed MCP input-line limit is positive");
+    let server = RepoWitnessMcpServer::with_repository_catalog(registry, default_repository_id)
+        .map_err(|_| McpServeError::Initialize)?;
+    let running = server
+        .serve((input, tokio::io::stdout()))
+        .await
+        .map_err(|_| McpServeError::Initialize)?;
+    running
+        .waiting()
+        .await
+        .map_err(|_| McpServeError::Runtime)?;
+    Ok(())
+}
+
 async fn serve_stdio_configured(
     service: Arc<dyn RepositoryService>,
     surface: McpToolSurface,
@@ -1349,6 +1606,7 @@ fn tools(
     personal_memory_enabled: bool,
     surface: McpToolSurface,
     tasks_enabled: bool,
+    repository_selector: Option<(&[String], bool)>,
 ) -> Vec<Tool> {
     let annotations = ToolAnnotations::new()
         .read_only(true)
@@ -1577,7 +1835,42 @@ fn tools(
         tools.push(personal_memory);
     }
     tools.sort_by(|left, right| left.name.as_ref().cmp(right.name.as_ref()));
+    if let Some((repository_ids, required)) = repository_selector {
+        tools = tools
+            .into_iter()
+            .map(|tool| tool_with_repository_selector(tool, repository_ids, required))
+            .collect();
+    }
     tools
+}
+
+fn tool_with_repository_selector(
+    mut tool: Tool,
+    repository_ids: &[String],
+    selector_required: bool,
+) -> Tool {
+    let schema = Arc::make_mut(&mut tool.input_schema);
+    let properties = schema
+        .get_mut("properties")
+        .and_then(serde_json::Value::as_object_mut)
+        .expect("all fixed MCP input schemas have object properties");
+    properties.insert(
+        "repository_id".to_owned(),
+        serde_json::json!({
+            "type": "string",
+            "enum": repository_ids,
+            "description": "Exact opaque repository identity registered when this local MCP process started."
+        }),
+    );
+    let required = schema
+        .entry("required")
+        .or_insert_with(|| serde_json::Value::Array(Vec::new()))
+        .as_array_mut()
+        .expect("all fixed MCP input schemas encode required as an array");
+    if selector_required {
+        required.push(serde_json::Value::String("repository_id".to_owned()));
+    }
+    tool
 }
 
 fn parse_arguments<T: DeserializeOwned>(arguments: Option<JsonObject>) -> Result<T, McpError> {

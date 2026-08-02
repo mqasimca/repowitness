@@ -81,6 +81,17 @@ jobs:
           Compress-Archive -LiteralPath "target/release/${{ matrix.target.binary }}" `
             -DestinationPath "dist/repowitness-$env:GITHUB_REF_NAME-${{ matrix.target.asset_suffix }}.zip"
 
+      - name: Smoke-test the packaged release archive
+        run: |
+          set -Eeuo pipefail
+          archive="dist/repowitness-${GITHUB_REF_NAME}-${{ matrix.target.asset_suffix }}"
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            archive+=".zip"
+          else
+            archive+=".tar.gz"
+          fi
+          bash scripts/smoke-release-archive "$archive" "${{ matrix.target.binary }}"
+
       - name: Retain the release archive
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -115,14 +126,24 @@ jobs:
           fi
           sha256sum "${archives[@]}" >dist/SHA256SUMS
 
+      - name: Verify release archives
+        shell: bash
+        run: sha256sum --check dist/SHA256SUMS
+
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -Eeuo pipefail
-          gh release create "$GITHUB_REF_NAME" dist/* \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "RepoWitness $GITHUB_REF_NAME" \
-            --generate-notes \
-            --verify-tag
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "RepoWitness $GITHUB_REF_NAME" \
+              --generate-notes \
+              --verify-tag
+          fi

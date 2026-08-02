@@ -106,9 +106,11 @@ enum ReaderCommand {
     Search(Box<SearchCommand>),
     SymbolSearch(Box<SymbolSearchCommand>),
     ArchitectureMap(Box<ArchitectureMapCommand>),
+    WorkspaceArchitectureMap(Box<WorkspaceArchitectureMapCommand>),
     ArchitectureOverview(Box<ArchitectureOverviewCommand>),
     RepositoryTopology(Box<RepositoryTopologyCommand>),
     WorkspaceSearch(Box<WorkspaceSearchCommand>),
+    WorkspaceSymbolSearch(Box<WorkspaceSymbolSearchCommand>),
     GetSymbol(Box<SymbolCommand>),
     LoadArtifacts(Box<ArtifactCommand>),
     LoadGraphArtifacts(Box<GraphArtifactCommand>),
@@ -162,6 +164,15 @@ struct ArchitectureMapCommand {
     reply: ArchitectureMapReply,
 }
 
+struct WorkspaceArchitectureMapCommand {
+    view: PinnedWorkspaceView,
+    source_slot: repowitness_domain::SourceSlotId,
+    limits: ArchitectureMapLimits,
+    cancelled: Arc<AtomicBool>,
+    deadline: Instant,
+    reply: ArchitectureMapReply,
+}
+
 struct ArchitectureOverviewCommand {
     repository: RepositoryIdentityDigest,
     limits: ArchitectureOverviewLimits,
@@ -182,6 +193,16 @@ struct WorkspaceSearchCommand {
     view: PinnedWorkspaceView,
     source_slot: repowitness_domain::SourceSlotId,
     query: String,
+    limits: SearchLimits,
+    cancelled: Arc<AtomicBool>,
+    deadline: Instant,
+    reply: SearchReply,
+}
+
+struct WorkspaceSymbolSearchCommand {
+    view: PinnedWorkspaceView,
+    source_slot: repowitness_domain::SourceSlotId,
+    query: SymbolSearchQuery,
     limits: SearchLimits,
     cancelled: Arc<AtomicBool>,
     deadline: Instant,
@@ -1006,6 +1027,43 @@ impl OwnedSqliteReader {
         }
     }
 
+    /// Maps one exact source-slot member of a pinned connected-workspace view.
+    pub fn architecture_map_workspace_member(
+        &self,
+        view: &PinnedWorkspaceView,
+        source_slot: repowitness_domain::SourceSlotId,
+        limits: ArchitectureMapLimits,
+        cancelled: Arc<AtomicBool>,
+        deadline: Instant,
+    ) -> Result<ArchitectureMapPortResult<GenerationId>, SqliteStoreError> {
+        if !view
+            .members()
+            .iter()
+            .any(|member| member.source_slot() == source_slot)
+        {
+            return Err(SqliteStoreError::InvalidWorkspaceView);
+        }
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.send(
+            ReaderCommand::WorkspaceArchitectureMap(Box::new(WorkspaceArchitectureMapCommand {
+                view: view.clone(),
+                source_slot,
+                limits,
+                cancelled: Arc::clone(&cancelled),
+                deadline,
+                reply,
+            })),
+            deadline,
+        )?;
+        match receive_reply(&receiver, deadline) {
+            Ok(result) => Ok(result),
+            Err(error) => {
+                cancelled.store(true, Ordering::Release);
+                Err(error)
+            }
+        }
+    }
+
     /// Summarizes direct source facts from one active immutable generation without inferring relationships.
     pub fn architecture_overview(
         &self,
@@ -1055,6 +1113,45 @@ impl OwnedSqliteReader {
         )?;
         match receive_reply(&receiver, deadline) {
             Ok(result) => Ok(result),
+            Err(error) => {
+                cancelled.store(true, Ordering::Release);
+                Err(error)
+            }
+        }
+    }
+
+    /// Searches direct declarations in one exact source-slot member of a pinned workspace view.
+    pub fn search_workspace_member_symbols(
+        &self,
+        view: &PinnedWorkspaceView,
+        source_slot: repowitness_domain::SourceSlotId,
+        query: SymbolSearchQuery,
+        limits: SearchLimits,
+        cancelled: Arc<AtomicBool>,
+        deadline: Instant,
+    ) -> Result<SearchResults, SqliteStoreError> {
+        if !view
+            .members()
+            .iter()
+            .any(|member| member.source_slot() == source_slot)
+        {
+            return Err(SqliteStoreError::InvalidWorkspaceView);
+        }
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.send(
+            ReaderCommand::WorkspaceSymbolSearch(Box::new(WorkspaceSymbolSearchCommand {
+                view: view.clone(),
+                source_slot,
+                query,
+                limits,
+                cancelled: Arc::clone(&cancelled),
+                deadline,
+                reply,
+            })),
+            deadline,
+        )?;
+        match receive_reply(&receiver, deadline) {
+            Ok(results) => Ok(results),
             Err(error) => {
                 cancelled.store(true, Ordering::Release);
                 Err(error)

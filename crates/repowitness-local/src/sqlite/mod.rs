@@ -50,6 +50,7 @@ pub use self::graph::{
     RustGraphSymbolSearchResult, RustGraphTraceCoverage, RustGraphTraceResult, RustGraphTraceStart,
     RustGraphTraceTruncation, prepare_rust_graph_generation,
 };
+pub(crate) use self::reader::code_search_port_result_from_search_results;
 pub use self::reader::{
     GitHistoryEvidence, KnownAtApplicability, KnownAtEvidenceBasis, KnownAtHistoryCoverage,
     KnownAtHistoryReceipt, KnownAtObservationEvidence, OwnedSqliteReader,
