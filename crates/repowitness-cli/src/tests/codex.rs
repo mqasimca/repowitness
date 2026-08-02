@@ -29,6 +29,7 @@ impl Drop for CodexTempDirectory {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn codex_install_and_remove_own_only_the_marked_catalog_records() {
     let directory = CodexTempDirectory::new();
@@ -100,6 +101,35 @@ fn codex_install_and_remove_own_only_the_marked_catalog_records() {
     assert_eq!(
         String::from_utf8(stdout).expect("UTF-8"),
         "status=ok\noperation=codex-remove\nintegration=absent\nrestart=not-required\n"
+    );
+}
+
+#[cfg(not(unix))]
+#[test]
+fn codex_install_fails_closed_without_private_catalog_state() {
+    let directory = CodexTempDirectory::new();
+    let configuration = directory.path().join(CODEX_CONFIG_FILE);
+    std::fs::write(&configuration, "model = \"gpt-5\"\n").expect("seed configuration");
+
+    let install = [
+        OsString::from("install"),
+        OsString::from("--codex-home"),
+        directory.path().as_os_str().to_owned(),
+    ];
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    assert_eq!(
+        run_codex(install.into_iter(), &mut stdout, &mut stderr),
+        EXIT_SOFTWARE
+    );
+    assert_eq!(stdout, Vec::<u8>::new());
+    assert_eq!(
+        String::from_utf8(stderr).expect("UTF-8"),
+        "error: Codex catalog is unavailable on this platform\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&configuration).expect("read unchanged configuration"),
+        "model = \"gpt-5\"\n"
     );
 }
 

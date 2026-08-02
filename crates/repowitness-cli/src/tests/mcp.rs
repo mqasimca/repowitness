@@ -196,7 +196,9 @@ fn mcp_registry_reader_is_strict_bounded_and_path_free() {
             .expect("time after epoch")
             .as_nanos(),
     );
-    let directory = std::env::temp_dir().join(unique);
+    let directory = std::fs::canonicalize(std::env::temp_dir())
+        .expect("canonicalize temporary directory")
+        .join(unique);
     std::fs::create_dir(&directory).expect("temporary registry directory");
     let registry = directory.join("registry.json");
     let root = directory.join("repository");

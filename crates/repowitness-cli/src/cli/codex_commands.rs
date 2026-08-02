@@ -83,6 +83,7 @@ fn execute_codex_invocation(
     }
 }
 
+#[cfg(unix)]
 fn run_codex_install(home: Option<&Path>, stdout: &mut impl Write, stderr: &mut impl Write) -> u8 {
     let home = match resolve_codex_home(home) {
         Ok(home) => home,
@@ -109,6 +110,15 @@ fn run_codex_install(home: Option<&Path>, stdout: &mut impl Write, stderr: &mut 
             "error: Codex global configuration could not be updated\n",
         ),
     }
+}
+
+#[cfg(not(unix))]
+fn run_codex_install(_home: Option<&Path>, _stdout: &mut impl Write, stderr: &mut impl Write) -> u8 {
+    emit_error(
+        stderr,
+        EXIT_SOFTWARE,
+        "error: Codex catalog is unavailable on this platform\n",
+    )
 }
 
 fn run_codex_remove(home: Option<&Path>, stdout: &mut impl Write, stderr: &mut impl Write) -> u8 {
