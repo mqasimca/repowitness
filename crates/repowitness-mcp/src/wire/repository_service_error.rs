@@ -5,8 +5,24 @@ use super::{MemoryMutationOperation, MemoryMutationRequestScope};
 /// Stable categorical failure returned by the injected repository service.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RepositoryServiceError {
+    /// Multi-language source architecture map failed without a usable result.
+    ArchitectureMap,
+    /// Bounded source-only repository orientation failed without a usable result.
+    ArchitectureOverview,
+    /// Bounded path-only repository topology inventory failed.
+    RepositoryTopology,
     /// Local code search failed without a usable result.
     CodeSearch,
+    /// Bounded lexical source-path navigation failed without a usable result.
+    RelevantPaths,
+    /// Typed direct declaration discovery failed without a usable result.
+    SymbolSearch,
+    /// Exact declaration-contained raw syntax-site read failed without a usable result.
+    OutboundSites,
+    /// Exact raw-target syntax-site discovery failed without a usable result.
+    SyntaxSiteSearch,
+    /// One closed bounded code-discovery operation failed without a usable result.
+    CodeGraphQuery,
     /// Context compilation failed without a usable result.
     ContextBuild,
     /// Phase 2 context compilation failed without a usable result.
@@ -19,6 +35,10 @@ pub enum RepositoryServiceError {
     GraphRead,
     /// Immutable package-scoped SCIP evidence read failed without a usable result.
     ScipEvidence,
+    /// Immutable bounded producer-declared SCIP relationship trace failed.
+    ScipRelationshipTrace,
+    /// Exact source-span to SCIP-symbol navigation failed without a usable result.
+    ScipSymbolResolve,
     /// Memory recall failed without a usable result.
     MemoryRecall,
     /// Exact historical memory applicability read failed without a receipt.
@@ -60,13 +80,23 @@ impl fmt::Display for RepositoryServiceError {
             );
         }
         formatter.write_str(match self {
+            Self::ArchitectureMap => "architecture map failed",
+            Self::ArchitectureOverview => "architecture overview failed",
+            Self::RepositoryTopology => "repository topology failed",
             Self::CodeSearch => "code search failed",
+            Self::RelevantPaths => "relevant-path navigation failed",
+            Self::SymbolSearch => "symbol search failed",
+            Self::OutboundSites => "outbound-sites read failed",
+            Self::SyntaxSiteSearch => "syntax-site search failed",
+            Self::CodeGraphQuery => "code-graph-query failed",
             Self::ContextBuild => "context build failed",
             Self::Phase2ContextBuild => "Phase 2 context build failed",
             Self::NativeTask => "durable native task operation failed",
             Self::Diagnostics => "repository diagnostics failed",
             Self::GraphRead => "Rust graph read failed",
             Self::ScipEvidence => "SCIP evidence read failed",
+            Self::ScipRelationshipTrace => "SCIP relationship trace failed",
+            Self::ScipSymbolResolve => "SCIP symbol resolution failed",
             Self::MemoryRecall => "memory recall failed",
             Self::HistoricalMemory => "historical memory read failed",
             Self::MemoryManage => "memory management failed",

@@ -380,5 +380,12 @@ fn reopening_is_idempotent_and_preserves_the_original_ledger() {
         )
         .expect("ledger should remain readable");
 
-    assert_eq!(applied_at, (6, 123, 123));
+    assert_eq!(
+        applied_at,
+        (
+            i64::try_from(migrations().len()).expect("migration count fits i64"),
+            123,
+            123,
+        )
+    );
 }

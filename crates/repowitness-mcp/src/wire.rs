@@ -11,6 +11,9 @@ use repowitness_application::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+mod architecture_map;
+mod architecture_overview;
+mod code_graph_query;
 mod compatibility;
 mod context_build;
 mod diagnostics;
@@ -19,11 +22,33 @@ mod historical_memory;
 mod memory_manage;
 mod memory_mutation;
 mod memory_recall;
+mod outbound_sites;
 mod personal_memory;
 mod phase2_context;
+mod relevant_paths;
 mod repository_service_error;
+mod repository_topology;
 mod scip_evidence;
+mod scip_relationship_trace;
+mod scip_symbol_resolve;
+mod symbol_search;
+mod syntax_site_search;
+mod test_markers;
 
+pub use architecture_map::{
+    ARCHITECTURE_MAP_TOOL_NAME, ArchitectureMapInput, ArchitectureMapOutput,
+    ArchitectureMapServiceRequest, McpArchitectureMapFile, McpArchitectureMapLanguage,
+};
+pub use architecture_overview::{
+    ARCHITECTURE_OVERVIEW_LIMITATIONS, ARCHITECTURE_OVERVIEW_TOOL_NAME, ArchitectureOverviewInput,
+    ArchitectureOverviewOutput, ArchitectureOverviewServiceRequest, McpArchitectureOverviewKind,
+    McpArchitectureOverviewRoot,
+};
+pub use code_graph_query::{
+    CODE_GRAPH_QUERY_PROFILE_VERSION, CODE_GRAPH_QUERY_SCHEMA_VERSION, CODE_GRAPH_QUERY_TOOL_NAME,
+    CodeGraphQueryInput, CodeGraphQueryOutput, CodeGraphQueryResultOutput,
+    CodeGraphQueryServiceRequest,
+};
 pub use compatibility::{
     COMPATIBILITY_PROFILE_VERSION, CompatibilityGraphSchema, CompatibilityGraphSchemaLimits,
     CompatibilityLevels, CompatibilityNamespace, CompatibilityObservation, CompatibilityOutput,
@@ -74,6 +99,11 @@ pub use memory_recall::{
     McpMemoryProducer, McpMemoryRecord, McpMemoryTarget, McpSelectedMemory, MemoryRecallInput,
     MemoryRecallOutput, MemoryRecallServiceRequest, MemoryRecallServiceSelection,
 };
+pub use outbound_sites::{
+    McpOutboundSitesDeclaration, McpOutboundSyntaxSite, OUTBOUND_SITES_TOOL_NAME,
+    OutboundSitesInput, OutboundSitesOutput, OutboundSitesSelectorOutput,
+    OutboundSitesServiceRequest,
+};
 pub use personal_memory::{
     PERSONAL_MEMORY_SCHEMA_VERSION, PersonalMemoryInput, PersonalMemoryKind,
     PersonalMemoryLifecycle, PersonalMemoryOperation, PersonalMemoryOutput,
@@ -84,10 +114,38 @@ pub use phase2_context::{
     McpPhase2ContextPayload, McpPhase2ContextProviderCoverage, McpPhase2ContextScope,
     Phase2ContextBuildInput, Phase2ContextBuildOutput, Phase2ContextBuildServiceRequest,
 };
+pub use relevant_paths::{
+    McpRelevantPath, RELEVANT_PATHS_TOOL_NAME, RelevantPathsInput, RelevantPathsOutput,
+    RelevantPathsServiceRequest,
+};
 pub use repository_service_error::RepositoryServiceError;
+pub use repository_topology::{
+    McpRepositoryTopologyCategory, McpRepositoryTopologyCoverage, McpRepositoryTopologyEntry,
+    REPOSITORY_TOPOLOGY_TOOL_NAME, RepositoryTopologyInput, RepositoryTopologyOutput,
+    RepositoryTopologyServiceRequest,
+};
 pub use scip_evidence::{
     McpScipOccurrence, McpScipOverlay, McpScipRelationship, ScipEvidenceInput, ScipEvidenceOutput,
     ScipEvidenceServiceRequest,
+};
+pub use scip_relationship_trace::{
+    McpScipRelationshipTraceEdge, McpScipRelationshipTraceOverlay,
+    SCIP_RELATIONSHIP_TRACE_TOOL_NAME, ScipRelationshipTraceInput, ScipRelationshipTraceOutput,
+    ScipRelationshipTraceServiceRequest,
+};
+pub use scip_symbol_resolve::{
+    SCIP_SYMBOL_RESOLVE_TOOL_NAME, ScipSymbolResolveInput, ScipSymbolResolveOutput,
+    ScipSymbolResolveServiceRequest,
+};
+pub use symbol_search::{
+    SYMBOL_SEARCH_TOOL_NAME, SymbolSearchInput, SymbolSearchOutput, SymbolSearchServiceRequest,
+};
+pub use syntax_site_search::{
+    SYNTAX_SITE_SEARCH_TOOL_NAME, SyntaxSiteSearchInput, SyntaxSiteSearchOutput,
+    SyntaxSiteSearchServiceRequest,
+};
+pub use test_markers::{
+    McpTestMarkerLanguageCoverage, TestMarkersInput, TestMarkersOutput, TestMarkersServiceRequest,
 };
 
 /// MCP tool name for bounded lexical supported-language symbol search.
@@ -119,6 +177,10 @@ const MAX_PATH_TEXT_BYTES: u64 = 7 + (MAX_PATH_BYTES * 2);
 /// Largest integer that is exact in every supported MCP JSON implementation.
 pub const MAX_MCP_INTEROPERABLE_INTEGER: u64 = 9_007_199_254_740_991;
 pub(crate) const MAX_MCP_SEARCH_OUTPUT_BYTES: usize = 3 * 1024 * 1024;
+pub(crate) const MAX_MCP_RELEVANT_PATHS_OUTPUT_BYTES: usize = 3 * 1024 * 1024;
+pub(crate) const MAX_MCP_ARCHITECTURE_MAP_OUTPUT_BYTES: usize = 10 * 1024 * 1024;
+pub(crate) const MAX_MCP_ARCHITECTURE_OVERVIEW_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
+pub(crate) const MAX_MCP_REPOSITORY_TOPOLOGY_OUTPUT_BYTES: usize = 10 * 1024 * 1024;
 pub(crate) const MAX_MCP_CONTEXT_OUTPUT_BYTES: usize = 24 * 1024 * 1024;
 pub(crate) const MAX_MCP_PHASE2_CONTEXT_OUTPUT_BYTES: usize = 24 * 1024 * 1024;
 pub(crate) const MAX_MCP_DIAGNOSTICS_OUTPUT_BYTES: usize = 256 * 1024;
@@ -132,7 +194,11 @@ pub(crate) const MAX_MCP_PERSONAL_MEMORY_OUTPUT_BYTES: usize = 2 * 1024 * 1024;
 // A bounded 10 MiB application payload can therefore require almost 60 MiB
 // after exact source representation and nested JSON escaping.
 pub(crate) const MAX_MCP_SYMBOL_OUTPUT_BYTES: usize = 64 * 1024 * 1024;
+pub(crate) const MAX_MCP_OUTBOUND_SITES_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
+pub(crate) const MAX_MCP_SYNTAX_SITE_SEARCH_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
+pub(crate) const MAX_MCP_CODE_GRAPH_QUERY_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
 pub(crate) const MAX_MCP_SCIP_EVIDENCE_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
+pub(crate) const MAX_MCP_SCIP_RELATIONSHIP_TRACE_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
 
 /// Version-1 wire input for `code_search`.
 #[derive(Deserialize, JsonSchema)]
@@ -482,6 +548,78 @@ pub trait RepositoryService: Send + Sync + 'static {
         cancelled: Arc<AtomicBool>,
     ) -> Result<CodeSearchOutput, RepositoryServiceError>;
 
+    /// Groups one bounded lexical search receipt into directly supported source paths.
+    fn relevant_paths(
+        &self,
+        _request: RelevantPathsServiceRequest,
+        _cancelled: Arc<AtomicBool>,
+    ) -> Result<RelevantPathsOutput, RepositoryServiceError> {
+        Err(RepositoryServiceError::RelevantPaths)
+    }
+
+    /// Finds bounded direct declaration facts with exact/prefix and typed filters.
+    fn symbol_search(
+        &self,
+        _request: SymbolSearchServiceRequest,
+        _cancelled: Arc<AtomicBool>,
+    ) -> Result<SymbolSearchOutput, RepositoryServiceError> {
+        Err(RepositoryServiceError::SymbolSearch)
+    }
+
+    /// Reads exact parser-attributed raw sites inside one selected declaration.
+    fn outbound_sites(
+        &self,
+        _request: OutboundSitesServiceRequest,
+        _cancelled: Arc<AtomicBool>,
+    ) -> Result<OutboundSitesOutput, RepositoryServiceError> {
+        Err(RepositoryServiceError::OutboundSites)
+    }
+
+    /// Searches immutable raw syntax observations by one exact target spelling.
+    fn syntax_site_search(
+        &self,
+        _request: SyntaxSiteSearchServiceRequest,
+        _cancelled: Arc<AtomicBool>,
+    ) -> Result<SyntaxSiteSearchOutput, RepositoryServiceError> {
+        Err(RepositoryServiceError::SyntaxSiteSearch)
+    }
+
+    /// Runs exactly one closed bounded code-discovery operation.
+    fn code_graph_query(
+        &self,
+        _request: CodeGraphQueryServiceRequest,
+        _cancelled: Arc<AtomicBool>,
+    ) -> Result<CodeGraphQueryOutput, RepositoryServiceError> {
+        Err(RepositoryServiceError::CodeGraphQuery)
+    }
+
+    /// Maps exact indexed source files across all Phase 0 languages without inferring relationships.
+    fn architecture_map(
+        &self,
+        _request: ArchitectureMapServiceRequest,
+        _cancelled: Arc<AtomicBool>,
+    ) -> Result<ArchitectureMapOutput, RepositoryServiceError> {
+        Err(RepositoryServiceError::ArchitectureMap)
+    }
+
+    /// Summarizes bounded source-only repository orientation without inferring relationships.
+    fn architecture_overview(
+        &self,
+        _request: ArchitectureOverviewServiceRequest,
+        _cancelled: Arc<AtomicBool>,
+    ) -> Result<ArchitectureOverviewOutput, RepositoryServiceError> {
+        Err(RepositoryServiceError::ArchitectureOverview)
+    }
+
+    /// Returns a bounded path-only topology inventory without reading content.
+    fn repository_topology(
+        &self,
+        _request: RepositoryTopologyServiceRequest,
+        _cancelled: Arc<AtomicBool>,
+    ) -> Result<RepositoryTopologyOutput, RepositoryServiceError> {
+        Err(RepositoryServiceError::RepositoryTopology)
+    }
+
     /// Compiles one bounded evidence-bearing context pack.
     fn context_build(
         &self,
@@ -521,6 +659,24 @@ pub trait RepositoryService: Send + Sync + 'static {
         _cancelled: Arc<AtomicBool>,
     ) -> Result<ScipEvidenceOutput, RepositoryServiceError> {
         Err(RepositoryServiceError::ScipEvidence)
+    }
+
+    /// Traces bounded producer-declared SCIP relationships from one exact opaque symbol.
+    fn scip_relationship_trace(
+        &self,
+        _request: ScipRelationshipTraceServiceRequest,
+        _cancelled: Arc<AtomicBool>,
+    ) -> Result<ScipRelationshipTraceOutput, RepositoryServiceError> {
+        Err(RepositoryServiceError::ScipRelationshipTrace)
+    }
+
+    /// Resolves an exact source identifier span to an opaque SCIP symbol only when unique.
+    fn scip_symbol_resolve(
+        &self,
+        _request: ScipSymbolResolveServiceRequest,
+        _cancelled: Arc<AtomicBool>,
+    ) -> Result<ScipSymbolResolveOutput, RepositoryServiceError> {
+        Err(RepositoryServiceError::ScipSymbolResolve)
     }
 
     /// Recalls bounded records from the complete active memory projection.

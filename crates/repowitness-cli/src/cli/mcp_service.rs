@@ -8,6 +8,26 @@ struct LocalMcpRepositoryService {
     configuration: ResolvedConfiguration,
 }
 
+impl LocalMcpRepositoryService {
+    fn code_graph_query(
+        &self,
+        operation: CodeGraphQueryOperation<repowitness_local::GenerationId>,
+        timeout: std::time::Duration,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<CodeGraphQueryOutput, RepositoryServiceError> {
+        read_local_code_graph_query(
+            LocalCodeGraphQueryRequest::new(&self.database, &self.repository_identity, operation)
+                .with_configuration(&self.configuration)
+                .with_deadline(timeout),
+            cancelled,
+        )
+        .map_err(|_| RepositoryServiceError::CodeGraphQuery)
+        .and_then(|result| {
+            mcp_code_graph_query_output(result).map_err(|_| RepositoryServiceError::CodeGraphQuery)
+        })
+    }
+}
+
 impl RepositoryService for LocalMcpRepositoryService {
     fn native_task_start(
         &self,
@@ -145,6 +165,276 @@ impl RepositoryService for LocalMcpRepositoryService {
             })
     }
 
+    fn relevant_paths(
+        &self,
+        request: RelevantPathsServiceRequest,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<RelevantPathsOutput, RepositoryServiceError> {
+        let local_request = LocalRelevantPathsRequest::new(
+            &self.database,
+            &self.repository_identity,
+            request.query(),
+        )
+        .with_max_paths(request.max_paths())
+        .map_err(|_| RepositoryServiceError::RelevantPaths)?
+        .with_configuration(&self.configuration)
+        .with_deadline(request.timeout());
+        locate_local_relevant_paths(local_request, cancelled)
+            .map_err(|_| RepositoryServiceError::RelevantPaths)
+            .and_then(|result| {
+                mcp_relevant_paths_output(result).map_err(|_| RepositoryServiceError::RelevantPaths)
+            })
+    }
+
+    fn symbol_search(
+        &self,
+        request: SymbolSearchServiceRequest,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<SymbolSearchOutput, RepositoryServiceError> {
+        let local_request = match &self.graph_workspace {
+            GraphWorkspaceContext::SingleRepository(repository_identity) => {
+                LocalSymbolSearchRequest::new(
+                    &self.database,
+                    repository_identity,
+                    request.name(),
+                    request.match_mode(),
+                )
+            }
+            GraphWorkspaceContext::ConnectedWorkspace {
+                connected_workspace,
+                source_slot,
+            } => LocalSymbolSearchRequest::for_connected_workspace(
+                &self.database,
+                connected_workspace,
+                source_slot,
+                request.name(),
+                request.match_mode(),
+            ),
+        }
+        .with_filters(request.language(), request.kind(), request.path_prefix())
+        .with_max_results(request.max_results())
+        .map_err(|_| RepositoryServiceError::SymbolSearch)?
+        .with_configuration(&self.configuration)
+        .with_deadline(request.timeout());
+        search_local_symbols(local_request, cancelled)
+            .map_err(|_| RepositoryServiceError::SymbolSearch)
+            .and_then(|result| {
+                mcp_symbol_search_output(result).map_err(|_| RepositoryServiceError::SymbolSearch)
+            })
+    }
+
+    fn outbound_sites(
+        &self,
+        request: OutboundSitesServiceRequest,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<OutboundSitesOutput, RepositoryServiceError> {
+        let selector = LocalSymbolSelectorText::new(
+            request.snapshot_sha256(),
+            request.generation(),
+            request.path(),
+            request.content_sha256(),
+            request.artifact_sha256(),
+            request.fact_ordinal(),
+        );
+        let local_request = LocalOutboundSitesRequest::new(
+            &self.database,
+            &self.repository_identity,
+            selector,
+        )
+        .with_max_results(request.max_sites())
+        .map_err(|_| RepositoryServiceError::OutboundSites)?
+        .with_deadline(request.timeout());
+        get_local_outbound_sites(local_request, cancelled)
+            .map_err(|_| RepositoryServiceError::OutboundSites)
+            .and_then(|result| {
+                mcp_outbound_sites_output(result).map_err(|_| RepositoryServiceError::OutboundSites)
+            })
+    }
+
+    fn syntax_site_search(
+        &self,
+        request: SyntaxSiteSearchServiceRequest,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<SyntaxSiteSearchOutput, RepositoryServiceError> {
+        let local_request = LocalSyntaxSiteSearchRequest::new(
+            &self.database,
+            &self.repository_identity,
+            request.target(),
+        )
+        .with_max_results(request.max_sites())
+        .map_err(|_| RepositoryServiceError::SyntaxSiteSearch)?
+        .with_configuration(&self.configuration)
+        .with_deadline(request.timeout());
+        search_local_syntax_sites(local_request, cancelled)
+            .map_err(|_| RepositoryServiceError::SyntaxSiteSearch)
+            .and_then(|result| {
+                mcp_syntax_site_search_output(result)
+                    .map_err(|_| RepositoryServiceError::SyntaxSiteSearch)
+            })
+    }
+
+    fn code_graph_query(
+        &self,
+        request: CodeGraphQueryServiceRequest,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<CodeGraphQueryOutput, RepositoryServiceError> {
+        match request {
+            CodeGraphQueryServiceRequest::Symbols(request) => self
+                .symbol_search(request, cancelled)
+                .map(CodeGraphQueryResultOutput::Symbols)
+                .map(CodeGraphQueryOutput::new)
+                .map_err(|_| RepositoryServiceError::CodeGraphQuery),
+            CodeGraphQueryServiceRequest::OutboundSites(request) => self
+                .outbound_sites(request, cancelled)
+                .map(CodeGraphQueryResultOutput::OutboundSites)
+                .map(CodeGraphQueryOutput::new)
+                .map_err(|_| RepositoryServiceError::CodeGraphQuery),
+            CodeGraphQueryServiceRequest::SyntaxSiteSearch(request) => {
+                let query = SyntaxSiteSearchQuery::try_new(request.target())
+                    .map_err(|_| RepositoryServiceError::CodeGraphQuery)?;
+                let defaults = SyntaxSiteSearchLimits::default();
+                let limits = SyntaxSiteSearchLimits::try_new(
+                    request.max_sites(),
+                    defaults.max_output_bytes(),
+                )
+                .map_err(|_| RepositoryServiceError::CodeGraphQuery)?;
+                LocalMcpRepositoryService::code_graph_query(
+                    self,
+                    CodeGraphQueryOperation::SyntaxSiteSearch { query, limits },
+                    request.timeout(),
+                    cancelled,
+                )
+            }
+            CodeGraphQueryServiceRequest::Architecture(request) => {
+                let defaults = ArchitectureOverviewLimits::default();
+                let limits = ArchitectureOverviewLimits::try_new(
+                    request.max_roots(),
+                    request.max_entry_point_candidates(),
+                    request.max_files(),
+                    defaults.max_output_bytes(),
+                )
+                .map_err(|_| RepositoryServiceError::CodeGraphQuery)?;
+                LocalMcpRepositoryService::code_graph_query(
+                    self,
+                    CodeGraphQueryOperation::Architecture { limits },
+                    request.timeout(),
+                    cancelled,
+                )
+            }
+            CodeGraphQueryServiceRequest::Files(request) => {
+                let defaults = ArchitectureMapLimits::default();
+                let limits = ArchitectureMapLimits::try_new(
+                    request.max_files(),
+                    defaults.max_output_bytes(),
+                )
+                .map_err(|_| RepositoryServiceError::CodeGraphQuery)?;
+                LocalMcpRepositoryService::code_graph_query(
+                    self,
+                    CodeGraphQueryOperation::Files { limits },
+                    request.timeout(),
+                    cancelled,
+                )
+            }
+            CodeGraphQueryServiceRequest::TestMarkers(request) => {
+                let query = TestMarkersQuery::try_new(request.language(), request.path_prefix())
+                .map_err(|_| RepositoryServiceError::CodeGraphQuery)?
+                ;
+                let defaults = TestMarkersLimits::default();
+                let limits = TestMarkersLimits::try_new(
+                    request.max_results(),
+                    defaults.max_output_bytes(),
+                )
+                .map_err(|_| RepositoryServiceError::CodeGraphQuery)?;
+                LocalMcpRepositoryService::code_graph_query(
+                    self,
+                    CodeGraphQueryOperation::TestMarkers { query, limits },
+                    request.timeout(),
+                    cancelled,
+                )
+            }
+            CodeGraphQueryServiceRequest::RelevantPaths(request) => {
+                let query = CodeSearchQuery::try_new(request.query())
+                    .map_err(|_| RepositoryServiceError::CodeGraphQuery)?;
+                let path_limits = RelevantPathsLimits::try_new(request.max_paths())
+                    .map_err(|_| RepositoryServiceError::CodeGraphQuery)?;
+                let defaults = CodeSearchLimits::default();
+                let search_limits = CodeSearchLimits::try_new(
+                    path_limits.candidate_limit(),
+                    defaults.max_output_bytes(),
+                )
+                .map_err(|_| RepositoryServiceError::CodeGraphQuery)?;
+                LocalMcpRepositoryService::code_graph_query(
+                    self,
+                    CodeGraphQueryOperation::RelevantPaths {
+                        query,
+                        search_limits,
+                        path_limits,
+                    },
+                    request.timeout(),
+                    cancelled,
+                )
+            }
+        }
+    }
+
+    fn architecture_map(
+        &self,
+        request: ArchitectureMapServiceRequest,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<ArchitectureMapOutput, RepositoryServiceError> {
+        let local_request = LocalArchitectureMapRequest::new(&self.database, &self.repository_identity)
+            .with_max_files(request.max_files())
+            .map_err(|_| RepositoryServiceError::ArchitectureMap)?
+            .with_deadline(request.timeout());
+        map_local_architecture(local_request, cancelled)
+            .map_err(|_| RepositoryServiceError::ArchitectureMap)
+            .and_then(|result| {
+                mcp_architecture_map_output(result)
+                    .map_err(|_| RepositoryServiceError::ArchitectureMap)
+            })
+    }
+
+    fn architecture_overview(
+        &self,
+        request: ArchitectureOverviewServiceRequest,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<ArchitectureOverviewOutput, RepositoryServiceError> {
+        let local_request = LocalArchitectureOverviewRequest::new(
+            &self.database,
+            &self.repository_identity,
+        )
+        .with_limits(
+            request.max_roots(),
+            request.max_entry_point_candidates(),
+            request.max_files(),
+        )
+        .map_err(|_| RepositoryServiceError::ArchitectureOverview)?
+        .with_deadline(request.timeout());
+        overview_local_architecture(local_request, cancelled)
+            .map_err(|_| RepositoryServiceError::ArchitectureOverview)
+            .and_then(|result| {
+                mcp_architecture_overview_output(result)
+                    .map_err(|_| RepositoryServiceError::ArchitectureOverview)
+            })
+    }
+
+    fn repository_topology(
+        &self,
+        request: RepositoryTopologyServiceRequest,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<RepositoryTopologyOutput, RepositoryServiceError> {
+        let local_request = LocalRepositoryTopologyRequest::new(&self.database, &self.repository_identity)
+            .with_max_paths(request.max_paths())
+            .map_err(|_| RepositoryServiceError::RepositoryTopology)?
+            .with_deadline(request.timeout());
+        read_local_repository_topology(local_request, cancelled)
+            .map_err(|_| RepositoryServiceError::RepositoryTopology)
+            .and_then(|result| {
+                mcp_repository_topology_output(result)
+                    .map_err(|_| RepositoryServiceError::RepositoryTopology)
+            })
+    }
+
     fn context_build(
         &self,
         request: ContextBuildServiceRequest,
@@ -245,6 +535,34 @@ impl RepositoryService for LocalMcpRepositoryService {
     ) -> Result<ScipEvidenceOutput, RepositoryServiceError> {
         read_local_scip_evidence_service(&self.database, &self.graph_workspace, request, cancelled)
             .map_err(|_| RepositoryServiceError::ScipEvidence)
+    }
+
+    fn scip_relationship_trace(
+        &self,
+        request: ScipRelationshipTraceServiceRequest,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<ScipRelationshipTraceOutput, RepositoryServiceError> {
+        read_local_scip_relationship_trace_service(
+            &self.database,
+            &self.graph_workspace,
+            request,
+            cancelled,
+        )
+        .map_err(|_| RepositoryServiceError::ScipRelationshipTrace)
+    }
+
+    fn scip_symbol_resolve(
+        &self,
+        request: ScipSymbolResolveServiceRequest,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<ScipSymbolResolveOutput, RepositoryServiceError> {
+        read_local_scip_symbol_resolve_service(
+            &self.database,
+            &self.graph_workspace,
+            request,
+            cancelled,
+        )
+        .map_err(|_| RepositoryServiceError::ScipSymbolResolve)
     }
 
     fn memory_recall(

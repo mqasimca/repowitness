@@ -59,6 +59,112 @@ impl CodeSearchPort for OwnedSqliteReader {
     }
 }
 
+impl SymbolSearchPort for OwnedSqliteReader {
+    type Generation = GenerationId;
+    type Error = SqliteStoreError;
+
+    fn search_symbols(
+        &self,
+        repository: RepositoryIdentityDigest,
+        query: &SymbolSearchQuery,
+        limits: CodeSearchLimits,
+        cancelled: Arc<AtomicBool>,
+        deadline: Instant,
+    ) -> Result<CodeSearchPortResult<Self::Generation>, Self::Error> {
+        let storage_limits =
+            SearchLimits::try_new(limits.max_results(), limits.max_output_bytes())?;
+        let results = OwnedSqliteReader::search_symbols(
+            self,
+            repository,
+            query.clone(),
+            storage_limits,
+            cancelled,
+            deadline,
+        )?;
+        let SearchResults {
+            snapshot,
+            generation,
+            producer_manifest: _,
+            index_coverage,
+            hits,
+            total_matches,
+            output_bytes,
+        } = results;
+        let mut candidates = Vec::with_capacity(hits.len());
+        for hit in hits.into_vec() {
+            let occurrence = RustSymbolOccurrence::try_new(
+                hit.fact_ordinal,
+                SourceArtifactEvidence::new(hit.artifact_digest, hit.producer_manifest),
+                hit.kind,
+                hit.name,
+                hit.qualified_name,
+                hit.name_span,
+                hit.declaration_span,
+            )
+            .map_err(|_| SqliteStoreError::IntegrityCheckFailed)?
+            .with_language(hit.language);
+            candidates.push(CodeSearchCandidate::new(
+                hit.path,
+                hit.content_digest,
+                occurrence,
+            ));
+        }
+        Ok(CodeSearchPortResult::new(
+            snapshot,
+            generation,
+            index_coverage,
+            candidates,
+            total_matches,
+            output_bytes,
+        ))
+    }
+}
+
+impl ArchitectureMapPort for OwnedSqliteReader {
+    type Generation = GenerationId;
+    type Error = SqliteStoreError;
+
+    fn architecture_map(
+        &self,
+        repository: RepositoryIdentityDigest,
+        limits: ArchitectureMapLimits,
+        cancelled: Arc<AtomicBool>,
+        deadline: Instant,
+    ) -> Result<ArchitectureMapPortResult<Self::Generation>, Self::Error> {
+        Self::architecture_map(self, repository, limits, cancelled, deadline)
+    }
+}
+
+impl ArchitectureOverviewPort for OwnedSqliteReader {
+    type Generation = GenerationId;
+    type Error = SqliteStoreError;
+
+    fn architecture_overview(
+        &self,
+        repository: RepositoryIdentityDigest,
+        limits: ArchitectureOverviewLimits,
+        cancelled: Arc<AtomicBool>,
+        deadline: Instant,
+    ) -> Result<ArchitectureOverviewPortResult<Self::Generation>, Self::Error> {
+        Self::architecture_overview(self, repository, limits, cancelled, deadline)
+    }
+}
+
+impl RepositoryTopologyPort for OwnedSqliteReader {
+    type Generation = GenerationId;
+    type Error = SqliteStoreError;
+
+    fn repository_topology(
+        &self,
+        repository: RepositoryIdentityDigest,
+        limits: RepositoryTopologyLimits,
+        cancelled: Arc<AtomicBool>,
+        deadline: Instant,
+    ) -> Result<RepositoryTopologyPortResult<Self::Generation>, Self::Error> {
+        Self::repository_topology(self, repository, limits, cancelled, deadline)
+    }
+}
+
 impl MemoryRecallPort for OwnedSqliteReader {
     type Generation = GenerationId;
     type Projection = i64;
@@ -152,6 +258,16 @@ fn run_reader(connection: &mut Connection, receiver: Receiver<ReaderCommand>) {
 fn execute_reader_command(connection: &mut Connection, command: ReaderCommand) -> bool {
     match command {
         ReaderCommand::Search(command) => execute_search_command(connection, *command),
+        ReaderCommand::SymbolSearch(command) => execute_symbol_search_command(connection, *command),
+        ReaderCommand::ArchitectureMap(command) => {
+            execute_architecture_map_command(connection, *command)
+        }
+        ReaderCommand::ArchitectureOverview(command) => {
+            execute_architecture_overview_command(connection, *command)
+        }
+        ReaderCommand::RepositoryTopology(command) => {
+            execute_repository_topology_command(connection, *command)
+        }
         ReaderCommand::WorkspaceSearch(command) => {
             execute_workspace_search_command(connection, *command)
         }
@@ -159,6 +275,18 @@ fn execute_reader_command(connection: &mut Connection, command: ReaderCommand) -
         ReaderCommand::LoadArtifacts(command) => execute_artifact_command(connection, *command),
         ReaderCommand::LoadGraphArtifacts(command) => {
             execute_graph_artifact_command(connection, *command);
+        }
+        ReaderCommand::LoadRawSyntaxArtifacts(command) => {
+            execute_raw_syntax_artifact_command(connection, *command);
+        }
+        ReaderCommand::RawSyntaxSites(command) => {
+            execute_raw_syntax_sites_command(connection, *command);
+        }
+        ReaderCommand::RawSyntaxSiteSearch(command) => {
+            execute_raw_syntax_site_search_command(connection, *command);
+        }
+        ReaderCommand::RawSyntaxTestMarkers(command) => {
+            execute_raw_syntax_test_markers_command(connection, *command);
         }
         ReaderCommand::RecallMemory(command) => execute_memory_recall_command(connection, *command),
         ReaderCommand::HistoryEvidence(command) => {
@@ -188,6 +316,10 @@ fn execute_reader_command(connection: &mut Connection, command: ReaderCommand) -
         }
         ReaderCommand::ScipSymbolEvidence(command) => {
             let result = execute_scip_symbol_evidence_command(connection, &command);
+            let _ = command.reply.try_send(result);
+        }
+        ReaderCommand::ScipRelationshipTrace(command) => {
+            let result = execute_scip_relationship_trace_command(connection, &command);
             let _ = command.reply.try_send(result);
         }
         ReaderCommand::ScipSyntaxSymbol(command) => {
@@ -220,6 +352,19 @@ fn execute_search_command(connection: &mut Connection, command: SearchCommand) {
         reply,
     } = command;
     let result = search_active(connection, repository, &query, limits, cancelled, deadline);
+    let _ = reply.try_send(result);
+}
+
+fn execute_symbol_search_command(connection: &mut Connection, command: SymbolSearchCommand) {
+    let SymbolSearchCommand {
+        repository,
+        query,
+        limits,
+        cancelled,
+        deadline,
+        reply,
+    } = command;
+    let result = search_active_symbols(connection, repository, &query, limits, cancelled, deadline);
     let _ = reply.try_send(result);
 }
 
@@ -311,6 +456,31 @@ fn execute_graph_artifact_command(connection: &mut Connection, command: GraphArt
     let _ = reply.try_send(result);
 }
 
+fn execute_raw_syntax_artifact_command(
+    connection: &mut Connection,
+    command: RawSyntaxArtifactCommand,
+) {
+    let RawSyntaxArtifactCommand {
+        requested,
+        identities,
+        limits,
+        raw_syntax_limits,
+        cancelled,
+        deadline,
+        reply,
+    } = command;
+    let result = load_reusable_raw_syntax_artifacts(
+        connection,
+        &requested,
+        identities,
+        limits,
+        raw_syntax_limits,
+        cancelled,
+        deadline,
+    );
+    let _ = reply.try_send(result);
+}
+
 fn execute_memory_recall_command(connection: &mut Connection, command: MemoryRecallCommand) {
     let MemoryRecallCommand {
         repository,
@@ -386,6 +556,40 @@ fn search_active(
         )
         .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
     let result = search_transaction(connection, repository, query, limits);
+    connection
+        .progress_handler(0, None::<fn() -> bool>)
+        .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
+    match result {
+        Ok(results) => {
+            check_control(&cancelled, deadline)?;
+            Ok(results)
+        }
+        Err(SearchFailure::Sqlite(error)) if is_interrupted(&error) => {
+            check_control(&cancelled, deadline)?;
+            Err(SqliteStoreError::DatabaseOperationFailed)
+        }
+        Err(SearchFailure::Sqlite(_)) => Err(SqliteStoreError::DatabaseOperationFailed),
+        Err(SearchFailure::Store(error)) => Err(error),
+    }
+}
+
+fn search_active_symbols(
+    connection: &mut Connection,
+    repository: RepositoryIdentityDigest,
+    query: &SymbolSearchQuery,
+    limits: SearchLimits,
+    cancelled: Arc<AtomicBool>,
+    deadline: Instant,
+) -> Result<SearchResults, SqliteStoreError> {
+    check_control(&cancelled, deadline)?;
+    let progress_cancelled = Arc::clone(&cancelled);
+    connection
+        .progress_handler(
+            PROGRESS_OPCODES,
+            Some(move || progress_cancelled.load(Ordering::Acquire) || Instant::now() >= deadline),
+        )
+        .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
+    let result = symbol_search_transaction(connection, repository, query, limits);
     connection
         .progress_handler(0, None::<fn() -> bool>)
         .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;

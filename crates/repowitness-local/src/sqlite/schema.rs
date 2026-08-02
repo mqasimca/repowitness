@@ -1,5 +1,5 @@
 pub(super) const APPLICATION_ID: i64 = 0x5257_5031;
-pub(super) const SCHEMA_VERSION: i64 = 6;
+pub(super) const SCHEMA_VERSION: i64 = 11;
 pub(super) const MIGRATION_1_NAME: &str = "phase0_design_partner_baseline";
 pub(super) const MIGRATION_1: &str = concat!(
     include_str!("schema/baseline_1_core.sql"),
@@ -22,6 +22,15 @@ pub(super) const MIGRATION_5: &str = include_str!("migrations/0005_phase3_durabl
 pub(super) const MIGRATION_6_NAME: &str = "linear_graph_site_completion_validation";
 pub(super) const MIGRATION_6: &str =
     include_str!("migrations/0006_linear_graph_site_completion.sql");
+pub(super) const MIGRATION_7_NAME: &str = "phase2_multilanguage_raw_syntax_sites";
+pub(super) const MIGRATION_7: &str = include_str!("migrations/0007_phase2_raw_syntax_sites.sql");
+pub(super) const MIGRATION_9_NAME: &str = "repository_topology_inventory";
+pub(super) const MIGRATION_9: &str = include_str!("migrations/0009_repository_topology.sql");
+pub(super) const MIGRATION_10_NAME: &str = "raw_syntax_target_index";
+pub(super) const MIGRATION_10: &str = include_str!("migrations/0010_raw_syntax_target_index.sql");
+pub(super) const MIGRATION_11_NAME: &str = "scip_relationship_trace_indexes";
+pub(super) const MIGRATION_11: &str =
+    include_str!("migrations/0011_scip_relationship_trace_indexes.sql");
 
 pub(super) const RECREATE_GENERATION_SEARCH: &str = r#"
 DROP TABLE IF EXISTS generation_search;

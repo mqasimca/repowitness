@@ -1,10 +1,14 @@
 use super::*;
 use crate::{
+    ARCHITECTURE_OVERVIEW_LIMITATIONS, ArchitectureMapOutput, ArchitectureOverviewOutput,
     GraphArchitectureOutput, GraphEvidenceOutput, GraphImpactOutput, GraphReadServiceOutput,
     GraphReadServiceRequest, GraphSearchOutput, GraphStatusOutput, GraphTraceOutput,
-    McpConfigurationIdentity, McpDiagnosticsMemoryProjection, McpGraphContext, McpGraphPublication,
-    McpGraphTrace, McpGraphTraceCoverage, McpGraphTraceTruncation, McpPhase2ContextScope,
-    Phase2ContextBuildOutput,
+    McpArchitectureMapFile, McpArchitectureMapLanguage, McpArchitectureOverviewKind,
+    McpArchitectureOverviewRoot, McpConfigurationIdentity, McpDiagnosticsMemoryProjection,
+    McpGraphContext, McpGraphPublication, McpGraphTrace, McpGraphTraceCoverage,
+    McpGraphTraceTruncation, McpPhase2ContextScope, McpRelevantPath, McpRepositoryTopologyCategory,
+    McpRepositoryTopologyCoverage, McpRepositoryTopologyEntry, Phase2ContextBuildOutput,
+    RelevantPathsOutput, RepositoryTopologyOutput, SyntaxSiteSearchOutput,
 };
 use rmcp::model::JsonObject;
 
@@ -50,6 +54,251 @@ pub(super) fn search_output() -> CodeSearchOutput {
     }
 }
 
+pub(super) fn relevant_paths_output() -> RelevantPathsOutput {
+    let search = search_output();
+    RelevantPathsOutput {
+        schema_version: 1,
+        path_ranking_profile: 1,
+        snapshot_sha256: search.snapshot_sha256,
+        generation: search.generation,
+        resolution: search.resolution,
+        query_sha256: search.query_sha256,
+        matches_returned: search.matches_returned,
+        // A response may have candidate truncation even when every path in its
+        // returned-match surface fits the requested path bound.
+        matches_total: 2,
+        paths_returned: 1,
+        returned_match_paths_total: 1,
+        returned_match_paths_truncated: false,
+        coverage: McpCoverage {
+            truncated: 1,
+            ..search.coverage
+        },
+        limitations: vec![
+            "indexed_supported_language_declaration_lexical_only".to_owned(),
+            "ordered_by_returned_match_count_then_canonical_path".to_owned(),
+            "path_summaries_cover_only_returned_declaration_matches".to_owned(),
+            "no_relationship_or_semantic_relevance_claim".to_owned(),
+        ],
+        paths: vec![McpRelevantPath {
+            path: "rwp1:h:7372632F6C69622E7273".to_owned(),
+            content_sha256: "22".repeat(32),
+            matching_declarations: 1,
+            first_fact_ordinal: 7,
+        }],
+        matches: search.matches,
+    }
+}
+
+pub(super) fn syntax_site_search_output() -> SyntaxSiteSearchOutput {
+    SyntaxSiteSearchOutput {
+        schema_version: 1,
+        syntax_site_search_profile: 1,
+        target_sha256: "44".repeat(32),
+        snapshot_sha256: "11".repeat(32),
+        generation: 9,
+        availability: "complete".to_owned(),
+        coverage: coverage(),
+        sites_returned: 0,
+        sites_total: 0,
+        truncated: false,
+        output_bytes: 0,
+        limitation:
+            "exact_raw_target_syntax_observations_only_no_target_resolution_or_inferred_edges"
+                .to_owned(),
+        sites: Vec::new(),
+    }
+}
+
+pub(super) fn symbol_search_output() -> SymbolSearchOutput {
+    let search = search_output();
+    SymbolSearchOutput {
+        schema_version: 1,
+        query_profile: 1,
+        connected_workspace: format!("cwi1:h:{}", "AA".repeat(32)),
+        workspace_view: 1,
+        source_slot: format!("ssi1:h:{}", "BB".repeat(32)),
+        snapshot_sha256: search.snapshot_sha256,
+        generation: search.generation,
+        resolution: search.resolution,
+        query_sha256: search.query_sha256,
+        match_mode: "exact".to_owned(),
+        matches_returned: search.matches_returned,
+        matches_total: search.matches_total,
+        coverage: search.coverage,
+        limitations: vec![
+            "direct_syntax_declarations_only".to_owned(),
+            "no_name_based_relationship_resolution".to_owned(),
+        ],
+        matches: search.matches,
+    }
+}
+
+pub(super) fn architecture_map_output() -> ArchitectureMapOutput {
+    ArchitectureMapOutput {
+        schema_version: 1,
+        map_profile: 1,
+        snapshot_sha256: "11".repeat(32),
+        generation: 9,
+        coverage: coverage(),
+        total_files: 2,
+        total_declarations: 3,
+        files_returned: 1,
+        truncated: true,
+        output_bytes: 200,
+        limitation: "file_inventory_only_no_relationship_inference".to_owned(),
+        languages: vec![
+            McpArchitectureMapLanguage {
+                language: "go".to_owned(),
+                files: 1,
+                declarations: 1,
+            },
+            McpArchitectureMapLanguage {
+                language: "rust".to_owned(),
+                files: 1,
+                declarations: 2,
+            },
+        ],
+        files: vec![McpArchitectureMapFile {
+            path: "rwp1:h:7372632F6C69622E7273".to_owned(),
+            language: "rust".to_owned(),
+            content_sha256: "22".repeat(32),
+            artifact_sha256: "33".repeat(32),
+            producer_manifest_sha256: "55".repeat(32),
+            declaration_count: 2,
+        }],
+    }
+}
+
+pub(super) fn architecture_overview_output() -> ArchitectureOverviewOutput {
+    let mut entry_point_candidate = search_output()
+        .matches
+        .into_iter()
+        .next()
+        .expect("fixture search match");
+    entry_point_candidate.name = "main".to_owned();
+    entry_point_candidate.qualified_name = "fixture::main".to_owned();
+    let file = architecture_map_output()
+        .files
+        .into_iter()
+        .next()
+        .expect("fixture architecture file");
+    ArchitectureOverviewOutput {
+        schema_version: 1,
+        overview_profile: 1,
+        snapshot_sha256: "11".repeat(32),
+        generation: 9,
+        source_producer_manifest_sha256: "55".repeat(32),
+        coverage: coverage(),
+        total_files: 2,
+        total_declarations: 3,
+        total_source_roots: 2,
+        source_roots_returned: 1,
+        source_roots_truncated: true,
+        total_entry_point_candidates: 1,
+        entry_point_candidates_returned: 1,
+        entry_point_candidates_truncated: false,
+        files_returned: 1,
+        files_truncated: true,
+        output_bytes: 512,
+        limitations: ARCHITECTURE_OVERVIEW_LIMITATIONS
+            .iter()
+            .map(|limitation| (*limitation).to_owned())
+            .collect(),
+        languages: vec![
+            McpArchitectureMapLanguage {
+                language: "go".to_owned(),
+                files: 1,
+                declarations: 1,
+            },
+            McpArchitectureMapLanguage {
+                language: "rust".to_owned(),
+                files: 1,
+                declarations: 2,
+            },
+        ],
+        kinds: vec![
+            McpArchitectureOverviewKind {
+                language: "go".to_owned(),
+                kind: "function".to_owned(),
+                declarations: 1,
+            },
+            McpArchitectureOverviewKind {
+                language: "rust".to_owned(),
+                kind: "function".to_owned(),
+                declarations: 2,
+            },
+        ],
+        source_roots: vec![McpArchitectureOverviewRoot {
+            kind: "top_level_directory".to_owned(),
+            path: Some("rwp1:h:737263".to_owned()),
+            files: 1,
+            declarations: 2,
+        }],
+        entry_point_candidates: vec![entry_point_candidate],
+        files: vec![file],
+    }
+}
+
+pub(super) fn repository_topology_output() -> RepositoryTopologyOutput {
+    RepositoryTopologyOutput {
+        schema_version: 1,
+        topology_profile: 1,
+        snapshot_sha256: "11".repeat(32),
+        generation: 9,
+        topology_sha256: "22".repeat(32),
+        coverage: McpRepositoryTopologyCoverage {
+            discovered_paths: 2,
+            omitted_paths: 0,
+        },
+        total_paths: 2,
+        paths_returned: 2,
+        truncated: false,
+        output_bytes: 512,
+        limitation: "inventory_only_no_semantic_relationship_inference".to_owned(),
+        categories: vec![
+            McpRepositoryTopologyCategory {
+                category: "agent_instruction".to_owned(),
+                paths: 0,
+            },
+            McpRepositoryTopologyCategory {
+                category: "build_descriptor".to_owned(),
+                paths: 0,
+            },
+            McpRepositoryTopologyCategory {
+                category: "configuration_descriptor".to_owned(),
+                paths: 0,
+            },
+            McpRepositoryTopologyCategory {
+                category: "documentation".to_owned(),
+                paths: 1,
+            },
+            McpRepositoryTopologyCategory {
+                category: "other_tracked_file".to_owned(),
+                paths: 1,
+            },
+            McpRepositoryTopologyCategory {
+                category: "package_descriptor".to_owned(),
+                paths: 0,
+            },
+            McpRepositoryTopologyCategory {
+                category: "workflow_descriptor".to_owned(),
+                paths: 0,
+            },
+        ],
+        entries: vec![
+            McpRepositoryTopologyEntry {
+                path: "rwp1:h:524541444D452E6D64".to_owned(),
+                category: "documentation".to_owned(),
+            },
+            McpRepositoryTopologyEntry {
+                path: "rwp1:h:7372632F6C69622E7273".to_owned(),
+                category: "other_tracked_file".to_owned(),
+            },
+        ],
+    }
+}
+
 pub(super) fn scip_evidence_output() -> ScipEvidenceOutput {
     ScipEvidenceOutput {
         schema_version: 1,
@@ -64,6 +313,30 @@ pub(super) fn scip_evidence_output() -> ScipEvidenceOutput {
         output_bytes: 0,
         occurrences: Vec::new(),
         relationships: Vec::new(),
+    }
+}
+
+pub(super) fn scip_relationship_trace_output() -> ScipRelationshipTraceOutput {
+    ScipRelationshipTraceOutput {
+        schema_version: 1,
+        connected_workspace: "cwi1:h:00".to_owned(),
+        workspace_view: 1,
+        source_slot: "ssi1:h:00".to_owned(),
+        resolution: "not_produced".to_owned(),
+        overlay: None,
+        package_scope_sha256: None,
+        direction: "outgoing".to_owned(),
+        max_depth: 2,
+        max_edges: 8,
+        visited_symbols: 0,
+        unexpanded_frontier_symbols: 0,
+        depth_limit_reached: false,
+        edge_limit_reached: false,
+        symbol_limit_reached: false,
+        output_limit_reached: false,
+        truncated: false,
+        output_bytes: 0,
+        edges: Vec::new(),
     }
 }
 

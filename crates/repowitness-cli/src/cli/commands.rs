@@ -67,6 +67,17 @@ fn run_with_adapters(
     if command == OsStr::new("identity") {
         return run_identity(args, &mut stdout, &mut stderr, &OsIdentityGenerator);
     }
+    if command == OsStr::new("onboard") {
+        return run_onboard(
+            args,
+            &mut stdout,
+            &mut stderr,
+            inspector,
+            indexer,
+            &OsIdentityGenerator,
+            &PrivateOnboardStateDirectory,
+        );
+    }
     if command == OsStr::new("config") {
         return run_config(args, &mut stdout, &mut stderr, configuration_loader);
     }
@@ -109,6 +120,15 @@ fn run_with_adapters(
             configuration_loader,
         );
     }
+    if command == OsStr::new("architecture-map") {
+        return run_architecture_map(args, &mut stdout, &mut stderr);
+    }
+    if command == OsStr::new("repository-topology") {
+        return run_repository_topology(args, &mut stdout, &mut stderr);
+    }
+    if command == OsStr::new("architecture-overview") {
+        return run_architecture_overview(args, &mut stdout, &mut stderr);
+    }
     if command == OsStr::new("graph") {
         return run_graph(
             args,
@@ -120,6 +140,12 @@ fn run_with_adapters(
     }
     if command == OsStr::new("scip-evidence") {
         return run_scip_evidence(args, &mut stdout, &mut stderr);
+    }
+    if command == OsStr::new("scip-relationship-trace") {
+        return run_scip_relationship_trace(args, &mut stdout, &mut stderr);
+    }
+    if command == OsStr::new("scip-symbol-resolve") {
+        return run_scip_symbol_resolve(args, &mut stdout, &mut stderr);
     }
     if command == OsStr::new("scip-import") {
         return run_scip_import(args, &mut stdout, &mut stderr);
@@ -133,8 +159,23 @@ fn run_with_adapters(
             configuration_loader,
         );
     }
+    if command == OsStr::new("locate-relevant-paths") {
+        return run_relevant_paths(args, &mut stdout, &mut stderr, configuration_loader);
+    }
+    if command == OsStr::new("symbol-search") {
+        return run_symbol_search(args, &mut stdout, &mut stderr, configuration_loader);
+    }
     if command == OsStr::new("symbol-get") {
         return run_symbol_get(args, &mut stdout, &mut stderr, symbol_getter);
+    }
+    if command == OsStr::new("outbound-sites") {
+        return run_outbound_sites(args, &mut stdout, &mut stderr);
+    }
+    if command == OsStr::new("syntax-site-search") {
+        return run_syntax_site_search(args, &mut stdout, &mut stderr);
+    }
+    if command == OsStr::new("test-markers") {
+        return run_test_markers(args, &mut stdout, &mut stderr);
     }
     if command == OsStr::new("memory-revalidate") {
         return run_memory_revalidate(args, &mut stdout, &mut stderr, memory);

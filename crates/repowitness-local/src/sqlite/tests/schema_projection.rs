@@ -49,6 +49,30 @@ fn migration_checksums_are_stable_golden_vectors() {
         ]
     );
     assert_eq!(
+        migration_checksum(MIGRATION_7),
+        [
+            0xf9, 0x9c, 0x88, 0x44, 0x76, 0xcf, 0x33, 0x42, 0x35, 0xa2, 0x57, 0x06, 0xcd,
+            0x97, 0xfd, 0x77, 0xd2, 0xa8, 0x66, 0xd0, 0x07, 0xfd, 0x64, 0x97, 0x10, 0x7d,
+            0xac, 0x4a, 0x7c, 0x76, 0xcf, 0x1b,
+        ]
+    );
+    assert_eq!(
+        migration_checksum(MIGRATION_9),
+        [
+            0x4a, 0x2d, 0xb4, 0x51, 0x7e, 0xdd, 0x4d, 0x3b, 0xeb, 0xe1, 0x10, 0xb2, 0xf0,
+            0xc8, 0x46, 0x19, 0xcd, 0x4e, 0x6b, 0xba, 0x7e, 0x08, 0x76, 0xae, 0xb1, 0x20,
+            0xbc, 0x80, 0x4c, 0x6b, 0xa1, 0x6b,
+        ]
+    );
+    assert_eq!(
+        migration_checksum(MIGRATION_10),
+        [
+            0x73, 0x5a, 0xcf, 0x10, 0x3e, 0x33, 0x19, 0x73, 0xad, 0x76, 0xba, 0xb6, 0xed,
+            0x9c, 0xc3, 0x39, 0x01, 0x97, 0xbd, 0xe2, 0x33, 0x97, 0x32, 0x3d, 0xe1, 0x2b,
+            0xcb, 0x28, 0xac, 0xb7, 0x8b, 0x93,
+        ]
+    );
+    assert_eq!(
         migrations(),
         [
             (1, MIGRATION_1_NAME, MIGRATION_1),
@@ -57,6 +81,10 @@ fn migration_checksums_are_stable_golden_vectors() {
             (4, MIGRATION_4_NAME, MIGRATION_4),
             (5, MIGRATION_5_NAME, MIGRATION_5),
             (6, MIGRATION_6_NAME, MIGRATION_6),
+            (7, MIGRATION_7_NAME, MIGRATION_7),
+            (9, MIGRATION_9_NAME, MIGRATION_9),
+            (10, MIGRATION_10_NAME, MIGRATION_10),
+            (11, MIGRATION_11_NAME, MIGRATION_11),
         ]
     );
     for transitional_statement in ["CREATE TEMP", "ALTER TABLE", "DROP TABLE"] {
@@ -65,7 +93,7 @@ fn migration_checksums_are_stable_golden_vectors() {
 }
 
 #[test]
-fn current_catalog_matches_the_version_six_golden() {
+fn current_catalog_matches_the_version_eleven_golden() {
     let directory = TempDirectory::new();
     let connection =
         open_index_writer(&directory.database(), 123).expect("baseline should succeed");
@@ -98,9 +126,9 @@ fn current_catalog_matches_the_version_six_golden() {
     assert_eq!(
         migration_checksum(&canonical_catalog),
         [
-            0x36, 0x21, 0x49, 0xbb, 0xdc, 0xdc, 0xd9, 0x3c, 0xcf, 0x7f, 0x55, 0x74, 0x3d, 0xc5,
-            0x5d, 0x2b, 0x6a, 0xdf, 0x68, 0x4b, 0xf5, 0xbb, 0xe7, 0xf8, 0x4c, 0x82, 0xa7, 0xcc,
-            0x63, 0x35, 0x1c, 0x47,
+            0x2e, 0x20, 0x5b, 0x60, 0x40, 0x42, 0x57, 0x78, 0x35, 0x59, 0x45, 0xb4, 0xaf, 0x5b,
+            0xb4, 0x4e, 0x18, 0x5e, 0xc0, 0x9e, 0x0d, 0x37, 0x03, 0x5b, 0x9c, 0xa8, 0x1e, 0x1c,
+            0x52, 0x61, 0xfe, 0x6e,
         ]
     );
 }
@@ -342,6 +370,9 @@ fn fresh_database_has_exact_identity_ledger_and_required_schema() {
                     'generation_graph_resolutions',
                     'generation_graph_candidates',
                     'generation_graph_edges',
+                    'generation_repository_topology_requirements',
+                    'generation_repository_topology_publications',
+                    'generation_repository_topology_entries',
                     'retention_generation_garbage',
                     'retention_snapshot_garbage',
                     'retention_artifact_garbage',
@@ -450,9 +481,33 @@ fn fresh_database_has_exact_identity_ledger_and_required_schema() {
                 migration_checksum(MIGRATION_6).to_vec(),
                 123
             ),
+            (
+                7,
+                MIGRATION_7_NAME.to_owned(),
+                migration_checksum(MIGRATION_7).to_vec(),
+                123
+            ),
+            (
+                9,
+                MIGRATION_9_NAME.to_owned(),
+                migration_checksum(MIGRATION_9).to_vec(),
+                123
+            ),
+            (
+                10,
+                MIGRATION_10_NAME.to_owned(),
+                migration_checksum(MIGRATION_10).to_vec(),
+                123
+            ),
+            (
+                11,
+                MIGRATION_11_NAME.to_owned(),
+                migration_checksum(MIGRATION_11).to_vec(),
+                123
+            ),
         ]
     );
-    assert_eq!(tables, 57);
+    assert_eq!(tables, 60);
     assert_eq!(memory_schema_objects, (4, 30));
     assert_eq!(graph_schema_objects, (2, 26));
     assert_eq!(retention_schema_objects, (7, 15));

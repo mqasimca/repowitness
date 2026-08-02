@@ -8,7 +8,10 @@ use crate::{
     SEARCH_GRAPH_ALIAS_TOOL_NAME, TRACE_PATH_ALIAS_TOOL_NAME,
 };
 
-const COMPATIBILITY_TOOL_NAMES: [&str; 21] = [
+const COMPATIBILITY_TOOL_NAMES: [&str; 31] = [
+    ARCHITECTURE_MAP_TOOL_NAME,
+    ARCHITECTURE_OVERVIEW_TOOL_NAME,
+    CODE_GRAPH_QUERY_TOOL_NAME,
     CODE_SEARCH_TOOL_NAME,
     CONTEXT_BUILD_TOOL_NAME,
     DIAGNOSTICS_TOOL_NAME,
@@ -23,12 +26,19 @@ const COMPATIBILITY_TOOL_NAMES: [&str; 21] = [
     HISTORICAL_MEMORY_TOOL_NAME,
     IMPACT_ANALYZE_TOOL_NAME,
     INDEX_STATUS_ALIAS_TOOL_NAME,
+    RELEVANT_PATHS_TOOL_NAME,
     MEMORY_RECALL_TOOL_NAME,
+    OUTBOUND_SITES_TOOL_NAME,
     PHASE2_CONTEXT_BUILD_TOOL_NAME,
+    REPOSITORY_TOPOLOGY_TOOL_NAME,
     SCIP_EVIDENCE_TOOL_NAME,
+    SCIP_RELATIONSHIP_TRACE_TOOL_NAME,
+    SCIP_SYMBOL_RESOLVE_TOOL_NAME,
     SEARCH_CODE_ALIAS_TOOL_NAME,
     SEARCH_GRAPH_ALIAS_TOOL_NAME,
     SYMBOL_GET_TOOL_NAME,
+    SYMBOL_SEARCH_TOOL_NAME,
+    SYNTAX_SITE_SEARCH_TOOL_NAME,
     TRACE_PATH_ALIAS_TOOL_NAME,
 ];
 
@@ -291,7 +301,7 @@ fn memory_capability_adds_only_the_canonical_mutation_tool() {
         .iter()
         .map(|tool| tool.name.as_ref())
         .collect::<Vec<_>>();
-    assert_eq!(names.len(), 22);
+    assert_eq!(names.len(), 32);
     assert!(names.windows(2).all(|pair| pair[0] < pair[1]));
     assert_eq!(
         names

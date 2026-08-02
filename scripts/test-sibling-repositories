@@ -1,0 +1,1387 @@
+#!/bin/sh
+# Run the production index, path-only topology, architecture-map, architecture-overview,
+# typed-symbol-discovery, lexical path-navigation (direct and finite-MCP-envelope),
+# exact raw syntax-target search (direct and finite-MCP-envelope), no-overlay
+# SCIP-evidence, SCIP-symbol-resolution, and SCIP-relationship-trace smoke,
+# repository-scoped test-marker, and exact outbound-site
+# loop against every direct Git worktree beside this workspace. External
+# repositories are confidential smoke inputs: this script deliberately emits aggregate
+# outcomes only.
+set -eu
+
+PROJECT_ROOT=$(CDPATH= cd "$(dirname "$0")/.." && pwd)
+SIBLING_ROOT=$(dirname "$PROJECT_ROOT")
+case "${CARGO_TARGET_DIR:-}" in
+    '')
+        TARGET_DIRECTORY=$PROJECT_ROOT/target
+        ;;
+    /*)
+        TARGET_DIRECTORY=$CARGO_TARGET_DIR
+        ;;
+    *)
+        TARGET_DIRECTORY=$PROJECT_ROOT/$CARGO_TARGET_DIR
+        ;;
+esac
+CLI=$TARGET_DIRECTORY/debug/repowitness
+
+umask 077
+
+usage() {
+    printf '%s\n' 'usage: ./scripts/test-sibling-repositories [--skip-build]' >&2
+    exit 64
+}
+
+SKIP_BUILD=false
+case "$#" in
+    0)
+        ;;
+    1)
+        if [ "$1" = '--skip-build' ]; then
+            SKIP_BUILD=true
+        else
+            usage
+        fi
+        ;;
+    *)
+        usage
+        ;;
+esac
+
+command -v git >/dev/null 2>&1 || {
+    printf '%s\n' 'error: Git is required' >&2
+    exit 69
+}
+command -v perl >/dev/null 2>&1 || {
+    printf '%s\n' 'error: Perl with JSON::PP is required' >&2
+    exit 69
+}
+command -v mktemp >/dev/null 2>&1 || {
+    printf '%s\n' 'error: mktemp is required' >&2
+    exit 69
+}
+
+safe_git() (
+    unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY
+    unset GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_SHALLOW_FILE GIT_COMMON_DIR
+    unset GIT_CONFIG GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS GIT_NAMESPACE
+    unset GIT_IMPLICIT_WORK_TREE GIT_CEILING_DIRECTORIES
+    unset GIT_DISCOVERY_ACROSS_FILESYSTEM GIT_REFERENCE_BACKEND
+    unset GIT_LITERAL_PATHSPECS GIT_GLOB_PATHSPECS GIT_NOGLOB_PATHSPECS
+    unset GIT_ICASE_PATHSPECS GIT_EXTERNAL_DIFF GIT_EXEC_PATH GIT_TEMPLATE_DIR
+    unset GIT_TRACE GIT_TRACE2 GIT_TRACE2_EVENT GIT_TRACE2_PERF
+    export GIT_CONFIG_NOSYSTEM=1
+    export GIT_CONFIG_GLOBAL=/dev/null
+    export GIT_CONFIG_SYSTEM=/dev/null
+    export GIT_TERMINAL_PROMPT=0
+    export GCM_INTERACTIVE=never
+    export GIT_OPTIONAL_LOCKS=0
+    export GIT_NO_REPLACE_OBJECTS=1
+    export GIT_PAGER=cat
+    export PAGER=cat
+    command git --no-pager --literal-pathspecs \
+        -c core.fsmonitor=false \
+        -c core.hooksPath=/dev/null \
+        -c core.excludesFile=/dev/null \
+        -c core.untrackedCache=false \
+        -c diff.external= \
+        -c protocol.file.allow=never \
+        "$@"
+)
+
+is_git_worktree() {
+    safe_git -C "$1" rev-parse --is-inside-work-tree >/dev/null 2>&1
+}
+
+validate_architecture_map() {
+    perl -MJSON::PP -e '
+        use strict;
+        use warnings;
+
+        local $/;
+        my $map = eval { decode_json(<STDIN>) };
+        exit 1 if $@ || ref($map) ne q{HASH};
+        exit 1 if ($map->{schema_version} // q{}) != 1;
+        exit 1 if ($map->{map_profile} // q{}) != 1;
+        exit 1 if ($map->{snapshot_sha256} // q{}) !~ /\A[0-9a-f]{64}\z/;
+        exit 1 if !defined($map->{generation}) || ref($map->{generation})
+          || $map->{generation} !~ /\A[1-9][0-9]*\z/;
+        exit 1 if !JSON::PP::is_bool($map->{truncated});
+        exit 1 if ($map->{limitation} // q{})
+          ne q{file_inventory_only_no_relationship_inference};
+        exit 1 if ref($map->{coverage}) ne q{HASH}
+          || ref($map->{languages}) ne q{ARRAY}
+          || ref($map->{files}) ne q{ARRAY};
+        for my $field (qw(total_files total_declarations files_returned output_bytes)) {
+            exit 1 if !defined($map->{$field}) || ref($map->{$field})
+              || $map->{$field} !~ /\A[0-9]+\z/;
+        }
+        for my $field (qw(searched skipped unresolved truncated)) {
+            exit 1 if !defined($map->{coverage}{$field}) || ref($map->{coverage}{$field})
+              || $map->{coverage}{$field} !~ /\A[0-9]+\z/;
+        }
+        exit 1 if $map->{files_returned} != @{$map->{files}}
+          || $map->{files_returned} > $map->{total_files};
+        exit 1 if ($map->{truncated} ? 1 : 0)
+          != ($map->{files_returned} < $map->{total_files} ? 1 : 0);
+        for my $language (@{$map->{languages}}) {
+            exit 1 if ref($language) ne q{HASH};
+            for my $field (qw(language files declarations)) {
+                exit 1 if !defined($language->{$field}) || ref($language->{$field});
+            }
+        }
+        for my $file (@{$map->{files}}) {
+            exit 1 if ref($file) ne q{HASH};
+            for my $field (qw(path language content_sha256 artifact_sha256 producer_manifest_sha256 declaration_count)) {
+                exit 1 if !defined($file->{$field}) || ref($file->{$field});
+            }
+            exit 1 if $file->{path} !~ /\Arwp1:h:[0-9A-F]+\z/
+              || $file->{language} !~ /\A(?:rust|go|typescript|tsx|python)\z/
+              || $file->{content_sha256} !~ /\A[0-9a-f]{64}\z/
+              || $file->{artifact_sha256} !~ /\A[0-9a-f]{64}\z/
+              || $file->{producer_manifest_sha256} !~ /\A[0-9a-f]{64}\z/
+              || $file->{declaration_count} !~ /\A[0-9]+\z/;
+        }
+    '
+}
+
+validate_repository_topology() {
+    perl -MJSON::PP -e '
+        use strict;
+        use warnings;
+
+        local $/;
+        my $topology = eval { decode_json(<STDIN>) };
+        exit 1 if $@ || ref($topology) ne q{HASH};
+        exit 1 if ($topology->{schema_version} // q{}) != 1;
+        exit 1 if ($topology->{topology_profile} // q{}) != 1;
+        exit 1 if ($topology->{snapshot_sha256} // q{}) !~ /\A[0-9a-f]{64}\z/;
+        exit 1 if ($topology->{topology_sha256} // q{}) !~ /\A[0-9a-f]{64}\z/;
+        exit 1 if !defined($topology->{generation}) || ref($topology->{generation})
+          || $topology->{generation} !~ /\A[1-9][0-9]*\z/;
+        exit 1 if ($topology->{limitation} // q{})
+          ne q{inventory_only_no_semantic_relationship_inference};
+        exit 1 if ref($topology->{coverage}) ne q{HASH}
+          || ref($topology->{categories}) ne q{ARRAY}
+          || ref($topology->{entries}) ne q{ARRAY};
+        for my $field (qw(total_paths paths_returned output_bytes)) {
+            exit 1 if !defined($topology->{$field}) || ref($topology->{$field})
+              || $topology->{$field} !~ /\A[0-9]+\z/;
+        }
+        for my $field (qw(discovered_paths omitted_paths)) {
+            exit 1 if !defined($topology->{coverage}{$field})
+              || ref($topology->{coverage}{$field})
+              || $topology->{coverage}{$field} !~ /\A[0-9]+\z/;
+        }
+        exit 1 if $topology->{coverage}{omitted_paths} != 0
+          || $topology->{coverage}{discovered_paths} != $topology->{total_paths}
+          || $topology->{paths_returned} != @{$topology->{entries}}
+          || $topology->{paths_returned} > $topology->{total_paths};
+        exit 1 if !JSON::PP::is_bool($topology->{truncated})
+          || ($topology->{truncated} ? 1 : 0)
+            != ($topology->{paths_returned} < $topology->{total_paths} ? 1 : 0);
+        my @expected = qw(agent_instruction build_descriptor configuration_descriptor documentation other_tracked_file package_descriptor workflow_descriptor);
+        exit 1 if @{$topology->{categories}} != @expected;
+        for my $index (0 .. $#expected) {
+            my $category = $topology->{categories}[$index];
+            exit 1 if ref($category) ne q{HASH}
+              || ($category->{category} // q{}) ne $expected[$index]
+              || !defined($category->{paths}) || ref($category->{paths})
+              || $category->{paths} !~ /\A[0-9]+\z/;
+        }
+        for my $entry (@{$topology->{entries}}) {
+            exit 1 if ref($entry) ne q{HASH}
+              || ($entry->{path} // q{}) !~ /\Arwp1:h:[0-9A-F]+\z/
+              || ($entry->{category} // q{}) !~ /\A(?:documentation|agent_instruction|workflow_descriptor|build_descriptor|package_descriptor|configuration_descriptor|other_tracked_file)\z/;
+        }
+    '
+}
+
+validate_architecture_overview() {
+    perl -MJSON::PP -e '
+        use strict;
+        use warnings;
+
+        local $/;
+        my $overview = eval { decode_json(<STDIN>) };
+        exit 1 if $@ || ref($overview) ne q{HASH};
+        exit 1 if ($overview->{schema_version} // q{}) != 1;
+        exit 1 if ($overview->{overview_profile} // q{}) != 1;
+        exit 1 if ($overview->{snapshot_sha256} // q{}) !~ /\A[0-9a-f]{64}\z/;
+        exit 1 if !defined($overview->{generation}) || ref($overview->{generation})
+          || $overview->{generation} !~ /\A[1-9][0-9]*\z/;
+        exit 1 if ($overview->{source_producer_manifest_sha256} // q{})
+          !~ /\A[0-9a-f]{64}\z/;
+        exit 1 if ref($overview->{coverage}) ne q{HASH}
+          || ref($overview->{limitations}) ne q{ARRAY}
+          || ref($overview->{languages}) ne q{ARRAY}
+          || ref($overview->{kinds}) ne q{ARRAY}
+          || ref($overview->{source_roots}) ne q{ARRAY}
+          || ref($overview->{entry_point_candidates}) ne q{ARRAY}
+          || ref($overview->{files}) ne q{ARRAY};
+        exit 1 if join(q{,}, @{$overview->{limitations}})
+          ne q{source_fact_aggregate_only_no_relationship_inference,top_level_path_buckets_are_not_package_or_ownership_boundaries,function_named_main_candidates_are_not_runtime_entry_point_proof};
+        for my $field (qw(searched skipped unresolved truncated)) {
+            exit 1 if !defined($overview->{coverage}{$field})
+              || ref($overview->{coverage}{$field})
+              || $overview->{coverage}{$field} !~ /\A[0-9]+\z/;
+        }
+        for my $field (qw(total_files total_declarations total_source_roots source_roots_returned total_entry_point_candidates entry_point_candidates_returned files_returned output_bytes)) {
+            exit 1 if !defined($overview->{$field}) || ref($overview->{$field})
+              || $overview->{$field} !~ /\A[0-9]+\z/;
+        }
+        for my $field (qw(source_roots_truncated entry_point_candidates_truncated files_truncated)) {
+            exit 1 if !JSON::PP::is_bool($overview->{$field});
+        }
+        exit 1 if $overview->{source_roots_returned} != @{$overview->{source_roots}}
+          || $overview->{entry_point_candidates_returned} != @{$overview->{entry_point_candidates}}
+          || $overview->{files_returned} != @{$overview->{files}};
+        exit 1 if $overview->{source_roots_returned} > $overview->{total_source_roots}
+          || $overview->{entry_point_candidates_returned} > $overview->{total_entry_point_candidates}
+          || $overview->{files_returned} > $overview->{total_files}
+          || $overview->{total_source_roots} > $overview->{total_files}
+          || $overview->{total_entry_point_candidates} > $overview->{total_declarations};
+        exit 1 if ($overview->{source_roots_truncated} ? 1 : 0)
+          != ($overview->{source_roots_returned} < $overview->{total_source_roots} ? 1 : 0);
+        exit 1 if ($overview->{entry_point_candidates_truncated} ? 1 : 0)
+          != ($overview->{entry_point_candidates_returned} < $overview->{total_entry_point_candidates} ? 1 : 0);
+        exit 1 if ($overview->{files_truncated} ? 1 : 0)
+          != ($overview->{files_returned} < $overview->{total_files} ? 1 : 0);
+        for my $root (@{$overview->{source_roots}}) {
+            exit 1 if ref($root) ne q{HASH};
+            exit 1 if ($root->{kind} // q{}) !~ /\A(?:repository_root|top_level_directory)\z/;
+            exit 1 if ($root->{kind} eq q{repository_root}) && defined($root->{path});
+            exit 1 if ($root->{kind} eq q{top_level_directory})
+              && (!defined($root->{path}) || ref($root->{path})
+                || $root->{path} !~ /\Arwp1:h:[0-9A-F]+\z/);
+            for my $field (qw(files declarations)) {
+                exit 1 if !defined($root->{$field}) || ref($root->{$field})
+                  || $root->{$field} !~ /\A[0-9]+\z/;
+            }
+        }
+        for my $candidate (@{$overview->{entry_point_candidates}}) {
+            exit 1 if ref($candidate) ne q{HASH};
+            for my $field (qw(path fact_ordinal content_sha256 artifact_sha256 producer_manifest_sha256 evidence_tier language kind name qualified_name name_span declaration_span)) {
+                exit 1 if !defined($candidate->{$field});
+            }
+            exit 1 if ref($candidate->{path}) || $candidate->{path} !~ /\Arwp1:h:[0-9A-F]+\z/
+              || ref($candidate->{fact_ordinal}) || $candidate->{fact_ordinal} !~ /\A[0-9]+\z/
+              || ref($candidate->{content_sha256}) || $candidate->{content_sha256} !~ /\A[0-9a-f]{64}\z/
+              || ref($candidate->{artifact_sha256}) || $candidate->{artifact_sha256} !~ /\A[0-9a-f]{64}\z/
+              || ref($candidate->{producer_manifest_sha256}) || $candidate->{producer_manifest_sha256} !~ /\A[0-9a-f]{64}\z/
+              || ref($candidate->{evidence_tier}) || $candidate->{evidence_tier} ne q{syntax}
+              || ref($candidate->{language}) || $candidate->{language} !~ /\A(?:rust|go|typescript|tsx|python)\z/
+              || ref($candidate->{kind}) || $candidate->{kind} ne q{function}
+              || ref($candidate->{name}) || $candidate->{name} ne q{main}
+              || ref($candidate->{qualified_name});
+            for my $span_field (qw(name_span declaration_span)) {
+                my $span = $candidate->{$span_field};
+                exit 1 if ref($span) ne q{HASH};
+                exit 1 if !defined($span->{start}) || ref($span->{start})
+                  || $span->{start} !~ /\A[0-9]+\z/
+                  || !defined($span->{end}) || ref($span->{end})
+                  || $span->{end} !~ /\A[1-9][0-9]*\z/
+                  || $span->{start} >= $span->{end};
+            }
+        }
+        for my $file (@{$overview->{files}}) {
+            exit 1 if ref($file) ne q{HASH};
+            for my $field (qw(path language content_sha256 artifact_sha256 producer_manifest_sha256 declaration_count)) {
+                exit 1 if !defined($file->{$field}) || ref($file->{$field});
+            }
+            exit 1 if $file->{path} !~ /\Arwp1:h:[0-9A-F]+\z/
+              || $file->{language} !~ /\A(?:rust|go|typescript|tsx|python)\z/
+              || $file->{content_sha256} !~ /\A[0-9a-f]{64}\z/
+              || $file->{artifact_sha256} !~ /\A[0-9a-f]{64}\z/
+              || $file->{producer_manifest_sha256} !~ /\A[0-9a-f]{64}\z/
+              || $file->{declaration_count} !~ /\A[0-9]+\z/;
+        }
+    '
+}
+
+validate_symbol_search() {
+    expected_match_mode=$1
+    perl -MJSON::PP -e '
+        use strict;
+        use warnings;
+
+        my $expected_match_mode = shift @ARGV;
+        local $/;
+        my $result = eval { decode_json(<STDIN>) };
+        exit 1 if $@ || ref($result) ne q{HASH};
+        exit 1 if ($result->{schema_version} // q{}) != 1;
+        exit 1 if ($result->{query_profile} // q{}) != 1;
+        exit 1 if ($result->{match_mode} // q{}) ne $expected_match_mode;
+        exit 1 if !defined($result->{generation}) || ref($result->{generation})
+          || $result->{generation} !~ /\A[1-9][0-9]*\z/;
+        exit 1 if ref($result->{coverage}) ne q{HASH}
+          || ref($result->{limitations}) ne q{ARRAY}
+          || ref($result->{matches}) ne q{ARRAY};
+        for my $field (qw(matches_returned matches_total)) {
+            exit 1 if !defined($result->{$field}) || ref($result->{$field})
+              || $result->{$field} !~ /\A[0-9]+\z/;
+        }
+        exit 1 if $result->{matches_returned} != @{$result->{matches}}
+          || $result->{matches_returned} > $result->{matches_total};
+        exit 1 if join(q{,}, @{$result->{limitations}})
+          ne q{direct_syntax_declarations_only,no_name_based_relationship_resolution};
+        for my $match (@{$result->{matches}}) {
+            exit 1 if ref($match) ne q{HASH};
+            for my $field (qw(path fact_ordinal content_sha256 artifact_sha256 producer_manifest_sha256 evidence_tier language kind name qualified_name name_span declaration_span)) {
+                exit 1 if !defined($match->{$field});
+            }
+            exit 1 if ref($match->{name_span}) ne q{HASH}
+              || ref($match->{declaration_span}) ne q{HASH};
+        }
+    ' "$expected_match_mode"
+}
+
+validate_relevant_paths() {
+    perl -MJSON::PP -e '
+        use strict;
+        use warnings;
+
+        local $/;
+        my $result = eval { decode_json(<STDIN>) };
+        exit 1 if $@ || ref($result) ne q{HASH};
+        exit 1 if ($result->{schema_version} // q{}) != 1
+          || ($result->{path_ranking_profile} // q{}) != 1;
+        exit 1 if ($result->{snapshot_sha256} // q{}) !~ /\A[0-9a-f]{64}\z/
+          || !defined($result->{generation}) || ref($result->{generation})
+          || $result->{generation} !~ /\A[1-9][0-9]*\z/
+          || ($result->{query_sha256} // q{}) !~ /\A[0-9a-f]{64}\z/
+          || ($result->{resolution} // q{}) !~ /\A(?:confirmed|unresolved)\z/;
+        exit 1 if ref($result->{coverage}) ne q{HASH}
+          || ref($result->{limitations}) ne q{ARRAY}
+          || ref($result->{paths}) ne q{ARRAY}
+          || ref($result->{matches}) ne q{ARRAY};
+        exit 1 if join(q{,}, @{$result->{limitations}})
+          ne q{indexed_supported_language_declaration_lexical_only,ordered_by_returned_match_count_then_canonical_path,path_summaries_cover_only_returned_declaration_matches,no_relationship_or_semantic_relevance_claim};
+        for my $field (qw(matches_returned matches_total paths_returned returned_match_paths_total)) {
+            exit 1 if !defined($result->{$field}) || ref($result->{$field})
+              || $result->{$field} !~ /\A[0-9]+\z/;
+        }
+        for my $field (qw(searched skipped unresolved truncated)) {
+            exit 1 if !defined($result->{coverage}{$field})
+              || ref($result->{coverage}{$field})
+              || $result->{coverage}{$field} !~ /\A[0-9]+\z/;
+        }
+        exit 1 if !JSON::PP::is_bool($result->{returned_match_paths_truncated});
+        exit 1 if $result->{matches_returned} != @{$result->{matches}}
+          || $result->{matches_returned} > $result->{matches_total}
+          || $result->{paths_returned} != @{$result->{paths}}
+          || $result->{paths_returned} > $result->{returned_match_paths_total}
+          || ($result->{returned_match_paths_truncated} ? 1 : 0)
+            != ($result->{paths_returned} < $result->{returned_match_paths_total} ? 1 : 0);
+        my $declarations = 0;
+        my $previous;
+        for my $path (@{$result->{paths}}) {
+            exit 1 if ref($path) ne q{HASH}
+              || ($path->{path} // q{}) !~ /\Arwp1:h:[0-9A-F]+\z/
+              || ($path->{content_sha256} // q{}) !~ /\A[0-9a-f]{64}\z/
+              || !defined($path->{matching_declarations}) || ref($path->{matching_declarations})
+              || $path->{matching_declarations} !~ /\A[1-9][0-9]*\z/
+              || !defined($path->{first_fact_ordinal}) || ref($path->{first_fact_ordinal})
+              || $path->{first_fact_ordinal} !~ /\A[0-9]+\z/;
+            $declarations += $path->{matching_declarations};
+            if (defined($previous)) {
+                exit 1 if $previous->{matching_declarations} < $path->{matching_declarations};
+                exit 1 if $previous->{matching_declarations} == $path->{matching_declarations}
+                  && $previous->{path} gt $path->{path};
+            }
+            $previous = $path;
+        }
+        exit 1 if $declarations > $result->{matches_returned};
+        exit 1 if !$result->{returned_match_paths_truncated}
+          && $declarations != $result->{matches_returned};
+        exit 1 if ($result->{resolution} eq q{confirmed}) != ($result->{matches_returned} > 0);
+        exit 1 if ($result->{resolution} eq q{unresolved})
+          && ($result->{matches_returned} != 0 || $result->{paths_returned} != 0);
+    '
+}
+
+map_has_declarations() {
+    perl -MJSON::PP -e '
+        use strict;
+        use warnings;
+
+        local $/;
+        my $map = eval { decode_json(<STDIN>) };
+        exit 1 if $@ || ref($map) ne q{HASH};
+        exit(($map->{total_declarations} // 0) > 0 ? 0 : 1);
+    '
+}
+
+symbol_search_has_match() {
+    perl -MJSON::PP -e '
+        use strict;
+        use warnings;
+
+        local $/;
+        my $result = eval { decode_json(<STDIN>) };
+        exit 1 if $@ || ref($result) ne q{HASH};
+        exit(($result->{matches_returned} // 0) > 0 ? 0 : 1);
+    '
+}
+
+symbol_search_has_no_matches() {
+    perl -MJSON::PP -e '
+        use strict;
+        use warnings;
+
+        local $/;
+        my $result = eval { decode_json(<STDIN>) };
+        exit 1 if $@ || ref($result) ne q{HASH};
+        exit(($result->{matches_returned} // -1) == 0
+          && ($result->{matches_total} // -1) == 0 ? 0 : 1);
+    '
+}
+
+relevant_paths_has_no_matches() {
+    perl -MJSON::PP -e '
+        use strict;
+        use warnings;
+
+        local $/;
+        my $result = eval { decode_json(<STDIN>) };
+        exit 1 if $@ || ref($result) ne q{HASH};
+        exit(($result->{matches_returned} // -1) == 0
+          && ($result->{matches_total} // -1) == 0
+          && ($result->{paths_returned} // -1) == 0 ? 0 : 1);
+    '
+}
+
+relevant_paths_has_match() {
+    perl -MJSON::PP -e '
+        use strict;
+        use warnings;
+
+        local $/;
+        my $result = eval { decode_json(<STDIN>) };
+        exit 1 if $@ || ref($result) ne q{HASH};
+        exit(($result->{matches_returned} // 0) > 0
+          && ($result->{paths_returned} // 0) > 0 ? 0 : 1);
+    '
+}
+
+mcp_code_graph_relevant_paths() {
+    perl -MIPC::Open3 -MJSON::PP -e '
+        use strict;
+        use warnings;
+
+        my ($cli, $identity, $database, $root, $query) = @ARGV;
+        exit 64 if !defined($query);
+        open my $stderr, q{>}, q{/dev/null} or exit 1;
+        my $pid = open3(
+            my $input,
+            my $output,
+            $stderr,
+            $cli,
+            q{mcp-serve},
+            q{--repository-id},
+            $identity,
+            q{--database},
+            $database,
+            q{--root},
+            $root,
+        );
+        select((select($input), $| = 1)[0]);
+        my $initialize = {
+            jsonrpc => q{2.0},
+            id => 1,
+            method => q{initialize},
+            params => {
+                protocolVersion => q{2025-11-25},
+                capabilities => {},
+                clientInfo => { name => q{repowitness-sibling-smoke}, version => q{1} },
+            },
+        };
+        print {$input} encode_json($initialize), qq{\n} or exit 1;
+        my $initialized;
+        while (my $line = <$output>) {
+            my $message = eval { decode_json($line) };
+            exit 1 if $@ || ref($message) ne q{HASH};
+            $initialized = $message if defined($message->{id}) && $message->{id} eq q{1};
+            last if defined($initialized);
+        }
+        exit 1 if !defined($initialized) || ref($initialized->{result}) ne q{HASH};
+
+        for my $message (
+            {
+                jsonrpc => q{2.0},
+                method => q{notifications/initialized},
+            },
+            {
+                jsonrpc => q{2.0},
+                id => 2,
+                method => q{tools/call},
+                params => {
+                    name => q{code_graph_query},
+                    arguments => {
+                        operation => q{relevant_paths},
+                        query => $query,
+                        max_paths => 1,
+                    },
+                },
+            },
+        ) {
+            print {$input} encode_json($message), qq{\n} or exit 1;
+        }
+        close($input) or exit 1;
+
+        my $response;
+        while (my $line = <$output>) {
+            my $message = eval { decode_json($line) };
+            exit 1 if $@ || ref($message) ne q{HASH};
+            $response = $message if defined($message->{id}) && $message->{id} eq q{2};
+        }
+        close($output);
+        waitpid($pid, 0);
+        close($stderr);
+        exit 1 if $? != 0;
+        exit 1 if !defined($response) || ref($response->{result}) ne q{HASH};
+        my $result = $response->{result};
+        exit 1 if ($result->{isError} // 1) || ref($result->{structuredContent}) ne q{HASH};
+        print encode_json($result->{structuredContent});
+    ' "$CLI" "$identity" "$database" "$candidate" "$1"
+}
+
+mcp_code_graph_syntax_site_search() {
+    perl -MIPC::Open3 -MJSON::PP -e '
+        use strict;
+        use warnings;
+
+        my ($cli, $identity, $database, $root, $target, $stderr_path) = @ARGV;
+        exit 64 if !defined($target) || !defined($stderr_path);
+        open my $stderr, q{>}, $stderr_path or exit 1;
+        my $pid = open3(
+            my $input,
+            my $output,
+            $stderr,
+            $cli,
+            q{mcp-serve},
+            q{--repository-id},
+            $identity,
+            q{--database},
+            $database,
+            q{--root},
+            $root,
+        );
+        select((select($input), $| = 1)[0]);
+        my $initialize = {
+            jsonrpc => q{2.0},
+            id => 1,
+            method => q{initialize},
+            params => {
+                protocolVersion => q{2025-11-25},
+                capabilities => {},
+                clientInfo => { name => q{repowitness-sibling-smoke}, version => q{1} },
+            },
+        };
+        print {$input} encode_json($initialize), qq{\n} or exit 1;
+        my $initialized;
+        while (my $line = <$output>) {
+            my $message = eval { decode_json($line) };
+            exit 1 if $@ || ref($message) ne q{HASH};
+            $initialized = $message if defined($message->{id}) && $message->{id} eq q{1};
+            last if defined($initialized);
+        }
+        exit 1 if !defined($initialized) || ref($initialized->{result}) ne q{HASH};
+
+        for my $message (
+            {
+                jsonrpc => q{2.0},
+                method => q{notifications/initialized},
+            },
+            {
+                jsonrpc => q{2.0},
+                id => 2,
+                method => q{tools/call},
+                params => {
+                    name => q{code_graph_query},
+                    arguments => {
+                        operation => q{syntax_site_search},
+                        target => $target,
+                        max_sites => 1,
+                    },
+                },
+            },
+        ) {
+            print {$input} encode_json($message), qq{\n} or exit 1;
+        }
+        close($input) or exit 1;
+
+        my $response;
+        while (my $line = <$output>) {
+            my $message = eval { decode_json($line) };
+            exit 1 if $@ || ref($message) ne q{HASH};
+            $response = $message if defined($message->{id}) && $message->{id} eq q{2};
+        }
+        close($output);
+        waitpid($pid, 0);
+        close($stderr) or exit 1;
+        exit 1 if $? != 0 || -s $stderr_path;
+        exit 1 if !defined($response) || ref($response->{result}) ne q{HASH};
+        my $result = $response->{result};
+        exit 1 if ($result->{isError} // 1) || ref($result->{structuredContent}) ne q{HASH};
+        print encode_json($result->{structuredContent});
+    ' "$CLI" "$identity" "$database" "$candidate" "$1" "$2"
+}
+
+validate_code_graph_relevant_paths() {
+    perl -MJSON::PP -e '
+        use strict;
+        use warnings;
+
+        local $/;
+        my $envelope = eval { decode_json(<STDIN>) };
+        exit 1 if $@ || ref($envelope) ne q{HASH};
+        exit 1 if ($envelope->{schema_version} // q{}) != 1
+          || ($envelope->{code_graph_query_profile} // q{}) != 1
+          || ($envelope->{operation} // q{}) ne q{relevant_paths};
+        exit 1 if !defined($envelope->{output_bytes}) || ref($envelope->{output_bytes})
+          || $envelope->{output_bytes} !~ /\A[0-9]+\z/;
+        exit 1 if ref($envelope->{result}) ne q{HASH};
+        print encode_json($envelope->{result});
+    '
+}
+
+validate_code_graph_syntax_site_search() {
+    perl -MJSON::PP -e '
+        use strict;
+        use warnings;
+
+        local $/;
+        my $envelope = eval { decode_json(<STDIN>) };
+        exit 1 if $@ || ref($envelope) ne q{HASH};
+        exit 1 if ($envelope->{schema_version} // q{}) != 1
+          || ($envelope->{code_graph_query_profile} // q{}) != 1
+          || ($envelope->{operation} // q{}) ne q{syntax_site_search};
+        exit 1 if !defined($envelope->{output_bytes}) || ref($envelope->{output_bytes})
+          || $envelope->{output_bytes} !~ /\A[0-9]+\z/;
+        exit 1 if ref($envelope->{result}) ne q{HASH};
+        print encode_json($envelope->{result});
+    '
+}
+
+extract_first_relevant_paths_query() {
+    perl -MJSON::PP -e '
+        use strict;
+        use warnings;
+
+        local $/;
+        my $result = eval { decode_json(<STDIN>) };
+        exit 1 if $@ || ref($result) ne q{HASH};
+        my $match = $result->{matches}[0];
+        exit 1 if ref($match) ne q{HASH};
+        my $name = $match->{name};
+        exit 1 if !defined($name) || ref($name) || $name eq q{}
+          || length($name) > 256 || $name =~ /[[:cntrl:]]/;
+        my @terms = split /\s+/, $name;
+        exit 1 if @terms == 0 || @terms > 8
+          || grep { length($_) > 64 } @terms;
+        print $name;
+    '
+}
+
+extract_first_symbol_selector() {
+    perl -MJSON::PP -e '
+        use strict;
+        use warnings;
+
+        local $/;
+        my $result = eval { decode_json(<STDIN>) };
+        exit 1 if $@ || ref($result) ne q{HASH};
+        my $match = $result->{matches}[0];
+        exit 1 if ref($match) ne q{HASH};
+        my @values = (
+            $result->{workspace_view},
+            $result->{snapshot_sha256},
+            $result->{generation},
+            $match->{path},
+            $match->{content_sha256},
+            $match->{artifact_sha256},
+            $match->{fact_ordinal},
+            $match->{name_span}{start},
+            $match->{name_span}{end},
+        );
+        exit 1 if !defined($values[0]) || ref($values[0])
+          || $values[0] !~ /\A[1-9][0-9]*\z/;
+        exit 1 if !defined($values[1]) || ref($values[1])
+          || $values[1] !~ /\A[0-9a-f]{64}\z/;
+        exit 1 if !defined($values[2]) || ref($values[2])
+          || $values[2] !~ /\A[1-9][0-9]*\z/;
+        exit 1 if !defined($values[3]) || ref($values[3])
+          || $values[3] !~ /\Arwp1:h:[0-9A-F]+\z/;
+        for my $index (4, 5) {
+            exit 1 if !defined($values[$index]) || ref($values[$index])
+              || $values[$index] !~ /\A[0-9a-f]{64}\z/;
+        }
+        for my $index (6, 7, 8) {
+            exit 1 if !defined($values[$index]) || ref($values[$index])
+              || $values[$index] !~ /\A[0-9]+\z/;
+        }
+        exit 1 if $values[7] >= $values[8];
+        print join("\n", @values), "\n";
+    '
+}
+
+validate_scip_symbol_resolve_not_produced() {
+    perl -MJSON::PP -e '
+        use strict;
+        use warnings;
+
+        local $/;
+        my $result = eval { decode_json(<STDIN>) };
+        exit 1 if $@ || ref($result) ne q{HASH};
+        exit 1 if ($result->{schema_version} // q{}) != 1;
+        exit 1 if ($result->{connected_workspace} // q{}) !~ /\Acwi1:h:[0-9A-F]+\z/
+          || ($result->{source_slot} // q{}) !~ /\Assi1:h:[0-9A-F]+\z/;
+        exit 1 if !defined($result->{workspace_view}) || ref($result->{workspace_view})
+          || $result->{workspace_view} !~ /\A[1-9][0-9]*\z/;
+        exit 1 if ($result->{resolution} // q{}) ne q{not_produced};
+        exit 1 if defined($result->{symbol});
+    '
+}
+
+validate_scip_evidence_not_produced() {
+    perl -MJSON::PP -e '
+        use strict;
+        use warnings;
+
+        local $/;
+        my $result = eval { decode_json(<STDIN>) };
+        exit 1 if $@ || ref($result) ne q{HASH};
+        exit 1 if ($result->{schema_version} // q{}) != 1;
+        exit 1 if ($result->{connected_workspace} // q{}) !~ /\Acwi1:h:[0-9A-F]+\z/
+          || ($result->{source_slot} // q{}) !~ /\Assi1:h:[0-9A-F]+\z/;
+        exit 1 if !defined($result->{workspace_view}) || ref($result->{workspace_view})
+          || $result->{workspace_view} !~ /\A[1-9][0-9]*\z/;
+        exit 1 if ($result->{resolution} // q{}) ne q{not_produced};
+        for my $field (qw(overlay package_scope_sha256)) {
+            exit 1 if !exists($result->{$field}) || defined($result->{$field});
+        }
+        for my $field (qw(occurrences_truncated relationships_truncated)) {
+            exit 1 if !JSON::PP::is_bool($result->{$field}) || $result->{$field};
+        }
+        exit 1 if !defined($result->{output_bytes}) || ref($result->{output_bytes})
+          || $result->{output_bytes} !~ /\A0\z/;
+        for my $field (qw(occurrences relationships)) {
+            exit 1 if ref($result->{$field}) ne q{ARRAY} || @{$result->{$field}} != 0;
+        }
+    '
+}
+
+validate_scip_relationship_trace_not_produced() {
+    perl -MJSON::PP -e '
+        use strict;
+        use warnings;
+
+        local $/;
+        my $result = eval { decode_json(<STDIN>) };
+        exit 1 if $@ || ref($result) ne q{HASH};
+        exit 1 if ($result->{schema_version} // q{}) != 1;
+        exit 1 if ($result->{connected_workspace} // q{}) !~ /\Acwi1:h:[0-9A-F]+\z/
+          || ($result->{source_slot} // q{}) !~ /\Assi1:h:[0-9A-F]+\z/;
+        exit 1 if !defined($result->{workspace_view}) || ref($result->{workspace_view})
+          || $result->{workspace_view} !~ /\A[1-9][0-9]*\z/;
+        exit 1 if ($result->{resolution} // q{}) ne q{not_produced};
+        exit 1 if defined($result->{overlay}) || defined($result->{package_scope_sha256});
+        exit 1 if ($result->{direction} // q{}) ne q{outgoing};
+        for my $field (qw(max_depth max_edges)) {
+            exit 1 if !defined($result->{$field}) || ref($result->{$field})
+              || $result->{$field} !~ /\A1\z/;
+        }
+        for my $field (qw(visited_symbols unexpanded_frontier_symbols output_bytes)) {
+            exit 1 if !defined($result->{$field}) || ref($result->{$field})
+              || $result->{$field} !~ /\A0\z/;
+        }
+        for my $field (qw(depth_limit_reached edge_limit_reached symbol_limit_reached output_limit_reached truncated)) {
+            exit 1 if !JSON::PP::is_bool($result->{$field}) || $result->{$field};
+        }
+        exit 1 if ref($result->{edges}) ne q{ARRAY} || @{$result->{edges}} != 0;
+        exit 1 if defined($result->{symbol});
+    '
+}
+
+validate_outbound_sites() {
+    perl -MJSON::PP -e '
+        use strict;
+        use warnings;
+
+        local $/;
+        my $result = eval { decode_json(<STDIN>) };
+        exit 1 if $@ || ref($result) ne q{HASH};
+        exit 1 if ($result->{schema_version} // q{}) != 1
+          || ($result->{outbound_sites_profile} // q{}) != 1;
+        exit 1 if ($result->{snapshot_sha256} // q{}) !~ /\A[0-9a-f]{64}\z/
+          || !defined($result->{generation}) || ref($result->{generation})
+          || $result->{generation} !~ /\A[1-9][0-9]*\z/;
+        exit 1 if ($result->{availability} // q{}) ne q{complete}
+          || ($result->{limitation} // q{})
+          ne q{raw_syntax_observations_only_no_target_resolution_or_inferred_edges};
+        exit 1 if ref($result->{selector}) ne q{HASH}
+          || ref($result->{declaration}) ne q{HASH}
+          || ref($result->{coverage}) ne q{HASH}
+          || ref($result->{sites}) ne q{ARRAY};
+        for my $field (qw(path content_sha256 artifact_sha256 fact_ordinal)) {
+            exit 1 if !defined($result->{selector}{$field}) || ref($result->{selector}{$field});
+        }
+        exit 1 if $result->{selector}{path} !~ /\Arwp1:h:[0-9A-F]+\z/
+          || $result->{selector}{content_sha256} !~ /\A[0-9a-f]{64}\z/
+          || $result->{selector}{artifact_sha256} !~ /\A[0-9a-f]{64}\z/
+          || $result->{selector}{fact_ordinal} !~ /\A[0-9]+\z/;
+        exit 1 if ($result->{declaration}{language} // q{})
+          !~ /\A(?:rust|go|typescript|tsx|python)\z/
+          || ref($result->{declaration}{declaration_span}) ne q{HASH};
+        for my $field (qw(searched skipped unresolved truncated)) {
+            exit 1 if !defined($result->{coverage}{$field}) || ref($result->{coverage}{$field})
+              || $result->{coverage}{$field} !~ /\A[0-9]+\z/;
+        }
+        for my $field (qw(sites_returned sites_total output_bytes)) {
+            exit 1 if !defined($result->{$field}) || ref($result->{$field})
+              || $result->{$field} !~ /\A[0-9]+\z/;
+        }
+        exit 1 if !JSON::PP::is_bool($result->{truncated});
+        exit 1 if $result->{sites_returned} != @{$result->{sites}}
+          || $result->{sites_returned} > $result->{sites_total}
+          || ($result->{truncated} ? 1 : 0)
+            != ($result->{sites_returned} < $result->{sites_total} ? 1 : 0);
+        for my $site (@{$result->{sites}}) {
+            exit 1 if ref($site) ne q{HASH};
+            exit 1 if ($site->{path} // q{}) !~ /\Arwp1:h:[0-9A-F]+\z/
+              || ($site->{content_sha256} // q{}) !~ /\A[0-9a-f]{64}\z/
+              || ($site->{artifact_sha256} // q{}) !~ /\A[0-9a-f]{64}\z/
+              || ($site->{language} // q{}) !~ /\A(?:rust|go|typescript|tsx|python)\z/
+              || ($site->{ordinal} // q{}) !~ /\A[0-9]+\z/
+              || ($site->{kind} // q{}) !~ /\A(?:import|reference|call|test_marker)\z/
+              || ($site->{evidence} // q{}) !~ /\A(?:direct_syntax|syntax_heuristic)\z/
+              || ($site->{target_resolution} // q{})
+                ne q{not_attempted_no_resolution_profile};
+            exit 1 if ref($site->{occurrence_span}) ne q{HASH}
+              || ref($site->{target_span}) ne q{HASH};
+        }
+    '
+}
+
+validate_syntax_site_search() {
+    perl -MJSON::PP -e '
+        use strict;
+        use warnings;
+
+        local $/;
+        my $result = eval { decode_json(<STDIN>) };
+        exit 1 if $@ || ref($result) ne q{HASH};
+        exit 1 if ($result->{schema_version} // q{}) != 1
+          || ($result->{syntax_site_search_profile} // q{}) != 1;
+        exit 1 if ($result->{target_sha256} // q{}) !~ /\A[0-9a-f]{64}\z/
+          || ($result->{snapshot_sha256} // q{}) !~ /\A[0-9a-f]{64}\z/
+          || !defined($result->{generation}) || ref($result->{generation})
+          || $result->{generation} !~ /\A[1-9][0-9]*\z/;
+        exit 1 if ($result->{availability} // q{}) !~ /\A(?:complete|not_produced)\z/
+          || ($result->{limitation} // q{})
+          ne q{exact_raw_target_syntax_observations_only_no_target_resolution_or_inferred_edges};
+        exit 1 if ref($result->{coverage}) ne q{HASH} || ref($result->{sites}) ne q{ARRAY};
+        for my $field (qw(searched skipped unresolved truncated)) {
+            exit 1 if !defined($result->{coverage}{$field})
+              || ref($result->{coverage}{$field})
+              || $result->{coverage}{$field} !~ /\A[0-9]+\z/;
+        }
+        for my $field (qw(sites_returned sites_total output_bytes)) {
+            exit 1 if !defined($result->{$field}) || ref($result->{$field})
+              || $result->{$field} !~ /\A[0-9]+\z/;
+        }
+        exit 1 if !JSON::PP::is_bool($result->{truncated})
+          || $result->{sites_returned} != @{$result->{sites}}
+          || $result->{sites_returned} > $result->{sites_total}
+          || ($result->{truncated} ? 1 : 0)
+            != ($result->{sites_returned} < $result->{sites_total} ? 1 : 0);
+        exit 1 if $result->{availability} eq q{not_produced}
+          && ($result->{sites_returned} != 0 || $result->{sites_total} != 0
+            || $result->{output_bytes} != 0);
+        for my $site (@{$result->{sites}}) {
+            exit 1 if ref($site) ne q{HASH};
+            exit 1 if ($site->{path} // q{}) !~ /\Arwp1:h:[0-9A-F]+\z/
+              || ($site->{content_sha256} // q{}) !~ /\A[0-9a-f]{64}\z/
+              || ($site->{artifact_sha256} // q{}) !~ /\A[0-9a-f]{64}\z/
+              || ($site->{language} // q{}) !~ /\A(?:rust|go|typescript|tsx|python)\z/
+              || ($site->{ordinal} // q{}) !~ /\A[0-9]+\z/
+              || ($site->{kind} // q{}) !~ /\A(?:import|reference|call|test_marker)\z/
+              || ($site->{evidence} // q{}) !~ /\A(?:direct_syntax|syntax_heuristic)\z/
+              || ($site->{target_resolution} // q{})
+                ne q{not_attempted_no_resolution_profile};
+            for my $span_field (qw(occurrence_span target_span)) {
+                my $span = $site->{$span_field};
+                exit 1 if ref($span) ne q{HASH}
+                  || !defined($span->{start}) || ref($span->{start})
+                  || $span->{start} !~ /\A[0-9]+\z/
+                  || !defined($span->{end}) || ref($span->{end})
+                  || $span->{end} !~ /\A[1-9][0-9]*\z/
+                  || $span->{start} >= $span->{end};
+            }
+            exit 1 if !defined($site->{raw_target}) || ref($site->{raw_target});
+        }
+    '
+}
+
+syntax_site_search_has_no_matches() {
+    perl -MJSON::PP -e '
+        use strict;
+        use warnings;
+
+        local $/;
+        my $result = eval { decode_json(<STDIN>) };
+        exit 1 if $@ || ref($result) ne q{HASH};
+        exit(($result->{sites_returned} // -1) == 0
+          && ($result->{sites_total} // -1) == 0 ? 0 : 1);
+    '
+}
+
+extract_first_syntax_site_search_target() {
+    perl -MJSON::PP -e '
+        use strict;
+        use warnings;
+
+        local $/;
+        my $result = eval { decode_json(<STDIN>) };
+        exit 1 if $@ || ref($result) ne q{HASH} || ref($result->{sites}) ne q{ARRAY};
+        for my $site (@{$result->{sites}}) {
+            next if ref($site) ne q{HASH};
+            my $target = $site->{raw_target};
+            next if !defined($target) || ref($target) || $target eq q{}
+              || length($target) > 16 * 1024 || $target =~ /[\x00-\x1F\x7F]/;
+            print $target;
+            exit 0;
+        }
+        exit 1;
+    '
+}
+
+syntax_site_search_has_exact_target() {
+    perl -MJSON::PP -e '
+        use strict;
+        use warnings;
+
+        my $target = shift @ARGV;
+        exit 64 if !defined($target);
+        local $/;
+        my $result = eval { decode_json(<STDIN>) };
+        exit 1 if $@ || ref($result) ne q{HASH} || ref($result->{sites}) ne q{ARRAY};
+        exit 1 if ($result->{sites_returned} // 0) < 1
+          || ($result->{sites_total} // 0) < 1;
+        for my $site (@{$result->{sites}}) {
+            exit 0 if ref($site) eq q{HASH}
+              && defined($site->{raw_target}) && !ref($site->{raw_target})
+              && $site->{raw_target} eq $target;
+        }
+        exit 1;
+    ' "$1"
+}
+
+validate_test_markers() {
+    perl -MJSON::PP -e '
+        use strict;
+        use warnings;
+
+        local $/;
+        my $result = eval { decode_json(<STDIN>) };
+        exit 1 if $@ || ref($result) ne q{HASH};
+        exit 1 if ($result->{schema_version} // q{}) != 1
+          || ($result->{test_markers_profile} // q{}) != 1;
+        exit 1 if ($result->{snapshot_sha256} // q{}) !~ /\A[0-9a-f]{64}\z/
+          || !defined($result->{generation}) || ref($result->{generation})
+          || $result->{generation} !~ /\A[1-9][0-9]*\z/;
+        exit 1 if ($result->{availability} // q{}) ne q{complete}
+          || ($result->{limitation} // q{})
+          ne q{raw_syntax_observations_only_not_test_execution_or_relationship_resolution};
+        exit 1 if ref($result->{coverage}) ne q{HASH}
+          || ref($result->{language_coverage}) ne q{ARRAY}
+          || ref($result->{markers}) ne q{ARRAY};
+        for my $field (qw(searched skipped unresolved truncated)) {
+            exit 1 if !defined($result->{coverage}{$field}) || ref($result->{coverage}{$field})
+              || $result->{coverage}{$field} !~ /\A[0-9]+\z/;
+        }
+        for my $field (qw(markers_returned markers_total output_bytes)) {
+            exit 1 if !defined($result->{$field}) || ref($result->{$field})
+              || $result->{$field} !~ /\A[0-9]+\z/;
+        }
+        exit 1 if !JSON::PP::is_bool($result->{truncated});
+        exit 1 if $result->{markers_returned} != @{$result->{markers}}
+          || $result->{markers_returned} > $result->{markers_total}
+          || ($result->{truncated} ? 1 : 0)
+            != ($result->{markers_returned} < $result->{markers_total} ? 1 : 0);
+        my $emitted = 0;
+        for my $coverage (@{$result->{language_coverage}}) {
+            exit 1 if ref($coverage) ne q{HASH}
+              || ($coverage->{language} // q{}) !~ /\A(?:rust|go|typescript|tsx|python)\z/;
+            for my $field (qw(indexed_files supported_files unsupported_files emitted_markers)) {
+                exit 1 if !defined($coverage->{$field}) || ref($coverage->{$field})
+                  || $coverage->{$field} !~ /\A[0-9]+\z/;
+            }
+            exit 1 if $coverage->{indexed_files}
+              != $coverage->{supported_files} + $coverage->{unsupported_files};
+            $emitted += $coverage->{emitted_markers};
+        }
+        exit 1 if $emitted != $result->{markers_total};
+        for my $marker (@{$result->{markers}}) {
+            exit 1 if ref($marker) ne q{HASH};
+            exit 1 if ($marker->{path} // q{}) !~ /\Arwp1:h:[0-9A-F]+\z/
+              || ($marker->{content_sha256} // q{}) !~ /\A[0-9a-f]{64}\z/
+              || ($marker->{artifact_sha256} // q{}) !~ /\A[0-9a-f]{64}\z/
+              || ($marker->{language} // q{}) !~ /\A(?:rust|go|typescript|tsx|python)\z/
+              || ($marker->{ordinal} // q{}) !~ /\A[0-9]+\z/
+              || ($marker->{kind} // q{}) ne q{test_marker}
+              || ($marker->{evidence} // q{}) !~ /\A(?:direct_syntax|syntax_heuristic)\z/
+              || ($marker->{target_resolution} // q{})
+                ne q{not_attempted_no_resolution_profile};
+            exit 1 if ref($marker->{occurrence_span}) ne q{HASH}
+              || ref($marker->{target_span}) ne q{HASH};
+        }
+    '
+}
+
+RUN_DIRECTORY=$(mktemp -d "${TMPDIR:-/tmp}/repowitness-sibling-repositories.XXXXXX")
+cleanup() {
+    test -n "${RUN_DIRECTORY:-}" || return 0
+    case "$RUN_DIRECTORY" in
+        "${TMPDIR:-/tmp}"/repowitness-sibling-repositories.*)
+            rm -rf -- "$RUN_DIRECTORY"
+            ;;
+        *)
+            printf '%s\n' 'error: refusing to clean an unexpected temporary directory' >&2
+            ;;
+    esac
+}
+handle_signal() {
+    cleanup
+    trap - EXIT
+    exit "$1"
+}
+trap cleanup EXIT
+trap 'handle_signal 129' HUP
+trap 'handle_signal 130' INT
+trap 'handle_signal 143' TERM
+
+if [ "$SKIP_BUILD" = false ]; then
+    if ! (cd "$PROJECT_ROOT" && cargo build -p repowitness-cli --locked) \
+        >"$RUN_DIRECTORY/build.stdout" 2>"$RUN_DIRECTORY/build.stderr"; then
+        printf '%s\n' 'error: CLI build failed; no external repositories were tested' >&2
+        exit 1
+    fi
+fi
+if [ ! -x "$CLI" ]; then
+    printf '%s\n' 'error: RepoWitness CLI binary is unavailable; run without --skip-build' >&2
+    exit 69
+fi
+
+repositories=0
+index_passed=0
+index_failed=0
+map_passed=0
+map_failed=0
+topology_passed=0
+topology_failed=0
+overview_passed=0
+overview_failed=0
+test_markers_passed=0
+test_markers_failed=0
+syntax_site_search_passed=0
+syntax_site_search_failed=0
+syntax_site_search_positive_passed=0
+syntax_site_search_positive_unavailable=0
+code_graph_syntax_site_search_passed=0
+code_graph_syntax_site_search_failed=0
+code_graph_syntax_site_search_positive_passed=0
+code_graph_syntax_site_search_positive_unavailable=0
+relevant_paths_passed=0
+relevant_paths_failed=0
+relevant_paths_positive_passed=0
+relevant_paths_positive_unavailable=0
+code_graph_relevant_paths_passed=0
+code_graph_relevant_paths_failed=0
+code_graph_relevant_paths_positive_passed=0
+code_graph_relevant_paths_positive_unavailable=0
+symbol_passed=0
+symbol_failed=0
+symbol_positive_passed=0
+symbol_positive_unavailable=0
+outbound_passed=0
+outbound_failed=0
+outbound_unavailable=0
+scip_symbol_resolve_not_produced_passed=0
+scip_symbol_resolve_not_produced_failed=0
+scip_symbol_resolve_not_attempted_no_declaration=0
+scip_symbol_resolve_not_attempted_no_candidate=0
+scip_evidence_not_produced_passed=0
+scip_evidence_not_produced_failed=0
+scip_relationship_trace_not_produced_passed=0
+scip_relationship_trace_not_produced_failed=0
+
+for candidate in "$SIBLING_ROOT"/* "$SIBLING_ROOT"/.[!.]* "$SIBLING_ROOT"/..?*; do
+    test -d "$candidate" || continue
+    test ! -L "$candidate" || continue
+    test "$candidate" != "$PROJECT_ROOT" || continue
+    is_git_worktree "$candidate" || continue
+
+    repositories=$((repositories + 1))
+    identity=$(printf 'rwi1:h:%064X' "$repositories")
+    database="$RUN_DIRECTORY/$repositories.sqlite3"
+
+    if ! "$CLI" index --repository-id "$identity" --database "$database" -- "$candidate" \
+        >/dev/null 2>/dev/null; then
+        index_failed=$((index_failed + 1))
+        continue
+    fi
+    index_passed=$((index_passed + 1))
+
+    scip_evidence_output="$RUN_DIRECTORY/$repositories.scip-evidence.json"
+    if ! "$CLI" scip-evidence --repository-id "$identity" --database "$database" \
+        --symbol 'scip-rust pkg 1 RepoWitnessSynthetic.' >"$scip_evidence_output" 2>/dev/null \
+        || ! validate_scip_evidence_not_produced <"$scip_evidence_output"; then
+        scip_evidence_not_produced_failed=$((scip_evidence_not_produced_failed + 1))
+        continue
+    fi
+    scip_evidence_not_produced_passed=$((scip_evidence_not_produced_passed + 1))
+
+    scip_relationship_trace_output="$RUN_DIRECTORY/$repositories.scip-relationship-trace.json"
+    if ! "$CLI" scip-relationship-trace --repository-id "$identity" --database "$database" \
+        --symbol 'scip-rust pkg 1 RepoWitnessSynthetic.' --direction outgoing \
+        --max-depth 1 --max-edges 1 >"$scip_relationship_trace_output" 2>/dev/null \
+        || ! validate_scip_relationship_trace_not_produced <"$scip_relationship_trace_output"; then
+        scip_relationship_trace_not_produced_failed=$((scip_relationship_trace_not_produced_failed + 1))
+        continue
+    fi
+    scip_relationship_trace_not_produced_passed=$((scip_relationship_trace_not_produced_passed + 1))
+
+    if ! "$CLI" repository-topology --repository-id "$identity" --database "$database" \
+        --max-paths 1000 2>/dev/null | validate_repository_topology; then
+        topology_failed=$((topology_failed + 1))
+        continue
+    fi
+    topology_passed=$((topology_passed + 1))
+
+    map_output="$RUN_DIRECTORY/$repositories.architecture-map.json"
+    if ! "$CLI" architecture-map --repository-id "$identity" --database "$database" \
+        --max-files 1000 >"$map_output" 2>/dev/null \
+        || ! validate_architecture_map <"$map_output"; then
+        map_failed=$((map_failed + 1))
+        continue
+    fi
+    map_passed=$((map_passed + 1))
+
+    overview_output="$RUN_DIRECTORY/$repositories.architecture-overview.json"
+    if ! "$CLI" architecture-overview --repository-id "$identity" --database "$database" \
+        --max-roots 500 --max-entry-point-candidates 500 --max-files 1000 >"$overview_output" 2>/dev/null \
+        || ! validate_architecture_overview <"$overview_output"; then
+        overview_failed=$((overview_failed + 1))
+        continue
+    fi
+    overview_passed=$((overview_passed + 1))
+
+    test_markers_output="$RUN_DIRECTORY/$repositories.test-markers.json"
+    if ! "$CLI" test-markers --repository-id "$identity" --database "$database" \
+        --limit 1 >"$test_markers_output" 2>/dev/null \
+        || ! validate_test_markers <"$test_markers_output"; then
+        test_markers_failed=$((test_markers_failed + 1))
+        continue
+    fi
+    test_markers_passed=$((test_markers_passed + 1))
+
+    syntax_site_search_output="$RUN_DIRECTORY/$repositories.syntax-site-search-no-match.json"
+    if ! "$CLI" syntax-site-search --repository-id "$identity" --database "$database" \
+        --target __repowitness_raw_syntax_target_smoke_absent_v1__ --max-sites 1 \
+        >"$syntax_site_search_output" 2>/dev/null \
+        || ! validate_syntax_site_search <"$syntax_site_search_output" \
+        || ! syntax_site_search_has_no_matches <"$syntax_site_search_output"; then
+        syntax_site_search_failed=$((syntax_site_search_failed + 1))
+        continue
+    fi
+    syntax_site_search_passed=$((syntax_site_search_passed + 1))
+
+    code_graph_syntax_site_search_output="$RUN_DIRECTORY/$repositories.code-graph-syntax-site-search.json"
+    code_graph_syntax_site_search_result="$RUN_DIRECTORY/$repositories.code-graph-syntax-site-search-result.json"
+    code_graph_syntax_site_search_stderr="$RUN_DIRECTORY/$repositories.code-graph-syntax-site-search.stderr"
+    if ! mcp_code_graph_syntax_site_search __repowitness_raw_syntax_target_smoke_absent_v1__ \
+        "$code_graph_syntax_site_search_stderr" \
+        >"$code_graph_syntax_site_search_output" 2>/dev/null \
+        || ! validate_code_graph_syntax_site_search <"$code_graph_syntax_site_search_output" \
+            >"$code_graph_syntax_site_search_result" \
+        || ! validate_syntax_site_search <"$code_graph_syntax_site_search_result" \
+        || ! syntax_site_search_has_no_matches <"$code_graph_syntax_site_search_result"; then
+        code_graph_syntax_site_search_failed=$((code_graph_syntax_site_search_failed + 1))
+        continue
+    fi
+    code_graph_syntax_site_search_passed=$((code_graph_syntax_site_search_passed + 1))
+
+    relevant_paths_output="$RUN_DIRECTORY/$repositories.relevant-paths-no-match.json"
+    if ! "$CLI" locate-relevant-paths --repository-id "$identity" --database "$database" \
+        --query repowitnesssmokemissing --limit 1 >"$relevant_paths_output" 2>/dev/null \
+        || ! validate_relevant_paths <"$relevant_paths_output" \
+        || ! relevant_paths_has_no_matches <"$relevant_paths_output"; then
+        relevant_paths_failed=$((relevant_paths_failed + 1))
+        continue
+    fi
+
+    code_graph_relevant_paths_output="$RUN_DIRECTORY/$repositories.code-graph-relevant-paths.json"
+    code_graph_relevant_paths_result="$RUN_DIRECTORY/$repositories.code-graph-relevant-paths-result.json"
+    if ! mcp_code_graph_relevant_paths repowitnesssmokemissing >"$code_graph_relevant_paths_output" 2>/dev/null \
+        || ! validate_code_graph_relevant_paths <"$code_graph_relevant_paths_output" >"$code_graph_relevant_paths_result" \
+        || ! validate_relevant_paths <"$code_graph_relevant_paths_result" \
+        || ! relevant_paths_has_no_matches <"$code_graph_relevant_paths_result"; then
+        code_graph_relevant_paths_failed=$((code_graph_relevant_paths_failed + 1))
+        continue
+    fi
+    code_graph_relevant_paths_passed=$((code_graph_relevant_paths_passed + 1))
+
+    if ! "$CLI" symbol-search --repository-id "$identity" --database "$database" \
+        --name repowitnesssmokemissing >"$RUN_DIRECTORY/$repositories.symbol-no-match.json" 2>/dev/null \
+        || ! validate_symbol_search exact <"$RUN_DIRECTORY/$repositories.symbol-no-match.json" \
+        || ! symbol_search_has_no_matches <"$RUN_DIRECTORY/$repositories.symbol-no-match.json"; then
+        symbol_failed=$((symbol_failed + 1))
+        continue
+    fi
+    if map_has_declarations <"$map_output"; then
+        symbol_found=false
+        for prefix in a b c d e f g h i j k l m n o p q r s t u v w x y z \
+            A B C D E F G H I J K L M N O P Q R S T U V W X Y Z _; do
+            symbol_output="$RUN_DIRECTORY/$repositories.symbol-prefix.json"
+            if "$CLI" symbol-search --repository-id "$identity" --database "$database" \
+                --name "$prefix" --match prefix --limit 1 >"$symbol_output" 2>/dev/null \
+                && validate_symbol_search prefix <"$symbol_output" \
+                && symbol_search_has_match <"$symbol_output"; then
+                symbol_found=true
+                break
+            fi
+        done
+        if [ "$symbol_found" = false ]; then
+            symbol_positive_unavailable=$((symbol_positive_unavailable + 1))
+            syntax_site_search_positive_unavailable=$((syntax_site_search_positive_unavailable + 1))
+            code_graph_syntax_site_search_positive_unavailable=$((code_graph_syntax_site_search_positive_unavailable + 1))
+            relevant_paths_positive_unavailable=$((relevant_paths_positive_unavailable + 1))
+            code_graph_relevant_paths_positive_unavailable=$((code_graph_relevant_paths_positive_unavailable + 1))
+            outbound_unavailable=$((outbound_unavailable + 1))
+            scip_symbol_resolve_not_attempted_no_candidate=$((scip_symbol_resolve_not_attempted_no_candidate + 1))
+        else
+            symbol_positive_passed=$((symbol_positive_passed + 1))
+            if symbol_name=$(extract_first_relevant_paths_query <"$symbol_output"); then
+                relevant_paths_output="$RUN_DIRECTORY/$repositories.relevant-paths.json"
+                if ! "$CLI" locate-relevant-paths --repository-id "$identity" --database "$database" \
+                    --query "$symbol_name" --limit 1 >"$relevant_paths_output" 2>/dev/null \
+                    || ! validate_relevant_paths <"$relevant_paths_output" \
+                    || ! relevant_paths_has_match <"$relevant_paths_output"; then
+                    relevant_paths_failed=$((relevant_paths_failed + 1))
+                    continue
+                fi
+                relevant_paths_positive_passed=$((relevant_paths_positive_passed + 1))
+                code_graph_relevant_paths_output="$RUN_DIRECTORY/$repositories.code-graph-relevant-paths-positive.json"
+                code_graph_relevant_paths_result="$RUN_DIRECTORY/$repositories.code-graph-relevant-paths-positive-result.json"
+                if ! mcp_code_graph_relevant_paths "$symbol_name" >"$code_graph_relevant_paths_output" 2>/dev/null \
+                    || ! validate_code_graph_relevant_paths <"$code_graph_relevant_paths_output" >"$code_graph_relevant_paths_result" \
+                    || ! validate_relevant_paths <"$code_graph_relevant_paths_result" \
+                    || ! relevant_paths_has_match <"$code_graph_relevant_paths_result"; then
+                    code_graph_relevant_paths_failed=$((code_graph_relevant_paths_failed + 1))
+                    continue
+                fi
+                code_graph_relevant_paths_positive_passed=$((code_graph_relevant_paths_positive_passed + 1))
+            else
+                relevant_paths_positive_unavailable=$((relevant_paths_positive_unavailable + 1))
+                code_graph_relevant_paths_positive_unavailable=$((code_graph_relevant_paths_positive_unavailable + 1))
+            fi
+            selector_output="$RUN_DIRECTORY/$repositories.outbound-selector"
+            if ! extract_first_symbol_selector <"$symbol_output" >"$selector_output"; then
+                outbound_failed=$((outbound_failed + 1))
+                continue
+            fi
+            if ! {
+                IFS= read -r workspace_view &&
+                IFS= read -r snapshot &&
+                IFS= read -r generation &&
+                IFS= read -r path &&
+                IFS= read -r content &&
+                IFS= read -r artifact &&
+                IFS= read -r fact &&
+                IFS= read -r name_start &&
+                IFS= read -r name_end;
+            } <"$selector_output"; then
+                outbound_failed=$((outbound_failed + 1))
+                scip_symbol_resolve_not_produced_failed=$((scip_symbol_resolve_not_produced_failed + 1))
+                continue
+            fi
+            scip_symbol_resolve_output="$RUN_DIRECTORY/$repositories.scip-symbol-resolve.json"
+            if ! "$CLI" scip-symbol-resolve --repository-id "$identity" --database "$database" \
+                --snapshot "$snapshot" --generation "$generation" --path "$path" \
+                --content "$content" --artifact "$artifact" --fact-ordinal "$fact" \
+                --name-start "$name_start" --name-end "$name_end" \
+                --workspace-view "$workspace_view" \
+                >"$scip_symbol_resolve_output" 2>/dev/null \
+                || ! validate_scip_symbol_resolve_not_produced <"$scip_symbol_resolve_output"; then
+                scip_symbol_resolve_not_produced_failed=$((scip_symbol_resolve_not_produced_failed + 1))
+                continue
+            fi
+            scip_symbol_resolve_not_produced_passed=$((scip_symbol_resolve_not_produced_passed + 1))
+            outbound_output="$RUN_DIRECTORY/$repositories.outbound-sites.json"
+            if ! "$CLI" outbound-sites --repository-id "$identity" --database "$database" \
+                --snapshot "$snapshot" --generation "$generation" --path "$path" \
+                --content "$content" --artifact "$artifact" --fact "$fact" --max-sites 20 \
+                >"$outbound_output" 2>/dev/null \
+                || ! validate_outbound_sites <"$outbound_output"; then
+                outbound_failed=$((outbound_failed + 1))
+                continue
+            fi
+            outbound_passed=$((outbound_passed + 1))
+            syntax_site_search_target="$RUN_DIRECTORY/$repositories.syntax-site-search-target"
+            if ! extract_first_syntax_site_search_target <"$outbound_output" >"$syntax_site_search_target"; then
+                syntax_site_search_positive_unavailable=$((syntax_site_search_positive_unavailable + 1))
+                code_graph_syntax_site_search_positive_unavailable=$((code_graph_syntax_site_search_positive_unavailable + 1))
+            else
+                syntax_site_search_target_value=$(cat "$syntax_site_search_target")
+                syntax_site_search_positive_output="$RUN_DIRECTORY/$repositories.syntax-site-search-positive.json"
+                if ! "$CLI" syntax-site-search --repository-id "$identity" --database "$database" \
+                    --target "$syntax_site_search_target_value" --max-sites 1 \
+                    >"$syntax_site_search_positive_output" 2>/dev/null \
+                    || ! validate_syntax_site_search <"$syntax_site_search_positive_output" \
+                    || ! syntax_site_search_has_exact_target "$syntax_site_search_target_value" \
+                        <"$syntax_site_search_positive_output"; then
+                    syntax_site_search_failed=$((syntax_site_search_failed + 1))
+                    continue
+                fi
+                syntax_site_search_positive_passed=$((syntax_site_search_positive_passed + 1))
+
+                code_graph_syntax_site_search_positive_output="$RUN_DIRECTORY/$repositories.code-graph-syntax-site-search-positive.json"
+                code_graph_syntax_site_search_positive_result="$RUN_DIRECTORY/$repositories.code-graph-syntax-site-search-positive-result.json"
+                code_graph_syntax_site_search_positive_stderr="$RUN_DIRECTORY/$repositories.code-graph-syntax-site-search-positive.stderr"
+                if ! mcp_code_graph_syntax_site_search "$syntax_site_search_target_value" \
+                    "$code_graph_syntax_site_search_positive_stderr" \
+                    >"$code_graph_syntax_site_search_positive_output" 2>/dev/null \
+                    || ! validate_code_graph_syntax_site_search <"$code_graph_syntax_site_search_positive_output" \
+                        >"$code_graph_syntax_site_search_positive_result" \
+                    || ! validate_syntax_site_search <"$code_graph_syntax_site_search_positive_result" \
+                    || ! syntax_site_search_has_exact_target "$syntax_site_search_target_value" \
+                        <"$code_graph_syntax_site_search_positive_result"; then
+                    code_graph_syntax_site_search_failed=$((code_graph_syntax_site_search_failed + 1))
+                    continue
+                fi
+                code_graph_syntax_site_search_positive_passed=$((code_graph_syntax_site_search_positive_passed + 1))
+            fi
+        fi
+    else
+        syntax_site_search_positive_unavailable=$((syntax_site_search_positive_unavailable + 1))
+        code_graph_syntax_site_search_positive_unavailable=$((code_graph_syntax_site_search_positive_unavailable + 1))
+        relevant_paths_positive_unavailable=$((relevant_paths_positive_unavailable + 1))
+        code_graph_relevant_paths_positive_unavailable=$((code_graph_relevant_paths_positive_unavailable + 1))
+        scip_symbol_resolve_not_attempted_no_declaration=$((scip_symbol_resolve_not_attempted_no_declaration + 1))
+    fi
+    relevant_paths_passed=$((relevant_paths_passed + 1))
+    symbol_passed=$((symbol_passed + 1))
+done
+
+if [ "$repositories" -eq 0 ]; then
+    printf '%s\n' 'error: no direct sibling Git worktrees were discovered' >&2
+    exit 1
+fi
+
+printf '%s\n' \
+    "state=completed repositories=$repositories index_passed=$index_passed index_failed=$index_failed topology_passed=$topology_passed topology_failed=$topology_failed map_passed=$map_passed map_failed=$map_failed overview_passed=$overview_passed overview_failed=$overview_failed test_markers_passed=$test_markers_passed test_markers_failed=$test_markers_failed syntax_site_search_passed=$syntax_site_search_passed syntax_site_search_failed=$syntax_site_search_failed syntax_site_search_positive_passed=$syntax_site_search_positive_passed syntax_site_search_positive_unavailable=$syntax_site_search_positive_unavailable code_graph_syntax_site_search_passed=$code_graph_syntax_site_search_passed code_graph_syntax_site_search_failed=$code_graph_syntax_site_search_failed code_graph_syntax_site_search_positive_passed=$code_graph_syntax_site_search_positive_passed code_graph_syntax_site_search_positive_unavailable=$code_graph_syntax_site_search_positive_unavailable relevant_paths_passed=$relevant_paths_passed relevant_paths_failed=$relevant_paths_failed relevant_paths_positive_passed=$relevant_paths_positive_passed relevant_paths_positive_unavailable=$relevant_paths_positive_unavailable code_graph_relevant_paths_passed=$code_graph_relevant_paths_passed code_graph_relevant_paths_failed=$code_graph_relevant_paths_failed code_graph_relevant_paths_positive_passed=$code_graph_relevant_paths_positive_passed code_graph_relevant_paths_positive_unavailable=$code_graph_relevant_paths_positive_unavailable symbol_passed=$symbol_passed symbol_failed=$symbol_failed symbol_positive_passed=$symbol_positive_passed symbol_positive_unavailable=$symbol_positive_unavailable outbound_passed=$outbound_passed outbound_failed=$outbound_failed outbound_unavailable=$outbound_unavailable scip_symbol_resolve_not_produced_passed=$scip_symbol_resolve_not_produced_passed scip_symbol_resolve_not_produced_failed=$scip_symbol_resolve_not_produced_failed scip_symbol_resolve_not_attempted_no_declaration=$scip_symbol_resolve_not_attempted_no_declaration scip_symbol_resolve_not_attempted_no_candidate=$scip_symbol_resolve_not_attempted_no_candidate scip_evidence_not_produced_passed=$scip_evidence_not_produced_passed scip_evidence_not_produced_failed=$scip_evidence_not_produced_failed scip_relationship_trace_not_produced_passed=$scip_relationship_trace_not_produced_passed scip_relationship_trace_not_produced_failed=$scip_relationship_trace_not_produced_failed"
+
+if [ "$index_failed" -ne 0 ] || [ "$topology_failed" -ne 0 ] || [ "$map_failed" -ne 0 ] || [ "$overview_failed" -ne 0 ] || [ "$test_markers_failed" -ne 0 ] || [ "$syntax_site_search_failed" -ne 0 ] || [ "$code_graph_syntax_site_search_failed" -ne 0 ] || [ "$relevant_paths_failed" -ne 0 ] || [ "$code_graph_relevant_paths_failed" -ne 0 ] || [ "$symbol_failed" -ne 0 ] || [ "$outbound_failed" -ne 0 ] || [ "$scip_symbol_resolve_not_produced_failed" -ne 0 ] || [ "$scip_evidence_not_produced_failed" -ne 0 ] || [ "$scip_relationship_trace_not_produced_failed" -ne 0 ]; then
+    exit 1
+fi

@@ -6,6 +6,10 @@ fn help_and_version_write_to_stdout_and_succeed() {
     let help = String::from_utf8(help.stdout).expect("help must be UTF-8");
     assert!(help.contains("index          Build"));
     assert!(help.contains("--repository-id"));
+    assert!(help.contains("architecture-map --repository-id"));
+    assert!(help.contains("architecture-overview --repository-id"));
+    assert!(help.contains("test-markers --repository-id"));
+    assert!(help.contains("syntax-site-search --repository-id"));
 
     let version = repowitness(&["--version"]);
     assert!(version.status.success());
@@ -128,6 +132,251 @@ fn index_activates_and_replaces_real_generations_without_leaking_inputs() {
     assert_index_work_counts(&changed, 0, 1, 1, 0);
 
     assert_changed_symbol_contract(&repository, &database);
+}
+
+#[test]
+fn architecture_map_is_bounded_generation_pinned_and_relationship_free() {
+    let directory = TempDirectory::new();
+    let repository = fixture_repository(&directory);
+    let database = directory.database();
+    let indexed = index(&repository, &database, REPOSITORY_ID);
+    assert!(indexed.status.success());
+
+    let mapped = architecture_map(&database, REPOSITORY_ID, "1");
+    assert!(mapped.status.success());
+    assert!(mapped.stderr.is_empty());
+    let mapped = String::from_utf8(mapped.stdout).expect("architecture map must be UTF-8");
+    let mapped: serde_json::Value = serde_json::from_str(&mapped).expect("architecture map JSON");
+    assert_eq!(mapped["schema_version"], serde_json::json!(1));
+    assert_eq!(mapped["map_profile"], serde_json::json!(1));
+    assert_eq!(mapped["generation"], serde_json::json!(1));
+    assert_eq!(mapped["total_files"], serde_json::json!(2));
+    assert_eq!(mapped["files_returned"], serde_json::json!(1));
+    assert_eq!(mapped["truncated"], serde_json::json!(true));
+    assert_eq!(
+        mapped["limitation"],
+        serde_json::json!("file_inventory_only_no_relationship_inference")
+    );
+    assert_eq!(
+        mapped["languages"],
+        serde_json::json!([
+            {"language": "go", "files": 1, "declarations": 2},
+            {"language": "rust", "files": 1, "declarations": 2},
+        ])
+    );
+    assert!(mapped["files"].as_array().is_some_and(|files| files.len() == 1));
+    let encoded = mapped.to_string();
+    assert!(!encoded.contains(REPOSITORY_ID));
+    assert!(!encoded.contains(repository.to_string_lossy().as_ref()));
+    assert!(!encoded.contains(database.to_string_lossy().as_ref()));
+}
+
+#[test]
+fn architecture_overview_is_bounded_generation_pinned_and_non_relational() {
+    let directory = TempDirectory::new();
+    let repository = fixture_repository(&directory);
+    let database = directory.database();
+    let indexed = index(&repository, &database, REPOSITORY_ID);
+    assert!(indexed.status.success());
+
+    let overview = architecture_overview(&database, REPOSITORY_ID, "1");
+    assert!(overview.status.success());
+    assert!(overview.stderr.is_empty());
+    let overview = String::from_utf8(overview.stdout).expect("architecture overview must be UTF-8");
+    let overview: serde_json::Value =
+        serde_json::from_str(&overview).expect("architecture overview JSON");
+    assert_eq!(overview["schema_version"], serde_json::json!(1));
+    assert_eq!(overview["overview_profile"], serde_json::json!(1));
+    assert_eq!(overview["generation"], serde_json::json!(1));
+    assert_eq!(overview["total_files"], serde_json::json!(2));
+    assert_eq!(overview["files_returned"], serde_json::json!(1));
+    assert_eq!(overview["files_truncated"], serde_json::json!(true));
+    assert_eq!(overview["total_source_roots"], serde_json::json!(1));
+    assert_eq!(overview["source_roots_returned"], serde_json::json!(1));
+    assert_eq!(overview["total_entry_point_candidates"], serde_json::json!(0));
+    assert_eq!(overview["entry_point_candidates_returned"], serde_json::json!(0));
+    assert_eq!(
+        overview["limitations"],
+        serde_json::json!([
+            "source_fact_aggregate_only_no_relationship_inference",
+            "top_level_path_buckets_are_not_package_or_ownership_boundaries",
+            "function_named_main_candidates_are_not_runtime_entry_point_proof"
+        ])
+    );
+    assert_eq!(
+        overview["source_roots"],
+        serde_json::json!([
+            {
+                "kind": "top_level_directory",
+                "path": "rwp1:h:737263",
+                "files": 2,
+                "declarations": 4
+            }
+        ])
+    );
+    assert!(overview["files"].as_array().is_some_and(|files| files.len() == 1));
+    let encoded = overview.to_string();
+    assert!(!encoded.contains(REPOSITORY_ID));
+    assert!(!encoded.contains(repository.to_string_lossy().as_ref()));
+    assert!(!encoded.contains(database.to_string_lossy().as_ref()));
+}
+
+#[test]
+fn test_markers_are_bounded_generation_pinned_and_do_not_claim_execution() {
+    let directory = TempDirectory::new();
+    let repository = fixture_repository(&directory);
+    let marker_path = repository.join("tests/marker.rs");
+    fs::create_dir_all(marker_path.parent().expect("test marker parent"))
+        .expect("test marker directory should be created");
+    fs::write(&marker_path, "#[test]\nfn parser_marker() {}\n")
+        .expect("test marker fixture should be written");
+    let status = Command::new("git")
+        .current_dir(&repository)
+        .args(["add", "--", "tests/marker.rs"])
+        .status()
+        .expect("Git should start");
+    assert!(status.success());
+    let database = directory.database();
+    assert!(index(&repository, &database, REPOSITORY_ID).status.success());
+
+    let output = test_markers(&database, REPOSITORY_ID, "rust", "tests/", "1");
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let output = String::from_utf8(output.stdout).expect("test marker output must be UTF-8");
+    let output: serde_json::Value = serde_json::from_str(&output).expect("test marker JSON");
+    assert_eq!(output["schema_version"], serde_json::json!(1));
+    assert_eq!(output["test_markers_profile"], serde_json::json!(1));
+    assert_eq!(output["generation"], serde_json::json!(1));
+    assert_eq!(output["availability"], serde_json::json!("complete"));
+    assert_eq!(output["markers_returned"], serde_json::json!(1));
+    assert_eq!(output["markers_total"], serde_json::json!(1));
+    assert_eq!(output["truncated"], serde_json::json!(false));
+    assert_eq!(
+        output["language_coverage"],
+        serde_json::json!([
+            {
+                "language": "rust",
+                "indexed_files": 1,
+                "supported_files": 1,
+                "unsupported_files": 0,
+                "emitted_markers": 1,
+            }
+        ])
+    );
+    assert_eq!(
+        output["limitation"],
+        serde_json::json!("raw_syntax_observations_only_not_test_execution_or_relationship_resolution")
+    );
+    assert_eq!(output["markers"][0]["kind"], serde_json::json!("test_marker"));
+    assert!(output["markers"][0]["path"]
+        .as_str()
+        .is_some_and(|path| path.starts_with("rwp1:h:")));
+    assert!(
+        output["output_bytes"]
+            .as_u64()
+            .is_some_and(|bytes| bytes >= u64::try_from(output.to_string().len()).expect("JSON length"))
+    );
+    let encoded = output.to_string();
+    assert!(!encoded.contains(REPOSITORY_ID));
+    assert!(!encoded.contains(repository.to_string_lossy().as_ref()));
+    assert!(!encoded.contains(database.to_string_lossy().as_ref()));
+}
+
+#[test]
+fn syntax_site_search_is_bounded_generation_pinned_and_not_a_relationship_claim() {
+    let directory = TempDirectory::new();
+    let repository = fixture_repository(&directory);
+    let caller_path = repository.join("src/caller.rs");
+    fs::write(&caller_path, "pub fn run() {}\npub fn invoke() { run(); }\n")
+        .expect("raw target fixture should be written");
+    let status = Command::new("git")
+        .current_dir(&repository)
+        .args(["add", "--", "src/caller.rs"])
+        .status()
+        .expect("Git should start");
+    assert!(status.success());
+    let database = directory.database();
+    assert!(index(&repository, &database, REPOSITORY_ID).status.success());
+
+    let output = syntax_site_search(&database, REPOSITORY_ID, "run", "1");
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let output = String::from_utf8(output.stdout).expect("syntax-site output must be UTF-8");
+    let output: serde_json::Value = serde_json::from_str(&output).expect("syntax-site JSON");
+    assert_eq!(output["schema_version"], serde_json::json!(1));
+    assert_eq!(output["syntax_site_search_profile"], serde_json::json!(1));
+    assert_eq!(output["generation"], serde_json::json!(1));
+    assert_eq!(output["availability"], serde_json::json!("complete"));
+    assert_eq!(output["sites_returned"], serde_json::json!(1));
+    assert!(output["sites_total"].as_u64().is_some_and(|count| count >= 1));
+    assert_eq!(
+        output["truncated"],
+        serde_json::json!(output["sites_returned"].as_u64() < output["sites_total"].as_u64())
+    );
+    assert_eq!(
+        output["limitation"],
+        serde_json::json!(
+            "exact_raw_target_syntax_observations_only_no_target_resolution_or_inferred_edges"
+        )
+    );
+    assert_eq!(output["sites"][0]["raw_target"], serde_json::json!("run"));
+    assert_eq!(
+        output["sites"][0]["target_resolution"],
+        serde_json::json!("not_attempted_no_resolution_profile")
+    );
+    let encoded = output.to_string();
+    assert!(!encoded.contains(REPOSITORY_ID));
+    assert!(!encoded.contains(repository.to_string_lossy().as_ref()));
+    assert!(!encoded.contains(database.to_string_lossy().as_ref()));
+}
+
+#[test]
+fn architecture_overview_output_bytes_cover_encoded_nested_paths() {
+    let directory = TempDirectory::new();
+    let repository = fixture_repository(&directory);
+    let component = "segment".repeat(3);
+    let relative = std::iter::repeat_n(component.as_str(), 5)
+        .chain(std::iter::once("main.rs"))
+        .collect::<Vec<_>>()
+        .join("/");
+    let source = repository.join(&relative);
+    fs::create_dir_all(source.parent().expect("long fixture source should have a parent"))
+        .expect("long fixture source parent should be created");
+    fs::write(&source, "pub fn main() {}\n").expect("long fixture source should be written");
+    let status = Command::new("git")
+        .current_dir(&repository)
+        .args(["add", "--"])
+        .arg(&relative)
+        .status()
+        .expect("Git should start");
+    assert!(status.success());
+
+    let database = directory.database();
+    let indexed = index(&repository, &database, REPOSITORY_ID);
+    assert!(indexed.status.success());
+    let overview = architecture_overview(&database, REPOSITORY_ID, "1");
+    assert!(overview.status.success());
+    assert!(overview.stderr.is_empty());
+    let encoded = String::from_utf8(overview.stdout).expect("architecture overview must be UTF-8");
+    let serialized = encoded
+        .strip_suffix('\n')
+        .expect("architecture overview output should end with a newline");
+    let overview: serde_json::Value =
+        serde_json::from_str(serialized).expect("architecture overview JSON");
+    let declared = overview["output_bytes"]
+        .as_u64()
+        .expect("output byte receipt should be an unsigned integer");
+    assert!(
+        declared >= u64::try_from(serialized.len()).expect("serialized length should fit"),
+        "declared output byte receipt must cover the encoded CLI response"
+    );
+    assert!(declared <= 512 * 1024);
+    assert!(overview["files"][0]["path"]
+        .as_str()
+        .is_some_and(|path| path.starts_with("rwp1:h:")));
+    assert!(overview["entry_point_candidates"][0]["path"]
+        .as_str()
+        .is_some_and(|path| path.starts_with("rwp1:h:")));
 }
 
 #[test]

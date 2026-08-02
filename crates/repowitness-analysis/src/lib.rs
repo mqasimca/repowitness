@@ -8,6 +8,7 @@ mod artifact_reuse;
 mod go_source;
 mod phase2_context;
 mod python_source;
+mod raw_syntax;
 mod reconciliation;
 mod rust_correspondence;
 mod rust_graph;
@@ -32,6 +33,13 @@ pub use phase2_context::{
 pub use python_source::{
     PYTHON_ANALYSIS_PROFILE_VERSION, PythonSourceAnalyzer, TREE_SITTER_PYTHON_GRAMMAR_VERSION,
     python_analyzer_implementation_fingerprint_input, python_grammar_fingerprint_input,
+};
+pub use raw_syntax::{
+    RAW_SYNTAX_SITE_PROFILE_VERSION, RawSyntaxLanguage, RawSyntaxSite, RawSyntaxSiteAnalysis,
+    RawSyntaxSiteAnalysisControl, RawSyntaxSiteAnalysisError, RawSyntaxSiteAnalysisLimits,
+    RawSyntaxSiteAnalyzer, RawSyntaxSiteCoverage, RawSyntaxSiteEvidence, RawSyntaxSiteKind,
+    RawSyntaxSiteKindCoverage, RawSyntaxSiteOrdinal, RawSyntaxSiteSupport,
+    raw_syntax_grammar_fingerprint_input, raw_syntax_site_implementation_fingerprint_input,
 };
 pub use reconciliation::{
     DEFAULT_RECONCILIATION_CHANGES, DEFAULT_RECONCILIATION_HINTS, MAX_RECONCILIATION_CHANGES,

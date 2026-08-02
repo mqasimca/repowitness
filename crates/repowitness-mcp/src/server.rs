@@ -29,7 +29,11 @@ use tokio::{
 };
 
 use crate::{
-    BoundedLineReader, CODE_SEARCH_TOOL_NAME, CONTEXT_BUILD_TOOL_NAME, CodeSearchInput,
+    ARCHITECTURE_MAP_TOOL_NAME, ARCHITECTURE_OVERVIEW_TOOL_NAME, ArchitectureMapInput,
+    ArchitectureMapOutput, ArchitectureMapServiceRequest, ArchitectureOverviewInput,
+    ArchitectureOverviewOutput, ArchitectureOverviewServiceRequest, BoundedLineReader,
+    CODE_GRAPH_QUERY_TOOL_NAME, CODE_SEARCH_TOOL_NAME, CONTEXT_BUILD_TOOL_NAME,
+    CodeGraphQueryInput, CodeGraphQueryOutput, CodeGraphQueryServiceRequest, CodeSearchInput,
     CodeSearchOutput, CodeSearchServiceRequest, ContextBuildInput, ContextBuildOutput,
     ContextBuildServiceRequest, DIAGNOSTICS_TOOL_NAME, DiagnosticsInput, DiagnosticsOutput,
     DiagnosticsServiceRequest, GRAPH_ARCHITECTURE_TOOL_NAME, GRAPH_EVIDENCE_TOOL_NAME,
@@ -41,18 +45,32 @@ use crate::{
     HistoricalMemoryServiceRequest, IMPACT_ANALYZE_TOOL_NAME, MAX_MCP_INPUT_LINE_BYTES,
     MEMORY_MANAGE_TOOL_NAME, MEMORY_RECALL_TOOL_NAME, MemoryManageInput, MemoryManageOutput,
     MemoryManageServiceRequest, MemoryMutationRequestScope, MemoryRecallInput, MemoryRecallOutput,
-    MemoryRecallServiceRequest, NativeTaskState, NativeTaskStatus, PERSONAL_MEMORY_TOOL_NAME,
-    PHASE2_CONTEXT_BUILD_TOOL_NAME, PersonalMemoryInput, PersonalMemoryOutput,
-    PersonalMemoryServiceRequest, Phase2ContextBuildInput, Phase2ContextBuildOutput,
-    Phase2ContextBuildServiceRequest, RepositoryService, RepositoryServiceError,
-    SCIP_EVIDENCE_TOOL_NAME, SYMBOL_GET_TOOL_NAME, ScipEvidenceInput, ScipEvidenceOutput,
-    ScipEvidenceServiceRequest, SymbolGetInput, SymbolGetOutput, SymbolGetServiceRequest,
+    MemoryRecallServiceRequest, NativeTaskState, NativeTaskStatus, OUTBOUND_SITES_TOOL_NAME,
+    OutboundSitesInput, OutboundSitesOutput, OutboundSitesServiceRequest,
+    PERSONAL_MEMORY_TOOL_NAME, PHASE2_CONTEXT_BUILD_TOOL_NAME, PersonalMemoryInput,
+    PersonalMemoryOutput, PersonalMemoryServiceRequest, Phase2ContextBuildInput,
+    Phase2ContextBuildOutput, Phase2ContextBuildServiceRequest, RELEVANT_PATHS_TOOL_NAME,
+    REPOSITORY_TOPOLOGY_TOOL_NAME, RelevantPathsInput, RelevantPathsOutput,
+    RelevantPathsServiceRequest, RepositoryService, RepositoryServiceError,
+    RepositoryTopologyInput, RepositoryTopologyOutput, RepositoryTopologyServiceRequest,
+    SCIP_EVIDENCE_TOOL_NAME, SCIP_RELATIONSHIP_TRACE_TOOL_NAME, SCIP_SYMBOL_RESOLVE_TOOL_NAME,
+    SYMBOL_GET_TOOL_NAME, SYMBOL_SEARCH_TOOL_NAME, SYNTAX_SITE_SEARCH_TOOL_NAME, ScipEvidenceInput,
+    ScipEvidenceOutput, ScipEvidenceServiceRequest, ScipRelationshipTraceInput,
+    ScipRelationshipTraceOutput, ScipRelationshipTraceServiceRequest, ScipSymbolResolveInput,
+    ScipSymbolResolveOutput, ScipSymbolResolveServiceRequest, SymbolGetInput, SymbolGetOutput,
+    SymbolGetServiceRequest, SymbolSearchInput, SymbolSearchOutput, SymbolSearchServiceRequest,
+    SyntaxSiteSearchInput, SyntaxSiteSearchOutput, SyntaxSiteSearchServiceRequest,
     wire::{
-        MAX_MCP_CONTEXT_OUTPUT_BYTES, MAX_MCP_DIAGNOSTICS_OUTPUT_BYTES, MAX_MCP_GRAPH_OUTPUT_BYTES,
+        MAX_MCP_ARCHITECTURE_MAP_OUTPUT_BYTES, MAX_MCP_ARCHITECTURE_OVERVIEW_OUTPUT_BYTES,
+        MAX_MCP_CODE_GRAPH_QUERY_OUTPUT_BYTES, MAX_MCP_CONTEXT_OUTPUT_BYTES,
+        MAX_MCP_DIAGNOSTICS_OUTPUT_BYTES, MAX_MCP_GRAPH_OUTPUT_BYTES,
         MAX_MCP_HISTORICAL_MEMORY_OUTPUT_BYTES, MAX_MCP_MEMORY_MANAGE_OUTPUT_BYTES,
-        MAX_MCP_MEMORY_RECALL_OUTPUT_BYTES, MAX_MCP_PERSONAL_MEMORY_OUTPUT_BYTES,
-        MAX_MCP_PHASE2_CONTEXT_OUTPUT_BYTES, MAX_MCP_SCIP_EVIDENCE_OUTPUT_BYTES,
+        MAX_MCP_MEMORY_RECALL_OUTPUT_BYTES, MAX_MCP_OUTBOUND_SITES_OUTPUT_BYTES,
+        MAX_MCP_PERSONAL_MEMORY_OUTPUT_BYTES, MAX_MCP_PHASE2_CONTEXT_OUTPUT_BYTES,
+        MAX_MCP_RELEVANT_PATHS_OUTPUT_BYTES, MAX_MCP_REPOSITORY_TOPOLOGY_OUTPUT_BYTES,
+        MAX_MCP_SCIP_EVIDENCE_OUTPUT_BYTES, MAX_MCP_SCIP_RELATIONSHIP_TRACE_OUTPUT_BYTES,
         MAX_MCP_SEARCH_OUTPUT_BYTES, MAX_MCP_SYMBOL_OUTPUT_BYTES,
+        MAX_MCP_SYNTAX_SITE_SEARCH_OUTPUT_BYTES,
     },
 };
 
@@ -68,6 +86,72 @@ const NATIVE_TASK_PAGE_SIZE: usize = 8;
 const DEFAULT_NATIVE_TASK_TTL: Duration = Duration::from_secs(5 * 60);
 const MAX_NATIVE_TASK_TTL: Duration = Duration::from_secs(5 * 60);
 const MAX_NATIVE_TASK_RESULT_BYTES: usize = MAX_MCP_PHASE2_CONTEXT_OUTPUT_BYTES;
+
+fn code_graph_query_input_schema() -> JsonObject {
+    let mut union = serde_json::to_value(schemars::schema_for!(CodeGraphQueryInput))
+        .expect("the closed code graph query schema must serialize");
+    let union = union
+        .as_object_mut()
+        .expect("schemars must produce an object-root schema");
+    let schema_draft = union.remove("$schema");
+    let definitions = union.remove("$defs");
+
+    let mut properties = JsonObject::new();
+    for field in [
+        "operation",
+        "name",
+        "match_mode",
+        "language",
+        "kind",
+        "path_prefix",
+        "query",
+        "max_results",
+        "timeout_ms",
+        "snapshot_sha256",
+        "generation",
+        "path",
+        "content_sha256",
+        "artifact_sha256",
+        "fact_ordinal",
+        "max_sites",
+        "target",
+        "max_roots",
+        "max_entry_point_candidates",
+        "max_files",
+        "max_paths",
+    ] {
+        properties.insert(field.to_owned(), serde_json::Value::Bool(true));
+    }
+
+    let mut schema = JsonObject::new();
+    if let Some(schema_draft) = schema_draft {
+        schema.insert("$schema".to_owned(), schema_draft);
+    }
+    if let Some(definitions) = definitions {
+        schema.insert("$defs".to_owned(), definitions);
+    }
+    schema.insert(
+        "type".to_owned(),
+        serde_json::Value::String("object".to_owned()),
+    );
+    schema.insert(
+        "additionalProperties".to_owned(),
+        serde_json::Value::Bool(false),
+    );
+    schema.insert(
+        "properties".to_owned(),
+        serde_json::Value::Object(properties),
+    );
+    schema.insert(
+        "required".to_owned(),
+        serde_json::Value::Array(vec![serde_json::Value::String("operation".to_owned())]),
+    );
+    schema.insert(
+        "allOf".to_owned(),
+        serde_json::Value::Array(vec![serde_json::Value::Object(union.clone())]),
+    );
+    schema
+}
 
 /// Stable local MCP server lifecycle failure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -312,6 +396,126 @@ impl RepoWitnessMcpServer {
         operation_result(output, MAX_MCP_SEARCH_OUTPUT_BYTES)
     }
 
+    async fn call_relevant_paths(
+        &self,
+        request: RelevantPathsServiceRequest,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let service = Arc::clone(&self.service);
+        let timeout = request.timeout();
+        let output = self
+            .run_blocking(timeout, context, move |remaining, cancelled| {
+                service.relevant_paths(request.with_timeout(remaining), cancelled)
+            })
+            .await?;
+        operation_result(output, MAX_MCP_RELEVANT_PATHS_OUTPUT_BYTES)
+    }
+
+    async fn call_symbol_search(
+        &self,
+        request: SymbolSearchServiceRequest,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let service = Arc::clone(&self.service);
+        let timeout = request.timeout();
+        let output = self
+            .run_blocking(timeout, context, move |remaining, cancelled| {
+                service.symbol_search(request.with_timeout(remaining), cancelled)
+            })
+            .await?;
+        operation_result(output, MAX_MCP_SEARCH_OUTPUT_BYTES)
+    }
+
+    async fn call_outbound_sites(
+        &self,
+        request: OutboundSitesServiceRequest,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let service = Arc::clone(&self.service);
+        let timeout = request.timeout();
+        let output = self
+            .run_blocking(timeout, context, move |remaining, cancelled| {
+                service.outbound_sites(request.with_timeout(remaining), cancelled)
+            })
+            .await?;
+        operation_result(output, MAX_MCP_OUTBOUND_SITES_OUTPUT_BYTES)
+    }
+
+    async fn call_syntax_site_search(
+        &self,
+        request: SyntaxSiteSearchServiceRequest,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let service = Arc::clone(&self.service);
+        let timeout = request.timeout();
+        let output = self
+            .run_blocking(timeout, context, move |remaining, cancelled| {
+                service.syntax_site_search(request.with_timeout(remaining), cancelled)
+            })
+            .await?;
+        operation_result(output, MAX_MCP_SYNTAX_SITE_SEARCH_OUTPUT_BYTES)
+    }
+
+    async fn call_code_graph_query(
+        &self,
+        request: CodeGraphQueryServiceRequest,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let service = Arc::clone(&self.service);
+        let timeout = request.timeout();
+        let output = self
+            .run_blocking(timeout, context, move |remaining, cancelled| {
+                service.code_graph_query(request.with_timeout(remaining), cancelled)
+            })
+            .await?;
+        operation_result(output, MAX_MCP_CODE_GRAPH_QUERY_OUTPUT_BYTES)
+    }
+
+    async fn call_architecture_map(
+        &self,
+        request: ArchitectureMapServiceRequest,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let service = Arc::clone(&self.service);
+        let timeout = request.timeout();
+        let output = self
+            .run_blocking(timeout, context, move |remaining, cancelled| {
+                service.architecture_map(request.with_timeout(remaining), cancelled)
+            })
+            .await?;
+        operation_result(output, MAX_MCP_ARCHITECTURE_MAP_OUTPUT_BYTES)
+    }
+
+    async fn call_architecture_overview(
+        &self,
+        request: ArchitectureOverviewServiceRequest,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let service = Arc::clone(&self.service);
+        let timeout = request.timeout();
+        let output = self
+            .run_blocking(timeout, context, move |remaining, cancelled| {
+                service.architecture_overview(request.with_timeout(remaining), cancelled)
+            })
+            .await?;
+        operation_result(output, MAX_MCP_ARCHITECTURE_OVERVIEW_OUTPUT_BYTES)
+    }
+
+    async fn call_repository_topology(
+        &self,
+        request: RepositoryTopologyServiceRequest,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let service = Arc::clone(&self.service);
+        let timeout = request.timeout();
+        let output = self
+            .run_blocking(timeout, context, move |remaining, cancelled| {
+                service.repository_topology(request.with_timeout(remaining), cancelled)
+            })
+            .await?;
+        operation_result(output, MAX_MCP_REPOSITORY_TOPOLOGY_OUTPUT_BYTES)
+    }
+
     async fn call_symbol_get(
         &self,
         request: SymbolGetServiceRequest,
@@ -459,6 +663,109 @@ impl RepoWitnessMcpServer {
             .await?;
         operation_result(output, MAX_MCP_SCIP_EVIDENCE_OUTPUT_BYTES)
     }
+
+    async fn call_scip_relationship_trace(
+        &self,
+        request: ScipRelationshipTraceServiceRequest,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let service = Arc::clone(&self.service);
+        let timeout = request.timeout();
+        let output = self
+            .run_blocking(timeout, context, move |remaining, cancelled| {
+                service.scip_relationship_trace(request.with_timeout(remaining), cancelled)
+            })
+            .await?;
+        operation_result(output, MAX_MCP_SCIP_RELATIONSHIP_TRACE_OUTPUT_BYTES)
+    }
+
+    async fn call_scip_symbol_resolve(
+        &self,
+        request: ScipSymbolResolveServiceRequest,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let service = Arc::clone(&self.service);
+        let timeout = request.timeout();
+        let output = self
+            .run_blocking(timeout, context, move |remaining, cancelled| {
+                service.scip_symbol_resolve(request.with_timeout(remaining), cancelled)
+            })
+            .await?;
+        operation_result(output, MAX_MCP_SCIP_EVIDENCE_OUTPUT_BYTES)
+    }
+
+    async fn call_navigation_tool(
+        &self,
+        request: CallToolRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        match request.name.as_ref() {
+            ARCHITECTURE_MAP_TOOL_NAME => {
+                let input = parse_arguments::<ArchitectureMapInput>(request.arguments)?;
+                let request = input
+                    .validate()
+                    .map_err(|message| McpError::invalid_params(message, None))?;
+                self.call_architecture_map(request, context).await
+            }
+            ARCHITECTURE_OVERVIEW_TOOL_NAME => {
+                let input = parse_arguments::<ArchitectureOverviewInput>(request.arguments)?;
+                let request = input
+                    .validate()
+                    .map_err(|message| McpError::invalid_params(message, None))?;
+                self.call_architecture_overview(request, context).await
+            }
+            REPOSITORY_TOPOLOGY_TOOL_NAME => {
+                let input = parse_arguments::<RepositoryTopologyInput>(request.arguments)?;
+                let request = input
+                    .validate()
+                    .map_err(|message| McpError::invalid_params(message, None))?;
+                self.call_repository_topology(request, context).await
+            }
+            CODE_SEARCH_TOOL_NAME => {
+                let input = parse_arguments::<CodeSearchInput>(request.arguments)?;
+                let request = input
+                    .validate()
+                    .map_err(|message| McpError::invalid_params(message, None))?;
+                self.call_code_search(request, context).await
+            }
+            RELEVANT_PATHS_TOOL_NAME => {
+                let input = parse_arguments::<RelevantPathsInput>(request.arguments)?;
+                let request = input
+                    .validate()
+                    .map_err(|message| McpError::invalid_params(message, None))?;
+                self.call_relevant_paths(request, context).await
+            }
+            SYMBOL_SEARCH_TOOL_NAME => {
+                let input = parse_arguments::<SymbolSearchInput>(request.arguments)?;
+                let request = input
+                    .validate()
+                    .map_err(|message| McpError::invalid_params(message, None))?;
+                self.call_symbol_search(request, context).await
+            }
+            OUTBOUND_SITES_TOOL_NAME => {
+                let input = parse_arguments::<OutboundSitesInput>(request.arguments)?;
+                let request = input
+                    .validate()
+                    .map_err(|message| McpError::invalid_params(message, None))?;
+                self.call_outbound_sites(request, context).await
+            }
+            SYNTAX_SITE_SEARCH_TOOL_NAME => {
+                let input = parse_arguments::<SyntaxSiteSearchInput>(request.arguments)?;
+                let request = input
+                    .validate()
+                    .map_err(|message| McpError::invalid_params(message, None))?;
+                self.call_syntax_site_search(request, context).await
+            }
+            CODE_GRAPH_QUERY_TOOL_NAME => {
+                let input = parse_arguments::<CodeGraphQueryInput>(request.arguments)?;
+                let request = input
+                    .validate()
+                    .map_err(|message| McpError::invalid_params(message, None))?;
+                self.call_code_graph_query(request, context).await
+            }
+            _ => Err(McpError::invalid_params("unknown RepoWitness tool", None)),
+        }
+    }
 }
 
 include!("server/operation_supervisor.rs");
@@ -506,14 +813,21 @@ impl ServerHandler for RepoWitnessMcpServer {
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
+        if matches!(
+            request.name.as_ref(),
+            ARCHITECTURE_MAP_TOOL_NAME
+                | ARCHITECTURE_OVERVIEW_TOOL_NAME
+                | REPOSITORY_TOPOLOGY_TOOL_NAME
+                | CODE_SEARCH_TOOL_NAME
+                | RELEVANT_PATHS_TOOL_NAME
+                | SYMBOL_SEARCH_TOOL_NAME
+                | OUTBOUND_SITES_TOOL_NAME
+                | SYNTAX_SITE_SEARCH_TOOL_NAME
+                | CODE_GRAPH_QUERY_TOOL_NAME
+        ) {
+            return self.call_navigation_tool(request, context).await;
+        }
         match request.name.as_ref() {
-            CODE_SEARCH_TOOL_NAME => {
-                let input = parse_arguments::<CodeSearchInput>(request.arguments)?;
-                let request = input
-                    .validate()
-                    .map_err(|message| McpError::invalid_params(message, None))?;
-                self.call_code_search(request, context).await
-            }
             CONTEXT_BUILD_TOOL_NAME => {
                 let input = parse_arguments::<ContextBuildInput>(request.arguments)?;
                 let request = input
@@ -611,6 +925,20 @@ impl ServerHandler for RepoWitnessMcpServer {
                     .validate()
                     .map_err(|message| McpError::invalid_params(message, None))?;
                 self.call_scip_evidence(request, context).await
+            }
+            SCIP_RELATIONSHIP_TRACE_TOOL_NAME => {
+                let input = parse_arguments::<ScipRelationshipTraceInput>(request.arguments)?;
+                let request = input
+                    .validate()
+                    .map_err(|message| McpError::invalid_params(message, None))?;
+                self.call_scip_relationship_trace(request, context).await
+            }
+            SCIP_SYMBOL_RESOLVE_TOOL_NAME => {
+                let input = parse_arguments::<ScipSymbolResolveInput>(request.arguments)?;
+                let request = input
+                    .validate()
+                    .map_err(|message| McpError::invalid_params(message, None))?;
+                self.call_scip_symbol_resolve(request, context).await
             }
             SYMBOL_GET_TOOL_NAME => {
                 let input = parse_arguments::<SymbolGetInput>(request.arguments)?;
@@ -1036,6 +1364,73 @@ fn tools(
     .with_input_schema::<CodeSearchInput>()
     .with_output_schema::<CodeSearchOutput>()
     .annotate(annotations.clone());
+    let relevant_paths = Tool::new(
+        RELEVANT_PATHS_TOOL_NAME,
+        "Group bounded literal declaration matches into generation-pinned source paths. Paths, counts, and path truncation cover returned candidates only; use match coverage before treating them as exhaustive. Ordering is returned lexical-match count then canonical path, with no semantic or relationship claim.",
+        JsonObject::new(),
+    )
+    .with_input_schema::<RelevantPathsInput>()
+    .with_output_schema::<RelevantPathsOutput>()
+    .annotate(annotations.clone());
+    let symbol_search = Tool::new(
+        SYMBOL_SEARCH_TOOL_NAME,
+        "Find exact or prefix direct declaration facts across Rust/Go/TypeScript/TSX/Python with optional persisted language, kind, and repository-relative path filters. Same-name results do not imply relationships.",
+        JsonObject::new(),
+    )
+    .with_input_schema::<SymbolSearchInput>()
+    .with_output_schema::<SymbolSearchOutput>()
+    .annotate(annotations.clone());
+    let outbound_sites = Tool::new(
+        OUTBOUND_SITES_TOOL_NAME,
+        "Read bounded exact parser-attributed import, reference, call, and test-marker observations physically contained in one selected declaration. Raw target spellings remain unresolved; this tool creates no edges or relationships.",
+        JsonObject::new(),
+    )
+    .with_input_schema::<OutboundSitesInput>()
+    .with_output_schema::<OutboundSitesOutput>()
+    .annotate(annotations.clone());
+    let syntax_site_search = Tool::new(
+        SYNTAX_SITE_SEARCH_TOOL_NAME,
+        "Find bounded parser-attributed import, reference, call, and test-marker observations with one exact raw target spelling across the active supported-language generation. Equal spelling is not target resolution, a caller relationship, or an inferred edge.",
+        JsonObject::new(),
+    )
+    .with_input_schema::<SyntaxSiteSearchInput>()
+    .with_output_schema::<SyntaxSiteSearchOutput>()
+    .annotate(annotations.clone());
+    let code_graph_query = Tool::new(
+        CODE_GRAPH_QUERY_TOOL_NAME,
+        "Run exactly one bounded evidence-backed code discovery operation: symbols, outbound_sites, syntax_site_search, architecture, files, test_markers, or relevant_paths. This is a closed union, not Cypher, SQL, or a general graph query surface.",
+        code_graph_query_input_schema(),
+    )
+    .with_output_schema::<CodeGraphQueryOutput>()
+    .annotate(annotations.clone());
+    let architecture_map = Tool::new(
+        ARCHITECTURE_MAP_TOOL_NAME,
+        "Map exact indexed Rust/Go/TypeScript/TSX/Python source files by canonical path with \
+         generation-pinned source and parser-artifact receipts. This is a file inventory, not a \
+         relationship or call graph.",
+        JsonObject::new(),
+    )
+    .with_input_schema::<ArchitectureMapInput>()
+    .with_output_schema::<ArchitectureMapOutput>()
+    .annotate(annotations.clone());
+    let architecture_overview = Tool::new(
+        ARCHITECTURE_OVERVIEW_TOOL_NAME,
+        "Summarize exact active Rust/Go/TypeScript/TSX/Python source facts with independent bounded \
+         source-root, direct-syntax `function main` candidate, and file receipts. Structural roots \
+         are not package or ownership boundaries; this tool does not infer relationships.",
+        JsonObject::new(),
+    )
+    .with_input_schema::<ArchitectureOverviewInput>()
+    .with_output_schema::<ArchitectureOverviewOutput>()
+    .annotate(annotations.clone());
+    let repository_topology = Tool::new(
+        REPOSITORY_TOPOLOGY_TOOL_NAME,
+        "Inventory exact Git-discovered repository paths by a fixed path-only category. It returns no file contents, relationships, ownership, build, or runtime claims.",
+        JsonObject::new(),
+    )
+    .with_input_schema::<RepositoryTopologyInput>()
+    .with_output_schema::<RepositoryTopologyOutput>()
+    .annotate(annotations.clone());
     let context_build = Tool::new(
         CONTEXT_BUILD_TOOL_NAME,
         "Compile a deterministic generation-pinned context pack from exact source declarations \
@@ -1094,7 +1489,15 @@ fn tools(
             .open_world(false),
     );
     let mut tools = vec![
+        architecture_map,
+        architecture_overview,
+        repository_topology,
         code_search,
+        relevant_paths,
+        symbol_search,
+        outbound_sites,
+        syntax_site_search,
+        code_graph_query,
         context_build,
         phase2_context_build,
         diagnostics,
@@ -1115,6 +1518,22 @@ fn tools(
         )
         .with_input_schema::<ScipEvidenceInput>()
         .with_output_schema::<ScipEvidenceOutput>()
+        .annotate(annotations.clone()),
+        Tool::new(
+            SCIP_RELATIONSHIP_TRACE_TOOL_NAME,
+            "Trace bounded incoming or outgoing producer-declared SCIP relationships from one exact opaque symbol in an active or selected immutable overlay. This does not infer source calls, runtime behavior, or repository-wide completeness.",
+            JsonObject::new(),
+        )
+        .with_input_schema::<ScipRelationshipTraceInput>()
+        .with_output_schema::<ScipRelationshipTraceOutput>()
+        .annotate(annotations.clone()),
+        Tool::new(
+            SCIP_SYMBOL_RESOLVE_TOOL_NAME,
+            "Resolve one exact indexed identifier span to its unique opaque SCIP symbol in an active or selected immutable overlay. A missing or ambiguous source span remains explicit; pass an exact symbol to scip_evidence to inspect producer-declared relationships.",
+            JsonObject::new(),
+        )
+        .with_input_schema::<ScipSymbolResolveInput>()
+        .with_output_schema::<ScipSymbolResolveOutput>()
         .annotate(annotations.clone()),
     ];
     tools.extend(graph_tools(&annotations));

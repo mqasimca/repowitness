@@ -17,6 +17,7 @@ mod known_at_history;
 mod mcp;
 mod memory;
 mod memory_manage;
+mod onboarding;
 mod personal_memory;
 mod runtime_configuration;
 mod scip_evidence;

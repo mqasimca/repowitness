@@ -13,9 +13,10 @@ use rusqlite::{Connection, OpenFlags, TransactionBehavior, params};
 use super::{
     APPLICATION_ID, MIGRATION_1, MIGRATION_1_NAME, MIGRATION_2, MIGRATION_2_NAME, MIGRATION_3,
     MIGRATION_3_NAME, MIGRATION_4, MIGRATION_4_NAME, MIGRATION_5, MIGRATION_5_NAME, MIGRATION_6,
-    MIGRATION_6_NAME, SCHEMA_VERSION, SqliteStoreError, apply_migration, database_file_identity,
-    migration_checksum, migrations, open_index_writer, open_index_writer_with_identity_and_hook,
-    open_index_writer_with_identity_and_migration_hook,
+    MIGRATION_6_NAME, MIGRATION_7, MIGRATION_7_NAME, MIGRATION_9, MIGRATION_9_NAME, MIGRATION_10,
+    MIGRATION_10_NAME, MIGRATION_11, MIGRATION_11_NAME, SCHEMA_VERSION, SqliteStoreError,
+    apply_migration, database_file_identity, migration_checksum, migrations, open_index_writer,
+    open_index_writer_with_identity_and_hook, open_index_writer_with_identity_and_migration_hook,
 };
 
 static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
@@ -209,3 +210,7 @@ include!("tests/baseline.rs");
 include!("tests/migration_2.rs");
 include!("tests/migration_3.rs");
 include!("tests/migration_6.rs");
+include!("tests/migration_7.rs");
+include!("tests/migration_9.rs");
+include!("tests/migration_10.rs");
+include!("tests/migration_11.rs");

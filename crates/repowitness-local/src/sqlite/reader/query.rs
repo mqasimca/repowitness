@@ -94,6 +94,8 @@ fn symbol_transaction(
 struct SearchProjectionSql {
     search: &'static str,
     count: &'static str,
+    symbol_search: &'static str,
+    symbol_count: &'static str,
 }
 
 #[derive(Clone, Copy)]
@@ -133,10 +135,14 @@ fn active_search_state(
         0 => SearchProjectionSql {
             search: PRIMARY_SEARCH_SQL,
             count: PRIMARY_COUNT_SQL,
+            symbol_search: PRIMARY_SYMBOL_SEARCH_SQL,
+            symbol_count: PRIMARY_SYMBOL_COUNT_SQL,
         },
         1 => SearchProjectionSql {
             search: REBUILD_SEARCH_SQL,
             count: REBUILD_COUNT_SQL,
+            symbol_search: REBUILD_SYMBOL_SEARCH_SQL,
+            symbol_count: REBUILD_SYMBOL_COUNT_SQL,
         },
         _ => {
             return Err(SearchFailure::Store(SqliteStoreError::IntegrityCheckFailed));
@@ -169,10 +175,14 @@ fn workspace_search_state(
         0 => SearchProjectionSql {
             search: PRIMARY_SEARCH_SQL,
             count: PRIMARY_COUNT_SQL,
+            symbol_search: PRIMARY_SYMBOL_SEARCH_SQL,
+            symbol_count: PRIMARY_SYMBOL_COUNT_SQL,
         },
         1 => SearchProjectionSql {
             search: REBUILD_SEARCH_SQL,
             count: REBUILD_COUNT_SQL,
+            symbol_search: REBUILD_SYMBOL_SEARCH_SQL,
+            symbol_count: REBUILD_SYMBOL_COUNT_SQL,
         },
         _ => return Err(SearchFailure::Store(SqliteStoreError::IntegrityCheckFailed)),
     };
@@ -508,6 +518,64 @@ JOIN analysis_artifacts AS artifact
  AND artifact.lifecycle_state = 'complete'
 WHERE generation_search_rebuild MATCH ?1 AND generation_id = ?2";
 
+const PRIMARY_SYMBOL_SEARCH_SQL: &str = "SELECT repository_path, fact_ordinal, kind, name,
+       qualified_name, content_digest, generation_search.artifact_digest,
+       name_start, name_end, declaration_start, declaration_end, artifact.language,
+       artifact.producer_manifest_digest
+FROM generation_search
+JOIN analysis_artifacts AS artifact
+  ON artifact.artifact_digest = generation_search.artifact_digest
+ AND artifact.lifecycle_state = 'complete'
+WHERE generation_search MATCH ?1 AND generation_id = ?2
+  AND (?3 IS NULL OR artifact.language = ?3)
+  AND (?4 IS NULL OR kind = ?4)
+  AND (?5 IS NULL OR substr(repository_path, 1, length(?5)) = ?5)
+  AND ((?6 = 'exact' AND name = ?7)
+       OR (?6 = 'prefix' AND substr(name, 1, length(?7)) = ?7))
+ORDER BY name ASC, repository_path ASC, fact_ordinal ASC
+LIMIT ?8";
+
+const PRIMARY_SYMBOL_COUNT_SQL: &str = "SELECT COUNT(*)
+FROM generation_search
+JOIN analysis_artifacts AS artifact
+  ON artifact.artifact_digest = generation_search.artifact_digest
+ AND artifact.lifecycle_state = 'complete'
+WHERE generation_search MATCH ?1 AND generation_id = ?2
+  AND (?3 IS NULL OR artifact.language = ?3)
+  AND (?4 IS NULL OR kind = ?4)
+  AND (?5 IS NULL OR substr(repository_path, 1, length(?5)) = ?5)
+  AND ((?6 = 'exact' AND name = ?7)
+       OR (?6 = 'prefix' AND substr(name, 1, length(?7)) = ?7))";
+
+const REBUILD_SYMBOL_SEARCH_SQL: &str = "SELECT repository_path, fact_ordinal, kind, name,
+       qualified_name, content_digest, generation_search_rebuild.artifact_digest,
+       name_start, name_end, declaration_start, declaration_end, artifact.language,
+       artifact.producer_manifest_digest
+FROM generation_search_rebuild
+JOIN analysis_artifacts AS artifact
+  ON artifact.artifact_digest = generation_search_rebuild.artifact_digest
+ AND artifact.lifecycle_state = 'complete'
+WHERE generation_search_rebuild MATCH ?1 AND generation_id = ?2
+  AND (?3 IS NULL OR artifact.language = ?3)
+  AND (?4 IS NULL OR kind = ?4)
+  AND (?5 IS NULL OR substr(repository_path, 1, length(?5)) = ?5)
+  AND ((?6 = 'exact' AND name = ?7)
+       OR (?6 = 'prefix' AND substr(name, 1, length(?7)) = ?7))
+ORDER BY name ASC, repository_path ASC, fact_ordinal ASC
+LIMIT ?8";
+
+const REBUILD_SYMBOL_COUNT_SQL: &str = "SELECT COUNT(*)
+FROM generation_search_rebuild
+JOIN analysis_artifacts AS artifact
+  ON artifact.artifact_digest = generation_search_rebuild.artifact_digest
+ AND artifact.lifecycle_state = 'complete'
+WHERE generation_search_rebuild MATCH ?1 AND generation_id = ?2
+  AND (?3 IS NULL OR artifact.language = ?3)
+  AND (?4 IS NULL OR kind = ?4)
+  AND (?5 IS NULL OR substr(repository_path, 1, length(?5)) = ?5)
+  AND ((?6 = 'exact' AND name = ?7)
+       OR (?6 = 'prefix' AND substr(name, 1, length(?7)) = ?7))";
+
 fn literal_fts_query(query: &str) -> Result<String, SqliteStoreError> {
     if query.is_empty() || query.len() > MAX_QUERY_BYTES {
         return Err(SqliteStoreError::InvalidSearchQuery);
@@ -532,6 +600,28 @@ fn literal_fts_query(query: &str) -> Result<String, SqliteStoreError> {
             output.push(character);
         }
         output.push('"');
+    }
+    Ok(output)
+}
+
+fn symbol_fts_query(
+    name: &str,
+    name_match: repowitness_application::SymbolSearchNameMatch,
+) -> Result<String, SqliteStoreError> {
+    if name.is_empty() || name.len() > MAX_SYMBOL_SEARCH_NAME_BYTES {
+        return Err(SqliteStoreError::InvalidSearchQuery);
+    }
+    let mut output = String::with_capacity(name.len().saturating_mul(2).saturating_add(12));
+    output.push_str("name : \"");
+    for character in name.chars() {
+        if character == '"' {
+            output.push('"');
+        }
+        output.push(character);
+    }
+    output.push('"');
+    if matches!(name_match, repowitness_application::SymbolSearchNameMatch::Prefix) {
+        output.push('*');
     }
     Ok(output)
 }
@@ -597,6 +687,23 @@ fn is_interrupted(error: &rusqlite::Error) -> bool {
         error,
         rusqlite::Error::SqliteFailure(code, _) if code.code == ErrorCode::OperationInterrupted
     )
+}
+
+#[cfg(test)]
+mod query_tests {
+    use repowitness_application::{
+        MAX_SYMBOL_SEARCH_NAME_BYTES, SymbolSearchNameMatch,
+    };
+
+    use super::symbol_fts_query;
+
+    #[test]
+    fn symbol_fts_query_keeps_the_public_selector_bound() {
+        let maximum_name = "a".repeat(MAX_SYMBOL_SEARCH_NAME_BYTES);
+        assert!(symbol_fts_query(&maximum_name, SymbolSearchNameMatch::Prefix).is_ok());
+        let too_long_name = "a".repeat(MAX_SYMBOL_SEARCH_NAME_BYTES + 1);
+        assert!(symbol_fts_query(&too_long_name, SymbolSearchNameMatch::Exact).is_err());
+    }
 }
 
 fn receive_reply<T>(

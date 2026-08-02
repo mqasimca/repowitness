@@ -14,6 +14,7 @@ use super::{
 const DOCTOR_PROGRESS_INSTRUCTIONS: i32 = 1_000;
 const DOCTOR_SCHEMA_DEADLINE: Duration = Duration::from_millis(250);
 const MAX_MIGRATION_NAME_BYTES: i64 = 64;
+const MAX_MIGRATION_LEDGER_ROWS: i64 = SCHEMA_VERSION + 1;
 const REQUIRED_COMPILE_OPTION_COUNT: i64 = 2;
 
 pub(crate) struct SqliteEnvironmentDiagnostic {
@@ -99,11 +100,11 @@ fn validate_bounded_migration_ledger(connection: &Connection) -> Result<(), Sqli
                     typeof(checksum),
                     length(checksum),
                     substr(checksum, 1, 32)
-             FROM schema_migrations ORDER BY version LIMIT 7",
+             FROM schema_migrations ORDER BY version LIMIT ?1",
         )
         .map_err(|_| SqliteStoreError::MigrationLedgerMismatch)?;
     let mut rows = statement
-        .query([])
+        .query([MAX_MIGRATION_LEDGER_ROWS])
         .map_err(|_| SqliteStoreError::MigrationLedgerMismatch)?;
     for (version, name, sql) in migrations() {
         let row = rows
@@ -271,7 +272,7 @@ mod tests {
         connection
             .execute(
                 "INSERT INTO schema_migrations(version, name, checksum, applied_at_unix_ms)
-                 VALUES (7, 'unexpected', zeroblob(32), 123)",
+                 VALUES (8, 'unexpected', zeroblob(32), 123)",
                 [],
             )
             .expect("unexpected ledger row should insert");

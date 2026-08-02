@@ -111,6 +111,70 @@ fn search(database: &Path, identity: &str, query: &str, limit: &str) -> Output {
     ])
 }
 
+fn architecture_map(database: &Path, identity: &str, max_files: &str) -> Output {
+    repowitness_os([
+        OsStr::new("architecture-map"),
+        OsStr::new("--repository-id"),
+        OsStr::new(identity),
+        OsStr::new("--database"),
+        database.as_os_str(),
+        OsStr::new("--max-files"),
+        OsStr::new(max_files),
+    ])
+}
+
+fn architecture_overview(database: &Path, identity: &str, max_files: &str) -> Output {
+    repowitness_os([
+        OsStr::new("architecture-overview"),
+        OsStr::new("--repository-id"),
+        OsStr::new(identity),
+        OsStr::new("--database"),
+        database.as_os_str(),
+        OsStr::new("--max-roots"),
+        OsStr::new("1"),
+        OsStr::new("--max-entry-point-candidates"),
+        OsStr::new("1"),
+        OsStr::new("--max-files"),
+        OsStr::new(max_files),
+    ])
+}
+
+fn test_markers(
+    database: &Path,
+    identity: &str,
+    language: &str,
+    path_prefix: &str,
+    limit: &str,
+) -> Output {
+    repowitness_os([
+        OsStr::new("test-markers"),
+        OsStr::new("--repository-id"),
+        OsStr::new(identity),
+        OsStr::new("--database"),
+        database.as_os_str(),
+        OsStr::new("--language"),
+        OsStr::new(language),
+        OsStr::new("--path-prefix"),
+        OsStr::new(path_prefix),
+        OsStr::new("--limit"),
+        OsStr::new(limit),
+    ])
+}
+
+fn syntax_site_search(database: &Path, identity: &str, target: &str, max_sites: &str) -> Output {
+    repowitness_os([
+        OsStr::new("syntax-site-search"),
+        OsStr::new("--repository-id"),
+        OsStr::new(identity),
+        OsStr::new("--database"),
+        database.as_os_str(),
+        OsStr::new("--target"),
+        OsStr::new(target),
+        OsStr::new("--max-sites"),
+        OsStr::new(max_sites),
+    ])
+}
+
 fn report_value<'a>(report: &'a str, key: &str) -> &'a str {
     let prefix = format!("{key}=");
     report
@@ -281,6 +345,7 @@ include!("cli_contract/cli_behavior.rs");
 include!("cli_contract/doctor_contract.rs");
 include!("cli_contract/gc_contract.rs");
 include!("cli_contract/mcp_contract.rs");
+include!("cli_contract/onboarding_contract.rs");
 #[cfg(unix)]
 include!("cli_contract/watch_contract.rs");
 include!("cli_contract/workspace_contract.rs");

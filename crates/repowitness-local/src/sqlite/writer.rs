@@ -474,6 +474,8 @@ include!("writer/staging.rs");
 include!("writer/verification.rs");
 include!("writer/graph.rs");
 include!("writer/graph_artifact_verification.rs");
+include!("writer/syntax_sites.rs");
+include!("writer/repository_topology.rs");
 include!("writer/scip_overlay.rs");
 include!("writer/retention.rs");
 

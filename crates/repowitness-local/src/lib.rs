@@ -9,6 +9,9 @@ mod connected_workspace_manifest;
 mod contained_source;
 mod git_memory;
 mod git_paths;
+mod local_architecture_map;
+mod local_architecture_overview;
+mod local_code_graph_query;
 mod local_connected_workspace;
 mod local_context_build;
 mod local_diagnostics;
@@ -21,18 +24,26 @@ mod local_known_at_history;
 mod local_memory_recall;
 mod local_personal_memory;
 mod local_phase2_context_build;
+mod local_relevant_paths;
+mod local_repository_topology;
 mod local_retention;
 mod local_scip_evidence_read;
 mod local_scip_overlay_import;
+mod local_scip_relationship_trace;
+mod local_scip_symbol_resolve;
 mod local_search;
 mod local_symbol_get;
+mod local_symbol_search;
+mod local_syntax_site_search;
 mod local_task;
+mod local_test_markers;
 mod local_watch;
 mod memory_format;
 mod memory_import;
 mod memory_management;
 mod memory_revalidation;
 mod package_scope;
+mod repository_topology;
 mod rust_index;
 mod source_selector;
 mod source_state;
@@ -59,6 +70,18 @@ pub use git_memory::{
 pub use git_paths::{
     DiscoveredRepositoryPaths, GitPathDiscoveryError, GitPathDiscoveryLimits,
     GitPathDiscoveryStats, discover_repository_paths, discover_repository_paths_with_cancel,
+};
+pub use local_architecture_map::{
+    DEFAULT_LOCAL_ARCHITECTURE_MAP_DEADLINE, LocalArchitectureMapError,
+    LocalArchitectureMapRequest, LocalArchitectureMapResult, map_local_architecture,
+};
+pub use local_architecture_overview::{
+    DEFAULT_LOCAL_ARCHITECTURE_OVERVIEW_DEADLINE, LocalArchitectureOverviewError,
+    LocalArchitectureOverviewRequest, LocalArchitectureOverviewResult, overview_local_architecture,
+};
+pub use local_code_graph_query::{
+    DEFAULT_LOCAL_CODE_GRAPH_QUERY_DEADLINE, LocalCodeGraphQueryError, LocalCodeGraphQueryRequest,
+    LocalCodeGraphQueryResult, read_local_code_graph_query,
 };
 pub use local_connected_workspace::{
     DEFAULT_LOCAL_CONNECTED_WORKSPACE_DEADLINE, DEFAULT_LOCAL_CONNECTED_WORKSPACE_SOURCE_DEADLINE,
@@ -114,6 +137,14 @@ pub use local_phase2_context_build::{
     LocalPhase2ContextBuildRequest, LocalPhase2ContextBuildResult, LocalPhase2ContextItem,
     LocalPhase2ContextWorkspace, LocalPhase2HistoryItem, build_local_phase2_context,
 };
+pub use local_relevant_paths::{
+    DEFAULT_LOCAL_RELEVANT_PATHS_DEADLINE, LocalRelevantPathsError, LocalRelevantPathsRequest,
+    LocalRelevantPathsResult, locate_local_relevant_paths,
+};
+pub use local_repository_topology::{
+    DEFAULT_LOCAL_REPOSITORY_TOPOLOGY_DEADLINE, LocalRepositoryTopologyError,
+    LocalRepositoryTopologyRequest, LocalRepositoryTopologyResult, read_local_repository_topology,
+};
 pub use local_retention::{
     DEFAULT_LOCAL_RETENTION_TIMEOUT, LOCAL_RETENTION_PROFILE_VERSION, LocalRetentionApplyReport,
     LocalRetentionApplyRequest, LocalRetentionError, LocalRetentionErrorKind, LocalRetentionPins,
@@ -130,19 +161,41 @@ pub use local_scip_overlay_import::{
     DEFAULT_LOCAL_SCIP_IMPORT_DEADLINE, LocalScipOverlayImportError, LocalScipOverlayImportRequest,
     LocalScipOverlayImportResult, MAX_LOCAL_SCIP_IMPORT_INPUT_BYTES, import_local_scip_overlay,
 };
+pub use local_scip_relationship_trace::{
+    DEFAULT_LOCAL_SCIP_RELATIONSHIP_TRACE_DEADLINE, LocalScipRelationshipTraceError,
+    LocalScipRelationshipTracePortError, LocalScipRelationshipTraceRequest,
+    LocalScipRelationshipTraceResult, trace_local_scip_relationships,
+};
+pub use local_scip_symbol_resolve::{
+    LocalScipSymbolResolveError, LocalScipSymbolResolvePortError, LocalScipSymbolResolveRequest,
+    LocalScipSymbolResolveResult, LocalScipSymbolResolveSelectorText, resolve_local_scip_symbol,
+};
 pub use local_search::{
     DEFAULT_LOCAL_CODE_SEARCH_DEADLINE, LocalCodeSearchError, LocalCodeSearchRequest,
     LocalCodeSearchResult, search_local_index, search_local_rust_index,
 };
 pub use local_symbol_get::{
-    DEFAULT_LOCAL_SYMBOL_GET_DEADLINE, LocalSymbolGetError, LocalSymbolGetRequest,
-    LocalSymbolGetResult, LocalSymbolPortError, LocalSymbolSelectorText, Sha256TextError,
+    DEFAULT_LOCAL_SYMBOL_GET_DEADLINE, LocalOutboundSitesError, LocalOutboundSitesRequest,
+    LocalOutboundSitesResult, LocalSymbolGetError, LocalSymbolGetRequest, LocalSymbolGetResult,
+    LocalSymbolPortError, LocalSymbolSelectorText, Sha256TextError, get_local_outbound_sites,
     get_local_rust_symbol, get_local_symbol,
+};
+pub use local_symbol_search::{
+    DEFAULT_LOCAL_SYMBOL_SEARCH_DEADLINE, LocalSymbolSearchError, LocalSymbolSearchRequest,
+    LocalSymbolSearchResult, search_local_symbols,
+};
+pub use local_syntax_site_search::{
+    DEFAULT_LOCAL_SYNTAX_SITE_SEARCH_DEADLINE, LocalSyntaxSiteSearchError,
+    LocalSyntaxSiteSearchRequest, LocalSyntaxSiteSearchResult, search_local_syntax_sites,
 };
 pub use local_task::{
     DEFAULT_LOCAL_TASK_POLL_DEADLINE, DEFAULT_LOCAL_TASK_WRITE_DEADLINE, LocalTaskCheckpointError,
     LocalTaskCheckpointRequest, LocalTaskListRequest, LocalTaskPollError, LocalTaskPollRequest,
     MAX_LOCAL_TASK_LIST_RESULTS, append_local_task_checkpoint, list_local_tasks, poll_local_task,
+};
+pub use local_test_markers::{
+    DEFAULT_LOCAL_TEST_MARKERS_DEADLINE, LocalTestMarkersError, LocalTestMarkersRequest,
+    LocalTestMarkersResult, read_local_test_markers,
 };
 pub use local_watch::{
     LOCAL_WATCH_PROFILE_VERSION, LocalWatchError, LocalWatchExit, LocalWatchReconciliation,
@@ -173,18 +226,28 @@ pub use memory_revalidation::{
     LocalMemoryRevalidationReport, LocalMemoryRevalidationRequest, MAX_LOCAL_MEMORY_GIT_QUERIES,
     revalidate_local_memory,
 };
+pub use repository_topology::{
+    PreparedRepositoryTopology, RepositoryTopologyPreparationError, prepare_repository_topology,
+};
+pub use repowitness_application::ScipRelationshipTraceDirection;
 pub use repowitness_application::{
+    ARCHITECTURE_MAP_PROFILE_VERSION, ARCHITECTURE_OVERVIEW_PROFILE_VERSION, ArchitectureMapFile,
+    ArchitectureOverviewEntryPointCandidate, ArchitectureOverviewSourceRoot,
     CODE_SEARCH_PROFILE_VERSION, CONFIGURATION_DIGEST_VERSION, CONFIGURATION_RESOLVER_VERSION,
     CONFIGURATION_SCHEMA_VERSION, CONNECTED_WORKSPACE_ID_TEXT_BYTES, CONTEXT_BUILD_RRF_K,
     CodeSearchNotice, CodeSearchProducer, ConfigurationField, ConfigurationLayer,
     ConfigurationLayerKind, ConfigurationPolicyOverrides, ConfigurationPreferenceOverrides,
     ConfigurationProfile, ConfigurationResolutionError, ConfigurationValidationError,
     ConnectedWorkspaceIdTextV1, ContextItem, ContextOmission, ContextProvider,
+    DEFAULT_ARCHITECTURE_MAP_FILES, DEFAULT_ARCHITECTURE_OVERVIEW_ENTRY_POINT_CANDIDATES,
+    DEFAULT_ARCHITECTURE_OVERVIEW_FILES, DEFAULT_ARCHITECTURE_OVERVIEW_ROOTS,
     DEFAULT_CONFIGURATION_RETAINED_GENERATIONS_PER_SOURCE_SLOT,
     DEFAULT_CONFIGURATION_RETENTION_BYTES, DEFAULT_CONFIGURATION_RETENTION_GENERATION_CANDIDATES,
     DEFAULT_CONFIGURATION_RETENTION_ROWS, DEFAULT_CONTEXT_BUILD_BUDGET_UNITS,
     EffectiveConfigurationPolicy, EffectiveConfigurationPreferences,
-    EffectiveRetentionConfiguration, MAX_CONFIGURATION_CONTEXT_BYTES,
+    EffectiveRetentionConfiguration, MAX_ARCHITECTURE_MAP_FILES,
+    MAX_ARCHITECTURE_OVERVIEW_ENTRY_POINT_CANDIDATES, MAX_ARCHITECTURE_OVERVIEW_FILES,
+    MAX_ARCHITECTURE_OVERVIEW_ROOTS, MAX_CONFIGURATION_CONTEXT_BYTES,
     MAX_CONFIGURATION_FILE_LAYERS, MAX_CONFIGURATION_GRAPH_DEPTH, MAX_CONFIGURATION_GRAPH_RESULTS,
     MAX_CONFIGURATION_QUERY_RESULTS, MAX_CONFIGURATION_RETAINED_GENERATIONS_PER_SOURCE_SLOT,
     MAX_CONFIGURATION_RETENTION_BYTES, MAX_CONFIGURATION_RETENTION_GENERATION_CANDIDATES,
@@ -196,19 +259,30 @@ pub use repowitness_application::{
     MemoryRecallEvidence, MemoryRecallEvidenceAssurance, MemoryRecallEvidenceOutcome,
     MemoryRecallEvidenceState, MemoryRecallLimits, MemoryRecallOccurrence, MemoryRecallProducer,
     MemoryRecallProjectionCoverage, MemoryRecallQueryDigest, MemoryRecallReason,
-    MemoryRecallRecord, MemoryRecordIdTextV1, PolicyValue, REPOSITORY_DIAGNOSTICS_PROFILE_VERSION,
-    RepositoryDiagnosticCapability, RepositoryDiagnosticLimitation,
-    RepositoryDiagnosticsMemoryProjection, RepositoryIdentityTextV1, RepositoryPathTextByteLimit,
-    RepositoryPathTextV1, ResolvedConfiguration, ResolvedPreference, ResolvedToolProfilePreference,
+    MemoryRecallRecord, MemoryRecordIdTextV1, PolicyValue, RELEVANT_PATHS_PROFILE_VERSION,
+    REPOSITORY_DIAGNOSTICS_PROFILE_VERSION, RepositoryDiagnosticCapability,
+    RepositoryDiagnosticLimitation, RepositoryDiagnosticsMemoryProjection,
+    RepositoryIdentityTextV1, RepositoryPathTextByteLimit, RepositoryPathTextV1,
+    ResolvedConfiguration, ResolvedPreference, ResolvedToolProfilePreference,
     RetentionConfigurationOverrides, RetrievedSymbol, RustGraphDefinitionSelector,
     RustGraphReadOperation, RustGraphReadSelection, RustGraphSelectorError, RustGraphSiteKind,
     RustGraphSiteSelector as ApplicationRustGraphSiteSelector, RustGraphSymbolQuery,
     RustGraphSymbolQueryError, RustGraphTraceDirection, RustGraphTraceLimits,
-    RustGraphTraceStartSelector, RustSymbolOccurrence, SOURCE_SLOT_ID_TEXT_BYTES,
-    SYMBOL_GET_PROFILE_VERSION, SourceLanguage, SourceSlotIdTextV1, WorkspaceIdentityTextError,
-    resolve_configuration,
+    RustGraphTraceStartSelector, RustSymbolKind, RustSymbolOccurrence, SOURCE_SLOT_ID_TEXT_BYTES,
+    SYMBOL_GET_PROFILE_VERSION, SYMBOL_SEARCH_PROFILE_VERSION, SourceLanguage, SourceSlotIdTextV1,
+    SymbolSearchNameMatch, WorkspaceIdentityTextError, resolve_configuration,
+};
+pub use repowitness_application::{
+    ArchitectureMapLimits, ArchitectureOverviewLimits, CodeGraphQueryOperation,
+    CodeGraphQueryResult, CodeSearchLimits, CodeSearchQuery, RelevantPathsLimits,
+    SymbolSearchQuery, TestMarkersLimits, TestMarkersQuery,
+};
+pub use repowitness_application::{
+    OUTBOUND_SITES_PROFILE_VERSION, OutboundSitesAvailability, OutboundSyntaxSite,
+    SYNTAX_SITE_SEARCH_PROFILE_VERSION, SyntaxSiteSearchLimits, SyntaxSiteSearchQuery,
 };
 pub use repowitness_application::{Phase2ContextCandidate, Phase2ContextTier};
+pub use repowitness_application::{TEST_MARKERS_PROFILE_VERSION, TestMarkersAvailability};
 pub use repowitness_domain::{
     ConfigurationDigest, ConnectedWorkspaceId, EvidenceLocation, MemoryAssurance, MemoryCommitId,
     MemoryCorrespondenceReviewOperation, MemoryKind, MemoryLifecycle, MemoryObjectFormat,
@@ -237,25 +311,29 @@ pub use sqlite::{
     MAX_RETENTION_GENERATION_CANDIDATES, MAX_RETENTION_GENERATION_PINS, MAX_RETENTION_ROWS,
     MAX_RETENTION_VIEW_PINS, MAX_SCIP_OVERLAY_DOCUMENTS, OwnedSqliteIndex, OwnedSqliteReader,
     PersonalMemoryReceipt, PinnedWorkspaceView, PinnedWorkspaceViewMember,
-    PreparedRustGraphArtifact, PreparedRustGraphGeneration, PreparedScipOverlay,
-    ProjectionRebuildLimits, ProjectionRebuildOutcome, RETENTION_POLICY_VERSION,
-    RetentionApplyOutcome, RetentionApplyRequest, RetentionLimits, RetentionPins, RetentionPlan,
-    RetentionPlanDigest, RetentionPlanRequest, RetentionPolicyDigest, RustGraphArchitectureSummary,
-    RustGraphAvailability, RustGraphCandidateRecord, RustGraphDefinitionRecord, RustGraphDirection,
-    RustGraphEdgeKind, RustGraphEdgeKinds, RustGraphEdgeRecord, RustGraphEvidenceResult,
-    RustGraphImpactClass, RustGraphImpactResult, RustGraphImpactedDefinition,
-    RustGraphOutcomeRecord, RustGraphPreparationControl, RustGraphPreparationError,
-    RustGraphPublicationSummary, RustGraphReadError, RustGraphReadLimits,
-    RustGraphRelationshipCardinality, RustGraphSiteSelector, RustGraphSource,
-    RustGraphSymbolSearchResult, RustGraphTraceCoverage, RustGraphTraceResult, RustGraphTraceStart,
-    RustGraphTraceTruncation, ScipEvidenceReadLimits, ScipEvidenceReadLimitsError,
-    ScipOccurrenceEvidence, ScipOverlayAvailability, ScipOverlayImportScope,
-    ScipOverlayPreparationError, ScipOverlaySummary, ScipRelationshipDirection,
-    ScipRelationshipEvidence, ScipSymbolEvidence, ScipSymbolEvidenceResult,
-    ScipSyntaxSymbolResolution, SearchHit, SearchLimits, SearchResults, SourceSlotEpoch,
-    SourceSlotGeneration, SourceSlotState, SqliteStoreError, SymbolLookupResults,
-    TaskCheckpointReceipt, TaskVerificationReceipt, WorkspaceSourceSlot, WorkspaceViewId,
-    WorkspaceViewMember, create_online_backup, prepare_rust_graph_generation,
+    PreparedRawSyntaxArtifact, PreparedRawSyntaxGeneration, PreparedRustGraphArtifact,
+    PreparedRustGraphGeneration, PreparedScipOverlay, ProjectionRebuildLimits,
+    ProjectionRebuildOutcome, RETENTION_POLICY_VERSION, RawSyntaxPreparationControl,
+    RawSyntaxPreparationError, RawSyntaxSiteProjectionAvailability, RawSyntaxSiteReadLimits,
+    RawSyntaxSiteRecord, RawSyntaxSitesReadResult, RetentionApplyOutcome, RetentionApplyRequest,
+    RetentionLimits, RetentionPins, RetentionPlan, RetentionPlanDigest, RetentionPlanRequest,
+    RetentionPolicyDigest, RustGraphArchitectureSummary, RustGraphAvailability,
+    RustGraphCandidateRecord, RustGraphDefinitionRecord, RustGraphDirection, RustGraphEdgeKind,
+    RustGraphEdgeKinds, RustGraphEdgeRecord, RustGraphEvidenceResult, RustGraphImpactClass,
+    RustGraphImpactResult, RustGraphImpactedDefinition, RustGraphOutcomeRecord,
+    RustGraphPreparationControl, RustGraphPreparationError, RustGraphPublicationSummary,
+    RustGraphReadError, RustGraphReadLimits, RustGraphRelationshipCardinality,
+    RustGraphSiteSelector, RustGraphSource, RustGraphSymbolSearchResult, RustGraphTraceCoverage,
+    RustGraphTraceResult, RustGraphTraceStart, RustGraphTraceTruncation, ScipEvidenceReadLimits,
+    ScipEvidenceReadLimitsError, ScipOccurrenceEvidence, ScipOverlayAvailability,
+    ScipOverlayImportScope, ScipOverlayPreparationError, ScipOverlaySummary,
+    ScipRelationshipDirection, ScipRelationshipEvidence, ScipRelationshipTrace,
+    ScipRelationshipTraceEdge, ScipRelationshipTraceNoRelationships, ScipRelationshipTraceResult,
+    ScipSymbolEvidence, ScipSymbolEvidenceResult, ScipSyntaxSymbolResolution, SearchHit,
+    SearchLimits, SearchResults, SourceSlotEpoch, SourceSlotGeneration, SourceSlotState,
+    SqliteStoreError, SymbolLookupResults, TaskCheckpointReceipt, TaskVerificationReceipt,
+    WorkspaceSourceSlot, WorkspaceViewId, WorkspaceViewMember, create_online_backup,
+    prepare_raw_syntax_generation, prepare_rust_graph_generation,
 };
 pub use watch_reconciliation::{
     CompleteReconciliationWork, DEFAULT_WATCHER_DEBOUNCE_MS, DEFAULT_WATCHER_HINT_PATH_BYTES,

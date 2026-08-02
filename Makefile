@@ -11,6 +11,7 @@ CARGO_DENY_VERSION ?= 0.19.4
 	benchmarks \
 	check \
 	ci \
+	ci-non-test \
 	clippy \
 	deny \
 	deps \
@@ -28,6 +29,7 @@ CARGO_DENY_VERSION ?= 0.19.4
 	test-doc \
 	test-no-default-features \
 	test-release \
+	test-sibling-repositories \
 	test-sqlite \
 	test-sqlite-benchmarks
 
@@ -41,6 +43,7 @@ help:
 		'  make clippy                    Run Clippy with warnings denied' \
 		'  make test                      Run default workspace tests' \
 		'  make test-all                  Run every supported test profile' \
+		'  make test-sibling-repositories  Privately smoke-test sibling Git worktrees' \
 		'  make test-sqlite               Run the SQLite durability spike' \
 		'  make test-sqlite-benchmarks    Run manual SQLite probes in release mode' \
 		'  make rustdoc                   Build warning-free API documentation' \
@@ -50,6 +53,7 @@ help:
 		'  make grammars                  Check vendored grammar integrity and regeneration' \
 		'  make benchmarks                Check benchmark manifests' \
 		'  make diff-check                Check the Git diff for whitespace errors' \
+		'  make ci-non-test               Run CI checks that do not execute Rust test profiles' \
 		'  make ci                        Run the required pull-request checks' \
 		'  make all                       Alias for make ci'
 
@@ -83,6 +87,9 @@ test-doc:
 
 test-release:
 	$(CARGO) test --workspace --release --all-features --locked
+
+test-sibling-repositories:
+	./scripts/test-sibling-repositories
 
 test-all: test test-no-default-features test-all-features test-doc test-release
 
@@ -123,6 +130,8 @@ benchmarks:
 diff-check:
 	git diff --check
 
-ci: fmt-check fuzz-check check clippy test test-all-features test-doc rustdoc deny deps grammars benchmarks docs diff-check
+ci-non-test: fmt-check fuzz-check check clippy rustdoc deny deps grammars benchmarks docs diff-check
+
+ci: ci-non-test test test-all-features test-doc
 
 all: ci

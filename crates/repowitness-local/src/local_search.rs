@@ -185,14 +185,23 @@ pub fn search_local_rust_index(
 fn effective_search_limits(
     request: &LocalCodeSearchRequest<'_>,
 ) -> Result<CodeSearchLimits, CodeSearchLimitError> {
-    let configured_max = request
-        .configuration
-        .map_or(u64::from(request.limits.max_results()), |configuration| {
-            *configuration.preferences().query_results().effective()
-        });
-    let effective_max = u64::from(request.limits.max_results()).min(configured_max);
+    effective_code_search_limits(request.limits, request.configuration)
+}
+
+/// Applies the resolved local query-result ceiling to an already validated search bound.
+///
+/// This shared helper keeps composite read operations from bypassing the same
+/// configuration policy enforced by the direct code-search facade.
+pub(crate) fn effective_code_search_limits(
+    limits: CodeSearchLimits,
+    configuration: Option<&ResolvedConfiguration>,
+) -> Result<CodeSearchLimits, CodeSearchLimitError> {
+    let configured_max = configuration.map_or(u64::from(limits.max_results()), |configuration| {
+        *configuration.preferences().query_results().effective()
+    });
+    let effective_max = u64::from(limits.max_results()).min(configured_max);
     let effective_max = u16::try_from(effective_max).map_err(|_| CodeSearchLimitError)?;
-    CodeSearchLimits::try_new(effective_max, request.limits.max_output_bytes())
+    CodeSearchLimits::try_new(effective_max, limits.max_output_bytes())
 }
 
 /// Searches the active local supported-language index.

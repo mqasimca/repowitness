@@ -12,11 +12,12 @@ use std::{
 };
 
 use repowitness_application::{
-    CodeSearchPortOutputError, RepositoryIdentityTextError, RepositoryIdentityTextV1,
-    RepositoryPathTextByteLimit, RepositoryPathTextError, RepositoryPathTextV1,
-    SourceArtifactEvidence, SymbolGetCandidate, SymbolGetError, SymbolGetLimits, SymbolGetPort,
-    SymbolGetPortRequest, SymbolGetPortResult, SymbolGetRequest, SymbolGetResult,
-    SymbolGetSelector, hash_source_content, symbol_get,
+    CodeSearchPortOutputError, OutboundSitesError, OutboundSitesLimitError, OutboundSitesLimits,
+    OutboundSitesRequest, OutboundSitesResult, RepositoryIdentityTextError,
+    RepositoryIdentityTextV1, RepositoryPathTextByteLimit, RepositoryPathTextError,
+    RepositoryPathTextV1, SourceArtifactEvidence, SymbolGetCandidate, SymbolGetError,
+    SymbolGetLimits, SymbolGetPort, SymbolGetPortRequest, SymbolGetPortResult, SymbolGetRequest,
+    SymbolGetResult, SymbolGetSelector, hash_source_content, outbound_sites, symbol_get,
 };
 use repowitness_domain::{
     AnalysisArtifactDigest, RepositoryPathLimits, SourceContentDigest, SourceSnapshotDigest,
@@ -40,6 +41,64 @@ const PERSISTED_PATH_LIMITS: RepositoryPathLimits =
 
 /// Proof-carrying local exact-symbol result pinned to one SQLite generation.
 pub type LocalSymbolGetResult = SymbolGetResult<GenerationId>;
+/// Exact bounded raw-site result pinned to one SQLite generation.
+pub type LocalOutboundSitesResult = OutboundSitesResult<GenerationId>;
+
+/// Explicit inputs for a persisted raw-site read. Unlike `symbol-get`, this
+/// operation reads only immutable indexed observations and does not open a
+/// repository root.
+#[derive(Clone, Copy)]
+pub struct LocalOutboundSitesRequest<'a> {
+    database: &'a Path,
+    repository_identity: &'a str,
+    selector: LocalSymbolSelectorText<'a>,
+    limits: OutboundSitesLimits,
+    deadline: Duration,
+}
+
+impl<'a> LocalOutboundSitesRequest<'a> {
+    /// Constructs a bounded immutable raw-site read.
+    #[must_use]
+    pub fn new(
+        database: &'a Path,
+        repository_identity: &'a str,
+        selector: LocalSymbolSelectorText<'a>,
+    ) -> Self {
+        Self {
+            database,
+            repository_identity,
+            selector,
+            limits: OutboundSitesLimits::default(),
+            deadline: DEFAULT_LOCAL_SYMBOL_GET_DEADLINE,
+        }
+    }
+
+    /// Applies an explicit raw-site result ceiling.
+    pub fn with_max_results(mut self, max_results: u16) -> Result<Self, OutboundSitesLimitError> {
+        self.limits = OutboundSitesLimits::try_new(max_results, self.limits.max_output_bytes())?;
+        Ok(self)
+    }
+
+    /// Applies an explicit end-to-end deadline duration.
+    #[must_use]
+    pub const fn with_deadline(mut self, deadline: Duration) -> Self {
+        self.deadline = deadline;
+        self
+    }
+}
+
+impl fmt::Debug for LocalOutboundSitesRequest<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("LocalOutboundSitesRequest")
+            .field("database", &"<redacted-path>")
+            .field("repository_identity", &"<redacted-identity>")
+            .field("selector", &self.selector)
+            .field("limits", &self.limits)
+            .field("deadline", &self.deadline)
+            .finish()
+    }
+}
 
 /// Text-boundary selector copied from one `code_search` result.
 #[derive(Clone, Copy)]
@@ -265,6 +324,64 @@ impl Error for LocalSymbolGetError {
     }
 }
 
+/// Stable one-shot local failure while reading declaration-contained raw sites.
+#[derive(Debug)]
+pub enum LocalOutboundSitesError {
+    /// The repository identity text is malformed or non-canonical.
+    RepositoryIdentity(RepositoryIdentityTextError),
+    /// The snapshot digest text is malformed or non-canonical.
+    Snapshot(Sha256TextError),
+    /// The generation is not a positive SQLite generation identity.
+    Generation,
+    /// The repository-path text is malformed or non-canonical.
+    Path(RepositoryPathTextError),
+    /// The content digest text is malformed or non-canonical.
+    Content(Sha256TextError),
+    /// The artifact digest text is malformed or non-canonical.
+    Artifact(Sha256TextError),
+    /// The absolute deadline cannot be represented.
+    DeadlineNotRepresentable,
+    /// The owned read connection could not start.
+    ReaderStart(SqliteStoreError),
+    /// The shared application raw-site use case failed.
+    Read(OutboundSitesError<SqliteStoreError>),
+    /// The owned read connection did not shut down cleanly.
+    Shutdown(SqliteStoreError),
+}
+
+impl fmt::Display for LocalOutboundSitesError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::RepositoryIdentity(_) => "repository identity is invalid",
+            Self::Snapshot(_) => "snapshot digest is invalid",
+            Self::Generation => "generation identity is invalid",
+            Self::Path(_) => "repository path is invalid",
+            Self::Content(_) => "content digest is invalid",
+            Self::Artifact(_) => "artifact digest is invalid",
+            Self::DeadlineNotRepresentable => "outbound-sites deadline cannot be represented",
+            Self::ReaderStart(_) => "local index reader could not start",
+            Self::Read(_) => "local outbound-sites read failed",
+            Self::Shutdown(_) => "local index reader could not shut down",
+        })
+    }
+}
+
+impl Error for LocalOutboundSitesError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::RepositoryIdentity(source) => Some(source),
+            Self::Snapshot(source) => Some(source),
+            Self::Path(source) => Some(source),
+            Self::Content(source) => Some(source),
+            Self::Artifact(source) => Some(source),
+            Self::ReaderStart(source) => Some(source),
+            Self::Read(source) => Some(source),
+            Self::Shutdown(source) => Some(source),
+            Self::Generation | Self::DeadlineNotRepresentable => None,
+        }
+    }
+}
+
 pub(crate) struct LocalSymbolPort<'a> {
     pub(crate) reader: &'a OwnedSqliteReader,
     pub(crate) root: &'a ContainedSourceRoot,
@@ -453,6 +570,68 @@ pub fn get_local_symbol(
     cancelled: Arc<AtomicBool>,
 ) -> Result<LocalSymbolGetResult, LocalSymbolGetError> {
     get_local_rust_symbol(request, cancelled)
+}
+
+/// Opens the exact local context, reads declaration-contained raw sites, and shuts down.
+pub fn get_local_outbound_sites(
+    request: LocalOutboundSitesRequest<'_>,
+    cancelled: Arc<AtomicBool>,
+) -> Result<LocalOutboundSitesResult, LocalOutboundSitesError> {
+    let repository = RepositoryIdentityTextV1::decode(request.repository_identity)
+        .map_err(LocalOutboundSitesError::RepositoryIdentity)?;
+    let snapshot = SourceSnapshotDigest::new(
+        decode_sha256(request.selector.snapshot_sha256)
+            .map_err(LocalOutboundSitesError::Snapshot)?,
+    );
+    if request.selector.generation <= 0 {
+        return Err(LocalOutboundSitesError::Generation);
+    }
+    let generation = GenerationId::from_database(request.selector.generation);
+    let path = RepositoryPathTextV1::decode(
+        request.selector.path,
+        RepositoryPathTextByteLimit::new(PERSISTED_PATH_TEXT_BYTES),
+        PERSISTED_PATH_LIMITS,
+    )
+    .map_err(LocalOutboundSitesError::Path)?;
+    let content = SourceContentDigest::new(
+        decode_sha256(request.selector.content_sha256).map_err(LocalOutboundSitesError::Content)?,
+    );
+    let artifact = AnalysisArtifactDigest::new(
+        decode_sha256(request.selector.artifact_sha256)
+            .map_err(LocalOutboundSitesError::Artifact)?,
+    );
+    let selector = SymbolGetSelector::new(path, content, artifact, request.selector.fact_ordinal);
+    let deadline = Instant::now()
+        .checked_add(request.deadline)
+        .ok_or(LocalOutboundSitesError::DeadlineNotRepresentable)?;
+    if cancelled.load(Ordering::Acquire) {
+        return Err(LocalOutboundSitesError::Read(OutboundSitesError::Cancelled));
+    }
+    if Instant::now() >= deadline {
+        return Err(LocalOutboundSitesError::Read(
+            OutboundSitesError::DeadlineExceeded,
+        ));
+    }
+    let reader = OwnedSqliteReader::start(request.database, deadline)
+        .map_err(LocalOutboundSitesError::ReaderStart)?;
+    let result = outbound_sites(
+        &reader,
+        OutboundSitesRequest::new(
+            repository,
+            snapshot,
+            generation,
+            selector,
+            request.limits,
+            cancelled,
+            deadline,
+        ),
+    );
+    let shutdown = reader.shutdown(deadline);
+    match (result, shutdown) {
+        (Ok(result), Ok(())) => Ok(result),
+        (Err(source), _) => Err(LocalOutboundSitesError::Read(source)),
+        (Ok(_), Err(source)) => Err(LocalOutboundSitesError::Shutdown(source)),
+    }
 }
 
 fn check_facade_control(

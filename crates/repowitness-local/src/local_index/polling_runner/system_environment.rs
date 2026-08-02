@@ -170,6 +170,8 @@ fn retryable_local_index_error(error: &LocalIndexError) -> bool {
         | LocalIndexError::WorkspaceRegistration { source }
         | LocalIndexError::PublicationStaging { source }
         | LocalIndexError::GraphPublicationStaging { source }
+        | LocalIndexError::RawSyntaxPublicationStaging { source }
+        | LocalIndexError::RepositoryTopologyPublicationStaging { source }
         | LocalIndexError::PublicationActivation { source }
         | LocalIndexError::Checkpoint { source }
         | LocalIndexError::Shutdown { source } => retryable_store_error(*source),
@@ -189,6 +191,8 @@ fn retryable_local_index_error(error: &LocalIndexError) -> bool {
         | LocalIndexError::DatabaseInsideWorktree
         | LocalIndexError::DatabaseHasMultipleLinks
         | LocalIndexError::GraphPreparation { .. }
+        | LocalIndexError::RawSyntaxPreparation { .. }
+        | LocalIndexError::RepositoryTopologyPreparation { .. }
         | LocalIndexError::MutationOutcomeUnknown { .. } => false,
     }
 }

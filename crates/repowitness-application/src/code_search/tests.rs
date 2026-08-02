@@ -19,7 +19,7 @@ use super::{
     CodeSearchQueryError, CodeSearchRequest, MAX_CODE_SEARCH_OUTPUT_BYTES, MAX_CODE_SEARCH_RESULTS,
     RustIndexCoverage, RustSymbolOccurrence, SourceArtifactEvidence, code_search,
 };
-use crate::SourceLanguage;
+use crate::{RelevantPathsError, RelevantPathsLimits, SourceLanguage, locate_relevant_paths};
 
 const PATH_LIMITS: RepositoryPathLimits = RepositoryPathLimits::new(128, 8);
 
@@ -78,6 +78,29 @@ fn candidate_for_language(
     name: &str,
     language: SourceLanguage,
 ) -> CodeSearchCandidate {
+    let extension = match language {
+        SourceLanguage::Rust => "rs",
+        SourceLanguage::Go => "go",
+        SourceLanguage::TypeScript => "ts",
+        SourceLanguage::Tsx => "tsx",
+        SourceLanguage::Python => "py",
+    };
+    candidate_for_path(
+        ordinal,
+        name,
+        language,
+        &format!("src/{name}.{extension}"),
+        SourceContentDigest::new([3; 32]),
+    )
+}
+
+fn candidate_for_path(
+    ordinal: u64,
+    name: &str,
+    language: SourceLanguage,
+    path: &str,
+    content_digest: SourceContentDigest,
+) -> CodeSearchCandidate {
     let name_start = 10 + ordinal;
     let name_end = name_start + u64::try_from(name.len()).expect("fixture length fits");
     let producer_manifest = match language {
@@ -100,17 +123,10 @@ fn candidate_for_language(
     )
     .expect("fixture occurrence is valid")
     .with_language(language);
-    let extension = match language {
-        SourceLanguage::Rust => "rs",
-        SourceLanguage::Go => "go",
-        SourceLanguage::TypeScript => "ts",
-        SourceLanguage::Tsx => "tsx",
-        SourceLanguage::Python => "py",
-    };
     CodeSearchCandidate::new(
-        RepositoryPath::try_from_bytes(format!("src/{name}.{extension}").as_bytes(), PATH_LIMITS)
+        RepositoryPath::try_from_bytes(path.as_bytes(), PATH_LIMITS)
             .expect("fixture path is valid"),
-        SourceContentDigest::new([3; 32]),
+        content_digest,
         occurrence,
     )
 }
@@ -250,6 +266,168 @@ fn candidates_become_ordered_attributed_evidence_with_exact_coverage() {
         evidence[3].producer().version(),
         &repowitness_domain::ProducerManifestDigest::new([8; 32])
     );
+}
+
+#[test]
+fn lexical_path_navigation_qualifies_candidate_truncation_from_path_presentation() {
+    let port = FakePort::with(Ok(result(
+        vec![
+            candidate_for_path(
+                4,
+                "first",
+                SourceLanguage::Rust,
+                "src/shared.rs",
+                SourceContentDigest::new([3; 32]),
+            ),
+            candidate_for_path(
+                2,
+                "second",
+                SourceLanguage::Rust,
+                "src/shared.rs",
+                SourceContentDigest::new([3; 32]),
+            ),
+            candidate_for_path(
+                1,
+                "third",
+                SourceLanguage::Rust,
+                "src/other.rs",
+                SourceContentDigest::new([6; 32]),
+            ),
+        ],
+        4,
+    )));
+    let search = code_search(
+        &port,
+        request(
+            Arc::new(AtomicBool::new(false)),
+            Instant::now() + Duration::from_secs(1),
+        ),
+    )
+    .expect("search should succeed");
+    let result = locate_relevant_paths(
+        search,
+        RelevantPathsLimits::try_new(2).expect("limit is valid"),
+    )
+    .expect("projection should succeed");
+
+    assert_eq!(result.search().claim().returned_matches(), 3);
+    assert_eq!(result.search().claim().total_matches(), 4);
+    assert_eq!(result.search().coverage().truncated().get(), 1);
+    // Two is exact only for the three returned candidates, never a claim that
+    // the omitted fourth match has no distinct path.
+    assert_eq!(result.returned_match_paths_total(), 2);
+    assert!(!result.returned_match_paths_truncated());
+    let paths = result.paths().as_slice();
+    assert_eq!(paths.len(), 2);
+    assert_eq!(paths[0].matching_declarations(), 2);
+    assert_eq!(paths[0].first_fact_ordinal(), 2);
+    assert_eq!(
+        paths[0].path(),
+        &RepositoryPath::try_from_bytes(b"src/shared.rs", PATH_LIMITS)
+            .expect("fixture path is valid")
+    );
+    assert_eq!(paths[1].matching_declarations(), 1);
+    assert_eq!(
+        paths[1].path(),
+        &RepositoryPath::try_from_bytes(b"src/other.rs", PATH_LIMITS)
+            .expect("fixture path is valid")
+    );
+}
+
+#[test]
+fn lexical_path_navigation_preserves_an_unresolved_empty_search() {
+    let port = FakePort::with(Ok(result(Vec::new(), 0)));
+    let search = code_search(
+        &port,
+        request(
+            Arc::new(AtomicBool::new(false)),
+            Instant::now() + Duration::from_secs(1),
+        ),
+    )
+    .expect("empty search should remain a valid material result");
+    let paths = locate_relevant_paths(search, RelevantPathsLimits::default())
+        .expect("empty projection should succeed");
+
+    assert!(paths.paths().as_slice().is_empty());
+    assert_eq!(paths.search().resolution(), ResolutionStatus::Unresolved);
+    assert_eq!(paths.search().coverage().unresolved().get(), 2);
+}
+
+#[test]
+fn lexical_path_navigation_reports_path_presentation_truncation_separately() {
+    let port = FakePort::with(Ok(result(
+        vec![
+            candidate_for_path(
+                0,
+                "first",
+                SourceLanguage::Rust,
+                "src/first.rs",
+                SourceContentDigest::new([3; 32]),
+            ),
+            candidate_for_path(
+                1,
+                "second",
+                SourceLanguage::Rust,
+                "src/second.rs",
+                SourceContentDigest::new([4; 32]),
+            ),
+        ],
+        2,
+    )));
+    let search = code_search(
+        &port,
+        request(
+            Arc::new(AtomicBool::new(false)),
+            Instant::now() + Duration::from_secs(1),
+        ),
+    )
+    .expect("search should succeed");
+    let result = locate_relevant_paths(
+        search,
+        RelevantPathsLimits::try_new(1).expect("limit is valid"),
+    )
+    .expect("projection should succeed");
+
+    assert_eq!(result.search().claim().returned_matches(), 2);
+    assert_eq!(result.returned_match_paths_total(), 2);
+    assert!(result.returned_match_paths_truncated());
+    assert_eq!(result.paths().as_slice().len(), 1);
+}
+
+#[test]
+fn lexical_path_navigation_rejects_conflicting_content_for_one_path() {
+    let port = FakePort::with(Ok(result(
+        vec![
+            candidate_for_path(
+                0,
+                "first",
+                SourceLanguage::Rust,
+                "src/shared.rs",
+                SourceContentDigest::new([3; 32]),
+            ),
+            candidate_for_path(
+                1,
+                "second",
+                SourceLanguage::Rust,
+                "src/shared.rs",
+                SourceContentDigest::new([4; 32]),
+            ),
+        ],
+        2,
+    )));
+    let search = code_search(
+        &port,
+        request(
+            Arc::new(AtomicBool::new(false)),
+            Instant::now() + Duration::from_secs(1),
+        ),
+    )
+    .expect("individual candidates satisfy the code-search contract");
+
+    assert!(matches!(
+        locate_relevant_paths(search, RelevantPathsLimits::default()),
+        Err(RelevantPathsError::InconsistentPathContent)
+    ));
 }
 
 #[test]

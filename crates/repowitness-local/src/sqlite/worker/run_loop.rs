@@ -91,6 +91,33 @@ fn run_writer(
                 );
                 send_mutation_reply(reply, result, hooks, unresolved_mutation);
             }
+            WriterCommand::StageSyntaxSites(command) => {
+                let StageSyntaxSitesCommand {
+                    generation,
+                    prepared,
+                    cancelled,
+                    deadline,
+                    reply,
+                } = *command;
+                let result = state.stage_syntax_sites(
+                    generation,
+                    &prepared,
+                    WriteControl {
+                        cancelled: &cancelled,
+                        deadline,
+                    },
+                );
+                send_mutation_reply(reply, result, hooks, unresolved_mutation);
+            }
+            WriterCommand::StageRepositoryTopology(command) => {
+                let StageRepositoryTopologyCommand { generation, prepared, cancelled, deadline, reply } = *command;
+                let result = state.stage_repository_topology(
+                    generation,
+                    &prepared,
+                    WriteControl { cancelled: &cancelled, deadline },
+                );
+                send_mutation_reply(reply, result, hooks, unresolved_mutation);
+            }
             WriterCommand::StageScipOverlay(command) => {
                 let StageScipOverlayCommand {
                     connected_workspace,

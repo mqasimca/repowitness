@@ -357,12 +357,15 @@ fn index_status_and_head_mutations_are_rejected_by_the_source_state_fence() {
         || index_repository.git(&["add", "stable.rs"]),
     )
     .expect_err("an index mutation must fail the source-state fence");
-    assert!(matches!(
-        index_error,
-        LocalRustIndexError::SourceState {
-            source: SourceStateError::ConcurrentSourceChange
-        }
-    ));
+    assert!(
+        matches!(
+            index_error,
+            LocalRustIndexError::SourceState {
+                source: SourceStateError::ConcurrentSourceChange
+            }
+        ),
+        "unexpected final-fence result: {index_error:?}"
+    );
 
     let status_repository = TempRepository::new();
     status_repository.write("stable.rs", b"fn stable() {}\n");

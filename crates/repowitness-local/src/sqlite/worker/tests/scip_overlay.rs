@@ -22,6 +22,13 @@ fn scip_field(field: u32, wire: u8, payload: &[u8]) -> Vec<u8> {
     encoded
 }
 
+fn scip_lower_hex(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 fn synthetic_scip_document() -> Vec<u8> {
     let mut legacy_range = Vec::new();
     for component in [0_u64, 0, 0, 1] {
@@ -35,13 +42,15 @@ fn synthetic_scip_document() -> Vec<u8> {
     document
 }
 
-fn synthetic_scip_document_with_evidence(
+fn synthetic_scip_document_with_relationships(
     path: &[u8],
     occurrence_symbol: &[u8],
-    relationship_target: Option<&[u8]>,
+    relationship_targets: &[&[u8]],
+    name_start: u64,
+    name_end: u64,
 ) -> Vec<u8> {
     let mut legacy_range = Vec::new();
-    for component in [0_u64, 0, 0, 1] {
+    for component in [0_u64, name_start, 0, name_end] {
         legacy_range.extend(scip_varint(component));
     }
     let mut occurrence = scip_field(1, 2, &legacy_range);
@@ -49,11 +58,13 @@ fn synthetic_scip_document_with_evidence(
     occurrence.extend(scip_field(3, 0, &[1]));
     let mut document = scip_field(1, 2, path);
     document.extend(scip_field(2, 2, &occurrence));
-    if let Some(target) = relationship_target {
-        let mut relationship = scip_field(1, 2, target);
-        relationship.extend(scip_field(2, 0, &[1]));
+    if !relationship_targets.is_empty() {
         let mut symbol_information = scip_field(1, 2, occurrence_symbol);
-        symbol_information.extend(scip_field(4, 2, &relationship));
+        for target in relationship_targets {
+            let mut relationship = scip_field(1, 2, target);
+            relationship.extend(scip_field(2, 0, &[1]));
+            symbol_information.extend(scip_field(4, 2, &relationship));
+        }
         document.extend(scip_field(3, 2, &symbol_information));
     }
     document.extend(scip_field(4, 2, b"rust"));
@@ -131,6 +142,31 @@ fn scip_overlay_writer_is_atomic_idempotent_and_cancellation_preserves_pointer()
         .expect("single repository view should publish");
     let source_slot = view.members()[0].source_slot();
     let workspace = view.connected_workspace();
+    let reader =
+        OwnedSqliteReader::start(&directory.database(), deadline()).expect("reader should start");
+    let no_overlay_trace = reader
+        .scip_relationship_trace(
+            &view,
+            source_slot,
+            PackageScope::whole_repository(),
+            ScipSymbol::try_new("scip-rust pkg 1 Unproduced.".to_owned())
+                .expect("fixture symbol should validate"),
+            repowitness_application::ScipRelationshipTraceDirection::Outgoing,
+            repowitness_application::ScipRelationshipTraceDepth::try_new(1)
+                .expect("depth should validate"),
+            repowitness_application::ScipRelationshipTraceMaxEdges::try_new(1)
+                .expect("edge limit should validate"),
+            crate::sqlite::ScipRelationshipTraceReadLimits::try_new(1, 2, 1_048_576)
+                .expect("trace limits should validate"),
+            Arc::new(AtomicBool::new(false)),
+            deadline(),
+        )
+        .expect("no-overlay trace should load categorically");
+    assert!(matches!(
+        no_overlay_trace,
+        crate::ScipRelationshipTraceResult::NotProduced
+    ));
+    reader.shutdown(deadline()).expect("reader should stop");
     let overlay_identity = ScipOverlayIdentityInput::new(
         overlay_scope(&view, source_slot),
         hash_source_snapshot(source_identity, prepared_manifest),
@@ -259,6 +295,7 @@ fn scip_overlay_writer_is_atomic_idempotent_and_cancellation_preserves_pointer()
 #[test]
 #[allow(
     clippy::too_many_lines,
+    clippy::cognitive_complexity,
     reason = "the source-slot isolation fixture retains every exact package-scope and pinned-view assertion together"
 )]
 fn scip_symbol_evidence_is_pinned_package_scoped_and_cross_file() {
@@ -296,19 +333,30 @@ fn scip_symbol_evidence_is_pinned_package_scoped_and_cross_file() {
     let workspace = view.connected_workspace();
 
     let source_symbol = b"scip-rust pkg 1 Source.";
-    let target_symbol = b"scip-rust pkg 1 Target#";
-    let lib_raw = synthetic_scip_document_with_evidence(
+    let target_symbol = format!("scip-rust pkg 1 Target{}#", "\u{0001}".repeat(64)).into_bytes();
+    let second_target_symbol = b"scip-rust pkg 1 Other#";
+    let lib_raw = synthetic_scip_document_with_relationships(
         b"src/lib.rs",
         source_symbol,
-        Some(target_symbol),
+        &[target_symbol.as_slice(), second_target_symbol],
+        7,
+        27,
     );
-    let model_raw = synthetic_scip_document_with_evidence(b"src/model.rs", target_symbol, None);
+    let model_raw = synthetic_scip_document_with_relationships(
+        b"src/model.rs",
+        target_symbol.as_slice(),
+        &[source_symbol],
+        11,
+        16,
+    );
     let fixture_index = prepared("scip_evidence");
+    let lib_source = b"pub fn stable_scip_evidence() {}\n";
+    let model_source = b"pub struct Model;\n";
     let lib_document = repowitness_analysis::decode_scip_overlay_document(
         &lib_raw,
         fixture_index.manifest(),
         PATH_LIMITS,
-        b"pub fn stable_scip_evidence() {}\n",
+        lib_source,
         &AtomicBool::new(false),
         deadline(),
     )
@@ -317,7 +365,7 @@ fn scip_symbol_evidence_is_pinned_package_scoped_and_cross_file() {
         &model_raw,
         fixture_index.manifest(),
         PATH_LIMITS,
-        b"pub struct Model;\n",
+        model_source,
         &AtomicBool::new(false),
         deadline(),
     )
@@ -367,7 +415,7 @@ fn scip_symbol_evidence_is_pinned_package_scoped_and_cross_file() {
         panic!("source symbol should have exact evidence");
     };
     assert_eq!(source_evidence.occurrences().len(), 1);
-    assert_eq!(source_evidence.relationships().len(), 1);
+    assert_eq!(source_evidence.relationships().len(), 3);
     assert_eq!(source_evidence.occurrences()[0].path().as_bytes(), b"src/lib.rs");
     assert_eq!(
         source_evidence.relationships()[0].direction(),
@@ -388,13 +436,13 @@ fn scip_symbol_evidence_is_pinned_package_scoped_and_cross_file() {
         panic!("target symbol should have exact cross-file evidence");
     };
     assert_eq!(target_evidence.occurrences().len(), 1);
-    assert_eq!(target_evidence.relationships().len(), 1);
+    assert_eq!(target_evidence.relationships().len(), 2);
     assert_eq!(target_evidence.occurrences()[0].path().as_bytes(), b"src/model.rs");
     assert_eq!(
         target_evidence.relationships()[0].direction(),
         crate::ScipRelationshipDirection::Incoming
     );
-    let excluded_scope = PackageScope::try_explicit_root_bytes([b"src/model.rs"], PATH_LIMITS)
+    let excluded_scope = PackageScope::try_explicit_root_bytes([b"src/unmatched.rs"], PATH_LIMITS)
         .expect("exact package root should validate");
     let excluded = reader
         .scip_symbol_evidence(
@@ -409,26 +457,350 @@ fn scip_symbol_evidence_is_pinned_package_scoped_and_cross_file() {
     )
     .expect("scoped evidence should load");
     assert!(matches!(excluded, crate::ScipSymbolEvidenceResult::NoMatch(_)));
-    reader.shutdown(deadline()).expect("reader should stop");
 
-    let repository_identity = RepositoryIdentityTextV1::encode(repository).into_string();
-    let local_result = crate::read_local_scip_evidence(
-        crate::LocalScipEvidenceReadRequest::new(
-            &directory.database(),
-            &repository_identity,
+    let outgoing_trace = reader
+        .scip_relationship_trace(
+            &view,
+            source_slot,
             PackageScope::whole_repository(),
             ScipSymbol::try_new(String::from_utf8(source_symbol.to_vec()).expect("UTF-8"))
                 .expect("source symbol should validate"),
+            repowitness_application::ScipRelationshipTraceDirection::Outgoing,
+            repowitness_application::ScipRelationshipTraceDepth::try_new(1)
+                .expect("depth should validate"),
+            repowitness_application::ScipRelationshipTraceMaxEdges::try_new(1)
+                .expect("edge limit should validate"),
+            crate::sqlite::ScipRelationshipTraceReadLimits::try_new(1, 2, 1_048_576)
+                .expect("trace limits should validate"),
+            Arc::new(AtomicBool::new(false)),
+            deadline(),
+        )
+        .expect("outgoing producer trace should load");
+    let crate::ScipRelationshipTraceResult::Found(outgoing_trace) = outgoing_trace else {
+        panic!("source should begin one producer-declared trace");
+    };
+    assert_eq!(outgoing_trace.edges().len(), 1);
+    assert_eq!(outgoing_trace.edges()[0].document_ordinal(), 0);
+    assert_eq!(outgoing_trace.edges()[0].relationship_ordinal(), 0);
+    assert_eq!(outgoing_trace.edges()[0].depth(), 1);
+    assert_eq!(
+        outgoing_trace.edges()[0].relationship().target().as_str(),
+        String::from_utf8(target_symbol.to_vec()).expect("UTF-8")
+    );
+    assert_eq!(outgoing_trace.visited_symbols(), 2);
+    assert_eq!(outgoing_trace.unexpanded_frontier_symbols(), 3);
+    assert!(outgoing_trace.depth_limit_reached());
+    assert!(outgoing_trace.edge_limit_reached());
+
+    let depth_limited_trace = reader
+        .scip_relationship_trace(
+            &view,
+            source_slot,
+            PackageScope::whole_repository(),
+            ScipSymbol::try_new(String::from_utf8(source_symbol.to_vec()).expect("UTF-8"))
+                .expect("source symbol should validate"),
+            repowitness_application::ScipRelationshipTraceDirection::Outgoing,
+            repowitness_application::ScipRelationshipTraceDepth::try_new(1)
+                .expect("depth should validate"),
+            repowitness_application::ScipRelationshipTraceMaxEdges::try_new(256)
+                .expect("edge limit should validate"),
+            crate::sqlite::ScipRelationshipTraceReadLimits::default(),
+            Arc::new(AtomicBool::new(false)),
+            deadline(),
+        )
+        .expect("depth-limited producer trace should load");
+    let crate::ScipRelationshipTraceResult::Found(depth_limited_trace) = depth_limited_trace
+    else {
+        panic!("source should begin one depth-limited producer trace");
+    };
+    assert_eq!(depth_limited_trace.edges().len(), 2);
+    assert_eq!(depth_limited_trace.visited_symbols(), 3);
+    assert_eq!(depth_limited_trace.unexpanded_frontier_symbols(), 2);
+    assert!(depth_limited_trace.depth_limit_reached());
+    assert!(!depth_limited_trace.edge_limit_reached());
+
+    let cycle_trace = reader
+        .scip_relationship_trace(
+            &view,
+            source_slot,
+            PackageScope::whole_repository(),
+            ScipSymbol::try_new(String::from_utf8(source_symbol.to_vec()).expect("UTF-8"))
+                .expect("source symbol should validate"),
+            repowitness_application::ScipRelationshipTraceDirection::Outgoing,
+            repowitness_application::ScipRelationshipTraceDepth::try_new(2)
+                .expect("depth should validate"),
+            repowitness_application::ScipRelationshipTraceMaxEdges::try_new(256)
+                .expect("edge limit should validate"),
+            crate::sqlite::ScipRelationshipTraceReadLimits::default(),
+            Arc::new(AtomicBool::new(false)),
+            deadline(),
+        )
+        .expect("cyclic producer trace should load");
+    let crate::ScipRelationshipTraceResult::Found(cycle_trace) = cycle_trace else {
+        panic!("source should begin one cyclic producer trace");
+    };
+    assert_eq!(cycle_trace.edges().len(), 3);
+    assert_eq!(cycle_trace.visited_symbols(), 3);
+    assert_eq!(cycle_trace.edges()[2].depth(), 2);
+    assert_eq!(
+        cycle_trace.edges()[2].relationship().target().as_str(),
+        String::from_utf8(source_symbol.to_vec()).expect("UTF-8")
+    );
+
+    let edge_limited_cycle = reader
+        .scip_relationship_trace(
+            &view,
+            source_slot,
+            PackageScope::whole_repository(),
+            ScipSymbol::try_new(String::from_utf8(source_symbol.to_vec()).expect("UTF-8"))
+                .expect("source symbol should validate"),
+            repowitness_application::ScipRelationshipTraceDirection::Outgoing,
+            repowitness_application::ScipRelationshipTraceDepth::try_new(2)
+                .expect("depth should validate"),
+            repowitness_application::ScipRelationshipTraceMaxEdges::try_new(2)
+                .expect("edge limit should validate"),
+            crate::sqlite::ScipRelationshipTraceReadLimits::try_new(2, 3, 1_048_576)
+                .expect("trace limits should validate"),
+            Arc::new(AtomicBool::new(false)),
+            deadline(),
+        )
+        .expect("edge-limited cyclic trace should load");
+    let crate::ScipRelationshipTraceResult::Found(edge_limited_cycle) = edge_limited_cycle
+    else {
+        panic!("source should begin one edge-limited cyclic trace");
+    };
+    assert_eq!(edge_limited_cycle.edges().len(), 2);
+    assert_eq!(edge_limited_cycle.visited_symbols(), 3);
+    assert_eq!(edge_limited_cycle.unexpanded_frontier_symbols(), 2);
+    assert!(edge_limited_cycle.edge_limit_reached());
+
+    let symbol_limited_trace = reader
+        .scip_relationship_trace(
+            &view,
+            source_slot,
+            PackageScope::whole_repository(),
+            ScipSymbol::try_new(String::from_utf8(source_symbol.to_vec()).expect("UTF-8"))
+                .expect("source symbol should validate"),
+            repowitness_application::ScipRelationshipTraceDirection::Outgoing,
+            repowitness_application::ScipRelationshipTraceDepth::try_new(1)
+                .expect("depth should validate"),
+            repowitness_application::ScipRelationshipTraceMaxEdges::try_new(256)
+                .expect("edge limit should validate"),
+            crate::sqlite::ScipRelationshipTraceReadLimits::try_new(256, 1, 1_048_576)
+                .expect("trace limits should validate"),
+            Arc::new(AtomicBool::new(false)),
+            deadline(),
+        )
+        .expect("symbol-limited producer trace should load");
+    let crate::ScipRelationshipTraceResult::Found(symbol_limited_trace) = symbol_limited_trace
+    else {
+        panic!("source should begin one symbol-limited producer trace");
+    };
+    assert_eq!(symbol_limited_trace.edges().len(), 2);
+    assert_eq!(symbol_limited_trace.visited_symbols(), 1);
+    assert_eq!(symbol_limited_trace.unexpanded_frontier_symbols(), 2);
+    assert!(symbol_limited_trace.depth_limit_reached());
+    assert!(symbol_limited_trace.symbol_limit_reached());
+
+    let output_limited_trace = reader
+        .scip_relationship_trace(
+            &view,
+            source_slot,
+            PackageScope::whole_repository(),
+            ScipSymbol::try_new(String::from_utf8(source_symbol.to_vec()).expect("UTF-8"))
+                .expect("source symbol should validate"),
+            repowitness_application::ScipRelationshipTraceDirection::Outgoing,
+            repowitness_application::ScipRelationshipTraceDepth::try_new(1)
+                .expect("depth should validate"),
+            repowitness_application::ScipRelationshipTraceMaxEdges::try_new(256)
+                .expect("edge limit should validate"),
+            crate::sqlite::ScipRelationshipTraceReadLimits::try_new(256, 257, 500)
+                .expect("trace limits should validate"),
+            Arc::new(AtomicBool::new(false)),
+            deadline(),
+        )
+        .expect("output-limited producer trace should load");
+    let crate::ScipRelationshipTraceResult::Found(output_limited_trace) = output_limited_trace
+    else {
+        panic!("source should begin one output-limited producer trace");
+    };
+    assert!(output_limited_trace.edges().is_empty());
+    assert_eq!(output_limited_trace.output_bytes(), 0);
+    assert_eq!(output_limited_trace.unexpanded_frontier_symbols(), 2);
+    assert!(output_limited_trace.depth_limit_reached());
+    assert!(output_limited_trace.output_limit_reached());
+
+    let exact_cap_trace = reader
+        .scip_relationship_trace(
+            &view,
+            source_slot,
+            PackageScope::whole_repository(),
+            ScipSymbol::try_new(String::from_utf8(source_symbol.to_vec()).expect("UTF-8"))
+                .expect("source symbol should validate"),
+            repowitness_application::ScipRelationshipTraceDirection::Outgoing,
+            repowitness_application::ScipRelationshipTraceDepth::try_new(2)
+                .expect("depth should validate"),
+            repowitness_application::ScipRelationshipTraceMaxEdges::try_new(3)
+                .expect("edge limit should validate"),
+            crate::sqlite::ScipRelationshipTraceReadLimits::try_new(3, 4, 1_048_576)
+                .expect("trace limits should validate"),
+            Arc::new(AtomicBool::new(false)),
+            deadline(),
+        )
+        .expect("exactly full incoming trace should load");
+    let crate::ScipRelationshipTraceResult::Found(exact_cap_trace) = exact_cap_trace else {
+        panic!("source should begin one exactly full outgoing trace");
+    };
+    assert_eq!(exact_cap_trace.edges().len(), 3);
+    assert!(!exact_cap_trace.edge_limit_reached());
+    assert!(!exact_cap_trace.depth_limit_reached());
+
+    let incoming_trace = reader
+        .scip_relationship_trace(
+            &view,
+            source_slot,
+            PackageScope::whole_repository(),
+            ScipSymbol::try_new(String::from_utf8(target_symbol.to_vec()).expect("UTF-8"))
+                .expect("target symbol should validate"),
+            repowitness_application::ScipRelationshipTraceDirection::Incoming,
+            repowitness_application::ScipRelationshipTraceDepth::try_new(2)
+                .expect("depth should validate"),
+            repowitness_application::ScipRelationshipTraceMaxEdges::try_new(256)
+                .expect("edge limit should validate"),
+            crate::sqlite::ScipRelationshipTraceReadLimits::default(),
+            Arc::new(AtomicBool::new(false)),
+            deadline(),
+        )
+        .expect("incoming producer trace should load");
+    let crate::ScipRelationshipTraceResult::Found(incoming_trace) = incoming_trace else {
+        panic!("target should begin one incoming producer trace");
+    };
+    assert_eq!(incoming_trace.edges().len(), 2);
+    assert_eq!(
+        incoming_trace.edges()[0].relationship().source().as_str(),
+        String::from_utf8(source_symbol.to_vec()).expect("UTF-8")
+    );
+    assert!(!incoming_trace.depth_limit_reached());
+
+    let no_relationships = reader
+        .scip_relationship_trace(
+            &view,
+            source_slot,
+            PackageScope::whole_repository(),
+            ScipSymbol::try_new("scip-rust pkg 1 Unrelated.".to_owned())
+                .expect("unrelated symbol should validate"),
+            repowitness_application::ScipRelationshipTraceDirection::Outgoing,
+            repowitness_application::ScipRelationshipTraceDepth::try_new(1)
+                .expect("depth should validate"),
+            repowitness_application::ScipRelationshipTraceMaxEdges::try_new(256)
+                .expect("edge limit should validate"),
+            crate::sqlite::ScipRelationshipTraceReadLimits::default(),
+            Arc::new(AtomicBool::new(false)),
+            deadline(),
+        )
+        .expect("no-relationship result should load");
+    assert!(matches!(
+        no_relationships,
+        crate::ScipRelationshipTraceResult::NoRelationships(_)
+    ));
+
+    let scoped_no_relationships = reader
+        .scip_relationship_trace(
+            &view,
+            source_slot,
+            PackageScope::try_explicit_root_bytes([b"src/model.rs"], PATH_LIMITS)
+                .expect("exact package scope should validate"),
+            ScipSymbol::try_new(String::from_utf8(source_symbol.to_vec()).expect("UTF-8"))
+                .expect("source symbol should validate"),
+            repowitness_application::ScipRelationshipTraceDirection::Outgoing,
+            repowitness_application::ScipRelationshipTraceDepth::try_new(1)
+                .expect("depth should validate"),
+            repowitness_application::ScipRelationshipTraceMaxEdges::try_new(256)
+                .expect("edge limit should validate"),
+            crate::sqlite::ScipRelationshipTraceReadLimits::default(),
+            Arc::new(AtomicBool::new(false)),
+            deadline(),
+        )
+        .expect("scoped no-relationship result should load");
+    assert!(matches!(
+        scoped_no_relationships,
+        crate::ScipRelationshipTraceResult::NoRelationships(_)
+    ));
+    reader.shutdown(deadline()).expect("reader should stop");
+
+    let repository_identity = RepositoryIdentityTextV1::encode(repository).into_string();
+    let searched = crate::search_local_symbols(
+        crate::LocalSymbolSearchRequest::new(
+            &directory.database(),
+            &repository_identity,
+            "stable_scip_evidence",
+            repowitness_application::SymbolSearchNameMatch::Exact,
+        ),
+        Arc::new(AtomicBool::new(false)),
+    )
+    .expect("typed declaration search should return the source receipt");
+    assert_eq!(searched.connected_workspace(), workspace);
+    assert_eq!(searched.workspace_view(), view.view().get());
+    assert_eq!(searched.source_slot(), source_slot);
+    let receipt = searched
+        .evidence()
+        .as_slice()
+        .first()
+        .expect("exact declaration search should return one receipt");
+    let repowitness_domain::EvidenceLocation::SymbolOccurrence(occurrence) =
+        receipt.identity().location()
+    else {
+        panic!("typed declaration search must return a symbol occurrence");
+    };
+    assert_eq!(receipt.identity().path().as_bytes(), b"src/lib.rs");
+    let snapshot_sha256 = scip_lower_hex(searched.snapshot().as_bytes());
+    let artifact_sha256 = scip_lower_hex(occurrence.artifact_digest().as_bytes());
+    let lib_content_sha256 = scip_lower_hex(receipt.identity().content_digest().as_bytes());
+    let fact_ordinal = occurrence.fact_ordinal();
+    let name_span = occurrence.name_span();
+    let resolved = crate::resolve_local_scip_symbol(
+        crate::LocalScipSymbolResolveRequest::new(
+            &directory.database(),
+            &repository_identity,
+            crate::LocalScipSymbolResolveSelectorText::new(
+                &snapshot_sha256,
+                searched.generation().get(),
+                "rwp1:h:7372632F6C69622E7273",
+                &lib_content_sha256,
+                &artifact_sha256,
+                fact_ordinal,
+                (name_span.start().get(), name_span.end().get()),
+            ),
         )
         .with_exact_view(view.view().get())
         .expect("exact view should validate"),
         Arc::new(AtomicBool::new(false)),
     )
-    .expect("local facade should preserve the exact evidence result");
+    .expect("local exact syntax resolution should preserve the selected overlay symbol");
+    assert!(matches!(
+        resolved.output(),
+        crate::ScipSyntaxSymbolResolution::Exact(symbol)
+            if symbol.as_str() == std::str::from_utf8(source_symbol).expect("fixture symbol is UTF-8")
+    ));
+    let crate::ScipSyntaxSymbolResolution::Exact(resolved_symbol) = resolved.into_output() else {
+        panic!("the exact syntax receipt must resolve to one provider symbol");
+    };
+    let local_result = crate::read_local_scip_evidence(
+        crate::LocalScipEvidenceReadRequest::new(
+            &directory.database(),
+            &repository_identity,
+            PackageScope::whole_repository(),
+            resolved_symbol,
+        )
+        .with_exact_view(view.view().get())
+        .expect("exact view should validate"),
+        Arc::new(AtomicBool::new(false)),
+    )
+    .expect("resolved provider symbol should retrieve the same exact evidence");
     assert!(matches!(
         local_result.output(),
         crate::ScipSymbolEvidenceResult::Found(evidence)
-            if evidence.occurrences().len() == 1 && evidence.relationships().len() == 1
+            if evidence.occurrences().len() == 1 && evidence.relationships().len() == 3
     ));
     store.shutdown(deadline()).expect("store should stop");
 }

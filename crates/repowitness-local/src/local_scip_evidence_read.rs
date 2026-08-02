@@ -301,7 +301,7 @@ pub fn read_local_scip_evidence(
     request: LocalScipEvidenceReadRequest<'_>,
     cancelled: Arc<AtomicBool>,
 ) -> Result<LocalScipEvidenceReadResult, LocalScipEvidenceReadError> {
-    let selection = resolve_selection(&request)?;
+    let selection = resolve_scip_evidence_selection(&request)?;
     let deadline = Instant::now()
         .checked_add(request.deadline)
         .ok_or(LocalScipEvidenceReadError::DeadlineNotRepresentable)?;
@@ -329,17 +329,25 @@ pub fn read_local_scip_evidence(
     }
 }
 
-fn resolve_selection(
+pub(crate) fn resolve_scip_evidence_selection(
     request: &LocalScipEvidenceReadRequest<'_>,
 ) -> Result<ScipEvidenceReadSelection, LocalScipEvidenceReadError> {
-    match request.workspace {
+    scip_evidence_selection(&request.workspace, request.exact_view)
+}
+
+/// Decodes one local SCIP workspace selection without opening storage.
+pub(crate) fn scip_evidence_selection(
+    workspace: &LocalScipEvidenceWorkspace<'_>,
+    exact_view: Option<i64>,
+) -> Result<ScipEvidenceReadSelection, LocalScipEvidenceReadError> {
+    match workspace {
         LocalScipEvidenceWorkspace::SingleRepository {
             repository_identity,
         } => {
             let repository = RepositoryIdentityTextV1::decode(repository_identity)
                 .map_err(LocalScipEvidenceReadError::RepositoryIdentity)?;
             let workspace = ConnectedWorkspaceId::for_single_repository(repository);
-            match request.exact_view {
+            match exact_view {
                 Some(view) => ScipEvidenceReadSelection::exact(workspace, view)
                     .map_err(|_| LocalScipEvidenceReadError::InvalidSelection),
                 None => Ok(ScipEvidenceReadSelection::active(workspace)),
@@ -353,7 +361,7 @@ fn resolve_selection(
                 .map_err(LocalScipEvidenceReadError::ConnectedWorkspaceIdentity)?;
             let source_slot = SourceSlotIdTextV1::decode(source_slot)
                 .map_err(LocalScipEvidenceReadError::SourceSlotIdentity)?;
-            match request.exact_view {
+            match exact_view {
                 Some(view) => {
                     ScipEvidenceReadSelection::exact_source_slot(workspace, source_slot, view)
                         .map_err(|_| LocalScipEvidenceReadError::InvalidSelection)

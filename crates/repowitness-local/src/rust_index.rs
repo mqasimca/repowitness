@@ -5,7 +5,10 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use repowitness_analysis::{RustGraphAnalysisError, RustGraphSiteAnalysis, RustSourceAnalysis};
+use repowitness_analysis::{
+    RawSyntaxSiteAnalysis, RawSyntaxSiteAnalysisError, RustGraphAnalysisError,
+    RustGraphSiteAnalysis, RustSourceAnalysis,
+};
 use repowitness_application::{
     ImmutableRustSource, PackageScope, PreparedRustIndex, RustArtifactIdentity, RustIndexLimits,
     RustIndexPreparationError, SourceArtifactIdentities, SourceLanguage,
@@ -13,7 +16,8 @@ use repowitness_application::{
     prepare_source_index_with_reuse,
 };
 use repowitness_domain::{
-    AnalysisArtifactDigest, AnalysisArtifactKey, GitStateDigest, WorktreeStateDigest,
+    AnalysisArtifactDigest, AnalysisArtifactKey, GitStateDigest, RepositoryPath,
+    WorktreeStateDigest,
 };
 
 use crate::contained_source::{
@@ -21,9 +25,12 @@ use crate::contained_source::{
 };
 use crate::git_paths::{
     DiscoveredRepositoryPaths, GitPathDiscoveryError, GitPathDiscoveryLimits,
-    discover_repository_paths_with_cancel, discovered_worktree_root,
+    discover_cached_repository_paths_with_cancel, discover_repository_paths_with_cancel,
+    discovered_worktree_root,
 };
-use crate::source_state::{SourceStateError, capture_source_state_with_cancel};
+use crate::source_state::{
+    CapturedSourceState, SourceStateError, capture_source_state_with_cancel,
+};
 use crate::sqlite::SqliteStoreError;
 
 mod graph_preparation;
@@ -31,6 +38,10 @@ pub(crate) use graph_preparation::PreparedLocalRustGraphArtifact;
 use graph_preparation::{
     prepare_local_rust_graph_artifacts, requested_local_rust_graph_artifact_digests,
 };
+mod raw_syntax_preparation;
+pub(crate) use raw_syntax_preparation::PreparedLocalRawSyntaxArtifact;
+use raw_syntax_preparation::prepare_local_raw_syntax_artifacts;
+use raw_syntax_preparation::requested_local_raw_syntax_artifact_digests;
 mod source_snapshot_fence;
 pub use source_snapshot_fence::LocalSourceSnapshotFenceError;
 pub(crate) use source_snapshot_fence::{
@@ -107,6 +118,8 @@ impl Default for LocalRustIndexLimits {
 pub struct LocalRustIndexPreparation {
     prepared: PreparedRustIndex,
     graph_artifacts: Box<[PreparedLocalRustGraphArtifact]>,
+    raw_syntax_artifacts: Box<[PreparedLocalRawSyntaxArtifact]>,
+    topology_paths: Option<Box<[RepositoryPath]>>,
     git_state: GitStateDigest,
     worktree_state: WorktreeStateDigest,
     discovered_paths: u64,
@@ -118,6 +131,13 @@ pub struct LocalRustIndexPreparation {
     skipped_policy_paths: u64,
     skipped_unsupported_paths: u64,
 }
+
+type LocalPreparedIndexParts = (
+    PreparedRustIndex,
+    Box<[PreparedLocalRustGraphArtifact]>,
+    Box<[PreparedLocalRawSyntaxArtifact]>,
+    Option<Box<[RepositoryPath]>>,
+);
 
 impl LocalRustIndexPreparation {
     /// Returns canonical manifest, artifact identities, and deterministic facts.
@@ -132,10 +152,13 @@ impl LocalRustIndexPreparation {
         self.prepared
     }
 
-    pub(crate) fn into_prepared_parts(
-        self,
-    ) -> (PreparedRustIndex, Box<[PreparedLocalRustGraphArtifact]>) {
-        (self.prepared, self.graph_artifacts)
+    pub(crate) fn into_prepared_parts(self) -> LocalPreparedIndexParts {
+        (
+            self.prepared,
+            self.graph_artifacts,
+            self.raw_syntax_artifacts,
+            self.topology_paths,
+        )
     }
 
     /// Returns the stable concrete Git-state receipt captured around preparation.
@@ -214,6 +237,14 @@ impl fmt::Debug for LocalRustIndexPreparation {
             .debug_struct("LocalRustIndexPreparation")
             .field("prepared", &self.prepared)
             .field("graph_artifact_count", &self.graph_artifacts.len())
+            .field(
+                "raw_syntax_artifact_count",
+                &self.raw_syntax_artifacts.len(),
+            )
+            .field(
+                "topology_path_count",
+                &self.topology_paths.as_ref().map_or(0, |paths| paths.len()),
+            )
             .field("git_state", &self.git_state)
             .field("worktree_state", &self.worktree_state)
             .field("discovered_paths", &self.discovered_paths)
@@ -283,6 +314,11 @@ pub enum LocalRustIndexError {
         /// Stable redacted graph-analysis failure.
         source: RustGraphAnalysisError,
     },
+    /// Pure raw all-language syntax-site preparation failed without output.
+    RawSyntaxPreparation {
+        /// Stable redacted raw syntax-site failure.
+        source: RawSyntaxSiteAnalysisError,
+    },
     /// Persisted artifact inventory failed validation or bounded loading.
     ArtifactReuse {
         /// Stable SQLite boundary failure.
@@ -345,6 +381,9 @@ impl fmt::Display for LocalRustIndexError {
             Self::GraphPreparation { .. } => {
                 formatter.write_str("Rust graph-site preparation failed")
             }
+            Self::RawSyntaxPreparation { .. } => {
+                formatter.write_str("raw syntax-site preparation failed")
+            }
             Self::ArtifactReuse { .. } => {
                 formatter.write_str("reusable source artifact loading failed")
             }
@@ -378,6 +417,7 @@ impl Error for LocalRustIndexError {
             Self::DerivedReadLimits { source } => Some(source),
             Self::Preparation { source } => Some(source),
             Self::GraphPreparation { source } => Some(source),
+            Self::RawSyntaxPreparation { source } => Some(source),
             Self::ArtifactReuse { source } => Some(source),
             Self::RevalidationRead { source, .. } => Some(source),
             Self::DeadlineNotRepresentable
@@ -399,6 +439,7 @@ struct LocalPreparationContext<'a> {
     requested_root: &'a Path,
     identities: SourceArtifactIdentities,
     graph_identity: RustArtifactIdentity,
+    raw_syntax_identities: SourceArtifactIdentities,
     selection: SelectionPolicy,
     package_scope: Option<&'a PackageScope>,
     limits: LocalRustIndexLimits,
@@ -414,10 +455,19 @@ fn map_graph_preparation_error(source: RustGraphAnalysisError) -> LocalRustIndex
     }
 }
 
+fn map_raw_syntax_preparation_error(source: RawSyntaxSiteAnalysisError) -> LocalRustIndexError {
+    match source {
+        RawSyntaxSiteAnalysisError::Cancelled => LocalRustIndexError::Cancelled,
+        RawSyntaxSiteAnalysisError::DeadlineExceeded => LocalRustIndexError::DeadlineExceeded,
+        source => LocalRustIndexError::RawSyntaxPreparation { source },
+    }
+}
+
 struct LocalArtifactPreparationContext<'a> {
     sources: Vec<ImmutableRustSource>,
     identities: SourceArtifactIdentities,
     graph_identity: RustArtifactIdentity,
+    raw_syntax_identities: SourceArtifactIdentities,
     limits: LocalRustIndexLimits,
     cancelled: &'a AtomicBool,
     deadline: Instant,
@@ -426,11 +476,13 @@ struct LocalArtifactPreparationContext<'a> {
 struct PreparedLocalArtifacts {
     source: PreparedRustIndex,
     graph: Box<[PreparedLocalRustGraphArtifact]>,
+    raw_syntax: Box<[PreparedLocalRawSyntaxArtifact]>,
 }
 
 struct LocalPreparationCompletion<'a> {
     prepared: PreparedRustIndex,
     graph_artifacts: Box<[PreparedLocalRustGraphArtifact]>,
+    raw_syntax_artifacts: Box<[PreparedLocalRawSyntaxArtifact]>,
     git_state: GitStateDigest,
     worktree_state: WorktreeStateDigest,
     discovered: &'a ScopedRepositoryPaths,
@@ -454,6 +506,13 @@ fn prepare_selected_source_artifacts(
         Instant,
     ) -> Result<
         BTreeMap<AnalysisArtifactDigest, RustGraphSiteAnalysis>,
+        SqliteStoreError,
+    >,
+    load_reusable_raw_syntax: &mut impl FnMut(
+        &[AnalysisArtifactDigest],
+        Instant,
+    ) -> Result<
+        BTreeMap<AnalysisArtifactDigest, RawSyntaxSiteAnalysis>,
         SqliteStoreError,
     >,
 ) -> Result<PreparedLocalArtifacts, LocalRustIndexError> {
@@ -481,6 +540,24 @@ fn prepare_selected_source_artifacts(
         context.deadline,
     )
     .map_err(map_graph_preparation_error)?;
+    let requested_raw_syntax_artifacts = requested_local_raw_syntax_artifact_digests(
+        &context.sources,
+        context.raw_syntax_identities,
+        context.cancelled,
+        context.deadline,
+    )
+    .map_err(map_raw_syntax_preparation_error)?;
+    let reusable_raw_syntax =
+        load_reusable_raw_syntax(&requested_raw_syntax_artifacts, context.deadline)
+            .map_err(|source| LocalRustIndexError::ArtifactReuse { source })?;
+    let raw_syntax = prepare_local_raw_syntax_artifacts(
+        &context.sources,
+        context.raw_syntax_identities,
+        &reusable_raw_syntax,
+        context.cancelled,
+        context.deadline,
+    )
+    .map_err(map_raw_syntax_preparation_error)?;
     let source = prepare_source_index_with_reuse(
         context.sources,
         context.identities,
@@ -494,7 +571,11 @@ fn prepare_selected_source_artifacts(
         RustIndexPreparationError::DeadlineExceeded => LocalRustIndexError::DeadlineExceeded,
         source => LocalRustIndexError::Preparation { source },
     })?;
-    Ok(PreparedLocalArtifacts { source, graph })
+    Ok(PreparedLocalArtifacts {
+        source,
+        graph,
+        raw_syntax,
+    })
 }
 
 fn complete_local_preparation(
@@ -517,6 +598,8 @@ fn complete_local_preparation(
     Ok(LocalRustIndexPreparation {
         prepared: completion.prepared,
         graph_artifacts: completion.graph_artifacts,
+        raw_syntax_artifacts: completion.raw_syntax_artifacts,
+        topology_paths: completion.discovered.topology_paths().map(Box::from),
         git_state: completion.git_state,
         worktree_state: completion.worktree_state,
         discovered_paths,
@@ -528,6 +611,53 @@ fn complete_local_preparation(
         skipped_policy_paths,
         skipped_unsupported_paths: completion.skipped_unsupported_paths,
     })
+}
+
+struct LocalFinalFenceContext<'a> {
+    worktree_root: &'a Path,
+    source_state_before: &'a CapturedSourceState,
+    discovered: &'a ScopedRepositoryPaths,
+    package_scope: Option<&'a PackageScope>,
+    root: &'a ContainedSourceRoot,
+    prepared: &'a PreparedRustIndex,
+    selection: SelectionPolicy,
+    limits: LocalRustIndexLimits,
+    cancelled: &'a AtomicBool,
+    deadline: Instant,
+}
+
+fn revalidate_prepared_index(
+    context: LocalFinalFenceContext<'_>,
+) -> Result<(GitStateDigest, WorktreeStateDigest), LocalRustIndexError> {
+    revalidate_path_set(
+        context.worktree_root,
+        context.discovered,
+        context.package_scope,
+        context.limits.discovery(),
+        context.cancelled,
+        context.deadline,
+        Some(context.source_state_before),
+    )?;
+    revalidate_content(
+        context.root,
+        context.prepared,
+        context.limits.source_read(),
+        context.cancelled,
+        context.deadline,
+    )?;
+    check_control(context.cancelled, context.deadline)?;
+    let source_state_after = recapture_source_state_for_index(
+        context.worktree_root,
+        context.limits.discovery(),
+        context.cancelled,
+        context.deadline,
+    )?;
+    validated_final_source_identity(
+        context.source_state_before,
+        &source_state_after,
+        context.selection,
+        context.prepared.manifest_digest(),
+    )
 }
 
 fn prepare_local_index_with_exclusion_reuse_and_hook(
@@ -547,12 +677,20 @@ fn prepare_local_index_with_exclusion_reuse_and_hook(
         BTreeMap<AnalysisArtifactDigest, RustGraphSiteAnalysis>,
         SqliteStoreError,
     >,
+    mut load_reusable_raw_syntax: impl FnMut(
+        &[AnalysisArtifactDigest],
+        Instant,
+    ) -> Result<
+        BTreeMap<AnalysisArtifactDigest, RawSyntaxSiteAnalysis>,
+        SqliteStoreError,
+    >,
     mut before_revalidation: impl FnMut(),
 ) -> Result<LocalRustIndexPreparation, LocalRustIndexError> {
     let LocalPreparationContext {
         requested_root,
         identities,
         graph_identity,
+        raw_syntax_identities,
         selection,
         package_scope,
         limits,
@@ -572,8 +710,19 @@ fn prepare_local_index_with_exclusion_reuse_and_hook(
     let source_state_before =
         capture_source_state_for_index(&worktree_root, limits.discovery(), cancelled, deadline)?;
 
+    let topology_discovered = if package_scope.is_none() {
+        Some(discover_tracked_paths(
+            &worktree_root,
+            limits.discovery(),
+            cancelled,
+            deadline,
+        )?)
+    } else {
+        None
+    };
     let discovered = select_discovered_paths(
         discover_paths(&worktree_root, limits.discovery(), cancelled, deadline)?,
+        topology_discovered,
         package_scope,
         cancelled,
         deadline,
@@ -596,37 +745,34 @@ fn prepare_local_index_with_exclusion_reuse_and_hook(
             sources: selected.sources,
             identities,
             graph_identity,
+            raw_syntax_identities,
             limits,
             cancelled,
             deadline,
         },
         &mut load_reusable,
         &mut load_reusable_graph,
+        &mut load_reusable_raw_syntax,
     )?;
     let prepared = artifacts.source;
     before_revalidation();
-    revalidate_path_set(
-        &worktree_root,
-        &discovered,
+    let (git_state, worktree_state) = revalidate_prepared_index(LocalFinalFenceContext {
+        worktree_root: &worktree_root,
+        source_state_before: &source_state_before,
+        discovered: &discovered,
         package_scope,
-        limits.discovery(),
+        root: &root,
+        prepared: &prepared,
+        selection,
+        limits,
         cancelled,
         deadline,
-    )?;
-    revalidate_content(&root, &prepared, limits.source_read(), cancelled, deadline)?;
-    check_control(cancelled, deadline)?;
-    let source_state_after =
-        recapture_source_state_for_index(&worktree_root, limits.discovery(), cancelled, deadline)?;
-    let (git_state, worktree_state) = validated_final_source_identity(
-        &source_state_before,
-        &source_state_after,
-        selection,
-        prepared.manifest_digest(),
-    )?;
+    })?;
 
     complete_local_preparation(LocalPreparationCompletion {
         prepared,
         graph_artifacts: artifacts.graph,
+        raw_syntax_artifacts: artifacts.raw_syntax,
         git_state,
         worktree_state,
         discovered: &discovered,

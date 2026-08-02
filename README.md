@@ -38,14 +38,16 @@ search and simple memory with the same before-and-after evidence. An opt-in
 Codex evaluation gives the correct result at both source revisions. It uses
 current memory, ignores stale memory, and marks the context packet as useful.
 
-The SQLite store has one immutable Phase 0 baseline, an accepted compatible
-version-2 migration, and an accepted version-3 connected-workspace migration.
-They define the five-language artifact format, append-only memory journal,
-memory-revalidation projection, reviewed correspondence, and idempotent review
-events. Version 3 adds bounded source-slot membership, atomic immutable
-workspace views, a Rust graph for one generation, and explicit plan/apply
-operations for bounded generation retention. Its defaults and migration are
-ratified for the Phase 1 profile.
+The SQLite store has one immutable Phase 0 baseline and compatible migrations
+through version 10. They define the five-language artifact format, append-only
+memory journal, memory-revalidation projection, reviewed correspondence,
+idempotent review events, raw syntax observations, and a separate path-only
+repository-topology receipt. Version 3 adds bounded source-slot membership,
+atomic immutable workspace views, a Rust graph for one generation, and
+explicit plan/apply operations for bounded generation retention; version 9
+requires a complete topology publication before activating an ordinary local
+generation; version 10 adds an exact immutable raw-target SQLite index for
+bounded syntax-observation navigation.
 
 The store saves the exact language and prepared facts for each artifact. Owned
 writer and reader connections control access. The store does the following:
@@ -65,33 +67,74 @@ activation apply to all supported languages. Artifact IDs and reuse stay
 language-specific.
 
 The application stages and activates data through a narrow SQLite port.
-`code_search` checks and hashes literal queries. It changes storage candidates
-into syntax-attributed results. Each result has the exact snapshot, generation,
-producer, coverage, and pre-limit match count. `symbol_get` requires the full
+`code_search` checks and hashes literal queries. `locate_relevant_paths` groups
+one bounded lexical receipt into canonical source paths by returned direct
+declaration-match count; its path counts cover that returned candidate surface
+only, retaining the receipt's evidence and coverage without claiming semantic
+relevance or a relationship. `symbol_search` provides a
+separate exact/prefix declaration discovery path with optional persisted
+language, kind, and repository-relative path filters. Both change storage
+candidates into syntax-attributed results. Each result has the exact snapshot,
+generation, producer, coverage, and pre-limit match count. `symbol_get` requires the full
 search occurrence ID. It checks the active snapshot and generation, reads the
 source file again through the no-follow boundary, checks its digest, and returns
 one bounded declaration with syntax evidence.
 
-The production `index` command requires a canonical repository ID and database
-path. It creates versioned configuration, schema, and producer IDs. It captures
-Git or worktree receipts before and after source revalidation. It activates only
-a complete generation. Installed-binary tests use temporary Git repositories.
-They test SQLite persistence, repeat indexing, safe error output, mixed-language
-reuse and invalidation, generation replacement, exact declaration retrieval,
-and rejection of stale generations and changed source files.
+`architecture_overview` adds a separate source-only orientation result over one
+active generation: complete language and declaration-kind totals, bounded exact
+file receipts, structural repository-root/top-level-path buckets, and explicit
+`function main` navigation candidates. It does not infer package ownership,
+imports, calls, tests, hotspots, or runnable entry points.
 
-The CLI provides memory revalidation and recall, Phase 0 and separately versioned
-Phase 2 context compilation,
+`repository_topology` is a separate path-only inventory over the same active
+generation. It reads the cached tracked Git index only (excluding untracked and
+deleted paths) and returns bounded canonical repository-relative paths in seven
+fixed categories (documentation, agent instructions, workflows, build/package
+descriptors, configuration, and other tracked files), a separate digest,
+coverage, and truncation. It reads no non-source content and makes no package,
+ownership, dependency, build, deployment, or runtime relationship claim.
+
+`test_markers` reads bounded repository-scoped parser observations for test
+markers from the same immutable generation. Its per-language coverage makes
+unsupported marker extraction explicit rather than treating zero observations
+as an absence. It does not claim that a test ran, identify test ownership, or
+resolve a relationship. The direct CLI and MCP `syntax_site_search` search
+exact raw target spellings across the same immutable
+projection, with a query digest, coverage, and no target-resolution claim. The
+`code_graph_query` envelope selects exactly one bounded operation—`symbols`,
+`outbound_sites`, `syntax_site_search`, `architecture`, `files`, `test_markers`, or `relevant_paths`; it is not Cypher,
+SQL, or a general graph-query interface.
+
+The production `index` command requires a canonical repository ID and database
+path. `onboard` is the lower-friction explicit alternative: it accepts one root,
+generates an opaque ID unless one is supplied, and creates the database under a
+private user-state convention. Neither command discovers parent or sibling
+repositories, writes repository configuration, or records raw roots globally.
+Both capture Git or worktree receipts before and after source revalidation and
+activate only complete generations. Installed-binary tests use temporary Git
+repositories. They test SQLite persistence, repeat indexing, private onboarding,
+safe error output, mixed-language reuse and invalidation, generation replacement,
+exact declaration retrieval, and rejection of stale generations and changed source
+files.
+
+The CLI provides memory revalidation and recall, a bounded multi-language source
+architecture map, source-only architecture overview, and path-only repository
+topology inventory, Phase 0 and separately versioned Phase 2 context compilation,
 repository diagnostics, pinned Rust graph reads, contained `scip-import`, and
-package-scoped `scip-evidence` reads. `scip-import` accepts one explicit local
+package-scoped `scip-evidence` reads, exact-receipt `scip-symbol-resolve`
+navigation, and bounded producer-declared `scip-relationship-trace` traversal.
+`scip-import` accepts one explicit local
 artifact for one connected-workspace source slot, validates it against the
 current exact source view, and leaves the preceding overlay readable if any
 admission, source fence, or publication step fails. The local stdio MCP server
-has thirteen read-only tools:
-`code_search`, `context_build`, `phase2_context_build`, `diagnostics`,
+has twenty-four read-only tools:
+`architecture_map`, `architecture_overview`, `code_graph_query`, `code_search`, `context_build`, `phase2_context_build`, `diagnostics`,
 `graph_architecture`, `graph_evidence`, `graph_search`, `graph_status`,
-`graph_trace`, `impact_analyze`, `memory_recall`, `scip_evidence`, and
-`symbol_get`. At startup,
+`graph_trace`, `impact_analyze`, `historical_memory`, `locate_relevant_paths`, `memory_recall`,
+`outbound_sites`, `repository_topology`, `scip_evidence`, `scip_relationship_trace`, `scip_symbol_resolve`, `symbol_get`, `symbol_search`, and `syntax_site_search`. `scip_symbol_resolve` accepts one
+`symbol_search` candidate's immutable selector and name span and returns a categorical opaque SCIP symbol; only a
+subsequent `scip_evidence` call returns provider-declared relationships; `scip_relationship_trace`
+can then traverse those exact persisted rows with explicit direction and bounds. At startup,
 it fixes the repository ID, root, and database. It limits input, output,
 concurrency, time, and cancellation. It writes only protocol data to standard
 output. Protocol and installed-binary tests cover startup, schemas, all tools,
@@ -285,6 +328,24 @@ an identity-checked file guard and revalidates the path after SQLite opens but
 before connection policy, migration, recovery, or publication can write. If a
 newly reserved database fails before startup completes, only that verified new
 file is removed; an existing database is never deleted by startup cleanup.
+
+To start with one explicit repository without manually choosing a database path,
+use private local onboarding:
+
+```text
+target/debug/repowitness onboard --root ../repository
+```
+
+It generates an opaque repository identity unless `--repository-id` supplies a
+canonical one, then indexes into
+`<user-state>/repowitness/repositories/<repository-id>/index.sqlite3`. Supply
+`--state-dir /explicit/private/state` to choose the user-state base explicitly.
+The report deliberately provides this stable convention rather than a raw host
+path. On Unix the state and identity directories are capability-opened without
+following links and mode `0700`, so the SQLite database stays private through
+its containing directory; the worktree remains untouched. The command refuses
+non-Unix targets until it can enforce an equivalent private-state ACL. Use the
+returned identity and the same state convention when configuring `mcp-serve`.
 
 Keep a local index current in the foreground:
 
@@ -641,7 +702,7 @@ target/debug/repowitness mcp-serve \
 The repository must be indexed first. To expose the mutation tool, the
 operator must add both `--enable-memory-writes` and one fixed
 `--memory-actor <local-actor>` to `mcp-serve`. Without both options, the server
-lists only read tools. The default canonical profile lists thirteen. A user-owned
+lists only read tools. The default canonical profile lists twenty-four. A user-owned
 configuration may opt into the incumbent-compatible profile, which adds seven
 bounded read-only aliases. Their receipts currently claim only name
 compatibility: request shapes are incompatible with the pinned public
@@ -699,15 +760,16 @@ Restart the Codex client after changing configuration, then use `/mcp` in the
 terminal UI to inspect the connection. Codex CLI, the IDE extension, and the
 ChatGPT desktop app share the local Codex MCP configuration; see the current
 [Codex MCP documentation](https://learn.chatgpt.com/docs/extend/mcp). The
-server exposes the read-only `code_search`, `context_build`, `phase2_context_build`, `diagnostics`,
+server exposes the read-only `architecture_map`, `architecture_overview`, `code_graph_query`, `code_search`, `locate_relevant_paths`, `symbol_search`, `syntax_site_search`, `context_build`, `phase2_context_build`, `diagnostics`,
 `graph_architecture`, `graph_evidence`, `graph_search`, `graph_status`,
-`graph_trace`, `impact_analyze`, `memory_recall`, `scip_evidence`, and
+`graph_trace`, `impact_analyze`, `historical_memory`, `memory_recall`, `outbound_sites`, `repository_topology`, `scip_evidence`, `scip_relationship_trace`, `scip_symbol_resolve`, and
 `symbol_get` tools by
-default. Call `code_search` first and pass its complete exact selector unchanged
+default. Call `architecture_map` to inventory exact indexed paths and language totals; it is a file inventory only and never infers relationships. Call `repository_topology` to orient from bounded cached tracked non-source path categories; it excludes untracked and deleted paths, does not read those files, and infers no relationships. Call `architecture_overview` for a bounded source-fact orientation with structural path buckets and syntax-only `function main` candidates; it never proves architecture relationships or runtime entry points. Call `locate_relevant_paths` to group one bounded literal declaration search into path summaries; its ordering and counts cover only returned lexical candidates, so use its underlying match coverage before treating paths as exhaustive. It never proves a semantic relationship. Call `symbol_search` for bounded typed declaration discovery; same-name matches never infer relationships. To use an imported SCIP overlay, copy one candidate's immutable selector and name span plus the returned `workspace_view` to `scip_symbol_resolve`, then pass an `exact` result's opaque symbol and unchanged view to `scip_evidence`. Call `outbound_sites` only with a complete exact declaration selector; it returns parser-attributed raw import/reference/call/test-marker observations physically contained in that declaration, never target resolution or inferred edges. Call `syntax_site_search` with one exact raw parser target when exploring observations across languages; equal text does not prove a declaration, caller, reference, or edge. Call `code_graph_query` only for one of its seven documented finite operations; it rejects Cypher, SQL, unknown operations, and cross-operation fields before repository access. Call `code_search` and pass its complete exact selector unchanged
 to `symbol_get` when retrieving a declaration directly. Call `graph_search`
 before graph trace or impact so its exact selector and immutable context can be
 reused unchanged. Call `scip_evidence` only with an already imported SCIP
-symbol and use its immutable view context unchanged. Enable mutation only in a trusted local configuration whose
+symbol and use its immutable view context unchanged. Call `scip_relationship_trace` only for
+producer-declared overlay rows; it is not a source-call, runtime, or completeness query. Enable mutation only in a trusted local configuration whose
 operator intends to grant that capability.
 
 To inspect only aggregate repository-path discovery facts without indexing:

@@ -16,11 +16,12 @@ Clippy with warnings denied, default and all-feature tests, doc tests,
 warning-free rustdoc, dependency policy, documentation, benchmark, and diff
 checks. Vendored grammar sources and generated parsers have an independent
 closed-inventory, checksum, symlink, and handwritten-capability gate.
-`make test-all` adds no-default-feature and release all-feature tests.
-The GitHub Actions `ci` job runs both command sets on a fixed Ubuntu 24.04
-runner for pull requests and `main`, with read-only repository permissions and
-the checkout action pinned by full commit. Branch protection requires that job
-before merge.
+`make test-all` adds no-default-feature and release all-feature tests. The
+GitHub Actions `ci` job runs the non-test baseline and every supported test
+profile exactly once on a fixed Ubuntu 24.04 runner for pull requests and
+`main`, with read-only repository permissions and external actions pinned by
+full commit. It caches only Cargo dependencies and the pinned dependency-policy
+tool. Branch protection requires that job before merge.
 
 Implemented specialized coverage includes deterministic/property-style domain
 tests, hostile path and Git fixtures, clean-versus-incremental equivalence,
@@ -249,6 +250,25 @@ default logs. Public validation records may state generic pass/fail coverage.
 Reproducible correctness and performance claims use synthetic committed
 fixtures or an explicitly public, pinned corpus.
 
+To privately smoke-test every direct sibling Git worktree with the production
+index-to-topology-to-map-to-overview-to-test-markers-to-direct-and-MCP-envelope
+raw-target-search-to-direct-and-MCP-envelope-lexical-path-navigation-to-typed-discovery-to-exact-outbound-sites-to-no-overlay-SCIP-evidence-to-SCIP-resolution-and-SCIP-relationship-trace
+loop, run:
+
+```text
+./scripts/test-sibling-repositories
+```
+
+The command builds the debug CLI, uses one disposable database per worktree,
+validates bounded topology, map, overview, repository-scoped test-marker,
+direct and finite `code_graph_query` raw-target search, direct and finite
+`code_graph_query` lexical-path navigation, typed declaration, exact
+outbound-site, categorical no-overlay SCIP-evidence and SCIP-resolution,
+and no-overlay SCIP-relationship-trace JSON evidence receipts,
+deletes all temporary artifacts, and prints aggregate counts only. `--skip-build` reuses
+an existing debug CLI when iterating locally. It is intentionally opt-in and
+does not replace synthetic fixtures or the pinned public benchmark.
+
 The ignored real-repository path probe resolves relative inputs from the
 workspace root and exercises the same production-shaped local adapter as the
 diagnostic CLI. The adapter invokes Git without a shell, bounds its deadline,
@@ -296,17 +316,19 @@ The MCP server contract is tested at three levels: wire DTO and bounded-line
 unit tests; in-process SDK initialization, schema, tool, semaphore,
 cancellation, and encoded-output tests; and an installed-binary stdio
 round-trip. The black-box test indexes a temporary five-language worktree,
-negotiates MCP `2025-11-25`, and lists exactly thirteen read-only tools:
-`code_search`, `context_build`, `phase2_context_build`, `diagnostics`, `graph_architecture`,
+negotiates MCP `2025-11-25`, and lists exactly twenty-four read-only tools:
+`architecture_map`, `architecture_overview`, `repository_topology`, `code_graph_query`, `code_search`, `context_build`, `phase2_context_build`, `diagnostics`, `graph_architecture`,
 `graph_evidence`, `graph_search`, `graph_status`, `graph_trace`,
-`impact_analyze`, `memory_recall`, `scip_evidence`, and `symbol_get`. It retrieves exact
-declarations from every language, builds exact UTF-8 source contexts through
+`impact_analyze`, `historical_memory`, `locate_relevant_paths`, `memory_recall`, `outbound_sites`, `scip_evidence`, `scip_relationship_trace`, `scip_symbol_resolve`, `symbol_get`, `symbol_search`, and `syntax_site_search`. It inventories exact indexed paths before retrieving exact
+declarations from every language, reads exact declaration-contained raw syntax
+observations without target resolution, searches exact raw targets without target resolution, exercises the finite `code_graph_query` envelope, builds exact UTF-8 source contexts through
 both the preserved Phase 0 and the separately versioned Phase 2 profiles,
 round-trips Rust graph status/search/evidence/architecture/trace/impact,
 reindexes, and proves the old generation selector fails.
 Focused protocol tests cover context, memory, diagnostics, graph and SCIP schemas,
 contained SCIP import, read-only annotations, exact view/generation pinning,
-categorical evidence, coverage, truncation, cancellation, backpressure, and
+exact declaration-receipt-to-SCIP navigation, categorical evidence, bounded producer-row traversal, coverage,
+truncation, cancellation, backpressure, and
 encoded-output bounds.
 Stdout is parsed only as JSON-RPC and shutdown must leave stderr empty. A
 durable ignored variant exercises the same index-to-exact-retrieval-and-context

@@ -42,7 +42,7 @@ fn pre_baseline_schema_versions_are_rejected_without_mutation() {
         let original_bytes = fs::read(&database).expect("legacy database should be readable");
         let error = open_index_writer(&database, 456)
             .expect_err("pre-baseline databases must require an explicit rebuild");
-        let expected = if legacy_version <= SCHEMA_VERSION {
+        let expected = if legacy_version <= 7 {
             SqliteStoreError::MigrationLedgerMismatch
         } else {
             SqliteStoreError::SchemaVersionMismatch

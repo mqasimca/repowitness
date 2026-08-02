@@ -105,6 +105,30 @@ fn version_one_database_upgrades_without_losing_immutable_artifacts() {
                 migration_checksum(MIGRATION_6).to_vec(),
                 222,
             ),
+            (
+                7,
+                MIGRATION_7_NAME.to_owned(),
+                migration_checksum(MIGRATION_7).to_vec(),
+                222,
+            ),
+            (
+                9,
+                MIGRATION_9_NAME.to_owned(),
+                migration_checksum(MIGRATION_9).to_vec(),
+                222,
+            ),
+            (
+                10,
+                MIGRATION_10_NAME.to_owned(),
+                migration_checksum(MIGRATION_10).to_vec(),
+                222,
+            ),
+            (
+                11,
+                MIGRATION_11_NAME.to_owned(),
+                migration_checksum(MIGRATION_11).to_vec(),
+                222,
+            ),
         ]
     );
     assert_eq!(artifact, (2, 0, "typescript".to_owned(), vec![0; 32]));
@@ -164,7 +188,7 @@ fn cancellation_after_committed_migrations_reports_unknown_and_preserves_the_upg
         })
         .expect("upgraded migration ledger should remain readable");
     assert_eq!(user_version, SCHEMA_VERSION);
-    assert_eq!(ledger_rows, SCHEMA_VERSION);
+    assert_eq!(ledger_rows, i64::try_from(migrations().len()).expect("migration count fits i64"));
 }
 
 #[test]
@@ -182,12 +206,12 @@ fn reopening_current_version_is_idempotent() {
         .expect("migration ledger count should be readable");
     let latest_timestamp: i64 = connection
         .query_row(
-            "SELECT applied_at_unix_ms FROM schema_migrations WHERE version = 6",
-            [],
+            "SELECT applied_at_unix_ms FROM schema_migrations WHERE version = ?1",
+            [SCHEMA_VERSION],
             |row| row.get(0),
         )
         .expect("latest migration timestamp should be readable");
 
-    assert_eq!(ledger_rows, 6);
+    assert_eq!(ledger_rows, i64::try_from(migrations().len()).expect("migration count fits i64"));
     assert_eq!(latest_timestamp, 111);
 }

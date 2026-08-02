@@ -26,6 +26,7 @@ pub fn prepare_local_source_index(
         ),
         |_, _, _| Ok(BTreeMap::new()),
         |_, _| Ok(BTreeMap::new()),
+        |_, _| Ok(BTreeMap::new()),
         || {},
     )
 }
@@ -57,6 +58,7 @@ pub(crate) fn prepare_local_source_index_excluding_identity_with_reuse(
             excluded_identity,
         ),
         load_reusable,
+        |_, _| Ok(BTreeMap::new()),
         |_, _| Ok(BTreeMap::new()),
     )
 }
@@ -137,11 +139,19 @@ pub(crate) fn prepare_local_source_index_excluding_identity_with_full_reuse(
         BTreeMap<AnalysisArtifactDigest, RustGraphSiteAnalysis>,
         SqliteStoreError,
     >,
+    load_reusable_raw_syntax: impl FnMut(
+        &[AnalysisArtifactDigest],
+        Instant,
+    ) -> Result<
+        BTreeMap<AnalysisArtifactDigest, RawSyntaxSiteAnalysis>,
+        SqliteStoreError,
+    >,
 ) -> Result<LocalRustIndexPreparation, LocalRustIndexError> {
     prepare_local_source_index_with_exclusion_reuse_and_hook(
         request,
         load_reusable,
         load_reusable_graph,
+        load_reusable_raw_syntax,
         || {},
     )
 }
@@ -204,6 +214,7 @@ fn prepare_local_rust_index_with_exclusion_reuse_and_hook(
                 identity, identity, identity, identity, identity,
             ),
             graph_identity: phase1_rust_graph_artifact_identity(),
+            raw_syntax_identities: repowitness_application::raw_syntax_artifact_identities(),
             selection: SelectionPolicy::RustOnly,
             package_scope: None,
             limits,
@@ -211,6 +222,7 @@ fn prepare_local_rust_index_with_exclusion_reuse_and_hook(
             excluded_identity,
         },
         |_, requested, deadline| load_reusable(requested, deadline),
+        |_, _| Ok(BTreeMap::new()),
         |_, _| Ok(BTreeMap::new()),
         before_revalidation,
     )
@@ -233,6 +245,13 @@ fn prepare_local_source_index_with_exclusion_reuse_and_hook(
         BTreeMap<AnalysisArtifactDigest, RustGraphSiteAnalysis>,
         SqliteStoreError,
     >,
+    load_reusable_raw_syntax: impl FnMut(
+        &[AnalysisArtifactDigest],
+        Instant,
+    ) -> Result<
+        BTreeMap<AnalysisArtifactDigest, RawSyntaxSiteAnalysis>,
+        SqliteStoreError,
+    >,
     before_revalidation: impl FnMut(),
 ) -> Result<LocalRustIndexPreparation, LocalRustIndexError> {
     let LocalSourceIndexReuseRequest {
@@ -250,6 +269,7 @@ fn prepare_local_source_index_with_exclusion_reuse_and_hook(
             requested_root,
             identities,
             graph_identity,
+            raw_syntax_identities: repowitness_application::raw_syntax_artifact_identities(),
             selection: SelectionPolicy::SupportedLanguages(languages),
             package_scope,
             limits,
@@ -258,6 +278,7 @@ fn prepare_local_source_index_with_exclusion_reuse_and_hook(
         },
         load_reusable,
         load_reusable_graph,
+        load_reusable_raw_syntax,
         before_revalidation,
     )
 }

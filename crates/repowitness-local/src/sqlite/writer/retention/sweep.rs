@@ -395,6 +395,12 @@ const RETENTION_MARK_DEPENDENTS: &[&str] = &[
          JOIN retention_generation_garbage AS garbage
            ON garbage.generation_id = resolution.generation_id
           AND garbage.plan_digest = ?1
+         UNION
+         SELECT syntax_site_artifact.syntax_site_artifact_digest
+         FROM generation_syntax_site_artifacts AS syntax_site_artifact
+         JOIN retention_generation_garbage AS garbage
+           ON garbage.generation_id = syntax_site_artifact.generation_id
+          AND garbage.plan_digest = ?1
      )
      SELECT candidate.artifact_digest, ?1, 'garbage'
      FROM candidate_artifacts AS candidate
@@ -434,6 +440,15 @@ const RETENTION_MARK_DEPENDENTS: &[&str] = &[
              AND NOT EXISTS (
                  SELECT 1 FROM retention_generation_garbage AS marked
                  WHERE marked.generation_id = resolution.generation_id
+                 AND marked.plan_digest = ?1
+             )
+       )
+       AND NOT EXISTS (
+           SELECT 1 FROM generation_syntax_site_artifacts AS syntax_site_artifact
+           WHERE syntax_site_artifact.syntax_site_artifact_digest = candidate.artifact_digest
+             AND NOT EXISTS (
+                 SELECT 1 FROM retention_generation_garbage AS marked
+                 WHERE marked.generation_id = syntax_site_artifact.generation_id
                    AND marked.plan_digest = ?1
              )
        )
@@ -538,6 +553,36 @@ const RETENTION_DELETE_ORDER: &[&str] = &[
          SELECT generation_id FROM retention_generation_garbage
          WHERE plan_digest = ?1
      )",
+    "DELETE FROM generation_syntax_site_artifacts
+     WHERE generation_id IN (
+         SELECT generation_id FROM retention_generation_garbage
+         WHERE plan_digest = ?1
+     )",
+    "DELETE FROM generation_syntax_site_publications
+     WHERE generation_id IN (
+         SELECT generation_id FROM retention_generation_garbage
+         WHERE plan_digest = ?1
+     )",
+    "DELETE FROM generation_syntax_site_requirements
+     WHERE generation_id IN (
+         SELECT generation_id FROM retention_generation_garbage
+         WHERE plan_digest = ?1
+     )",
+    "DELETE FROM generation_repository_topology_entries
+     WHERE generation_id IN (
+         SELECT generation_id FROM retention_generation_garbage
+         WHERE plan_digest = ?1
+     )",
+    "DELETE FROM generation_repository_topology_publications
+     WHERE generation_id IN (
+         SELECT generation_id FROM retention_generation_garbage
+         WHERE plan_digest = ?1
+     )",
+    "DELETE FROM generation_repository_topology_requirements
+     WHERE generation_id IN (
+         SELECT generation_id FROM retention_generation_garbage
+         WHERE plan_digest = ?1
+     )",
     "DELETE FROM generation_search
      WHERE generation_id IN (
          SELECT generation_id FROM retention_generation_garbage
@@ -569,6 +614,16 @@ const RETENTION_DELETE_ORDER: &[&str] = &[
          WHERE plan_digest = ?1
      )",
     "DELETE FROM rust_graph_artifacts
+     WHERE artifact_digest IN (
+         SELECT artifact_digest FROM retention_artifact_garbage
+         WHERE plan_digest = ?1
+     )",
+    "DELETE FROM syntax_sites
+     WHERE artifact_digest IN (
+         SELECT artifact_digest FROM retention_artifact_garbage
+         WHERE plan_digest = ?1
+     )",
+    "DELETE FROM syntax_site_artifacts
      WHERE artifact_digest IN (
          SELECT artifact_digest FROM retention_artifact_garbage
          WHERE plan_digest = ?1

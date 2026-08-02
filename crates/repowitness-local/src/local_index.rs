@@ -16,8 +16,8 @@ use repowitness_application::{
     ResolvedConfiguration, RustArtifactIdentity, RustIndexCoverage, RustSourceSnapshotIdentity,
     SourceArtifactIdentities, SourceLanguage, SourceSlotFinalFence,
     complete_staged_source_slot_index, hash_source_snapshot, phase0_source_artifact_identities,
-    phase0_source_snapshot_profile, phase1_rust_graph_artifact_identity, resolve_configuration,
-    stage_source_slot_index,
+    phase0_source_snapshot_profile, phase1_rust_graph_artifact_identity,
+    raw_syntax_artifact_identities, resolve_configuration, stage_source_slot_index,
 };
 use repowitness_domain::{AnalysisSchemaDigest, ConfigurationDigest, ProducerManifestDigest};
 use sha2::{Digest, Sha256};
@@ -71,6 +71,10 @@ pub enum LocalIndexMutation {
     GenerationStaging,
     /// Required Rust graph staging may have committed.
     GraphStaging,
+    /// Required raw syntax-site staging may have committed.
+    RawSyntaxSiteStaging,
+    /// Required path-only topology staging may have committed.
+    RepositoryTopologyStaging,
     /// Source-slot completion or active-generation publication may have committed.
     GenerationPublication,
     /// A terminal WAL checkpoint may have completed.
@@ -93,6 +97,12 @@ impl LocalIndexMutation {
             }
             Self::GraphStaging => {
                 "reopen the store and inspect the candidate generation graph receipt before retrying"
+            }
+            Self::RawSyntaxSiteStaging => {
+                "reopen the store and inspect the candidate generation syntax-site receipt before retrying"
+            }
+            Self::RepositoryTopologyStaging => {
+                "reopen the store and inspect the candidate generation topology receipt before retrying"
             }
             Self::GenerationPublication => {
                 "reopen the store and read the active generation and source-slot completion before retrying"
@@ -159,8 +169,28 @@ pub enum LocalIndexError {
         /// Stable path-free graph preparation failure.
         source: LocalRustGraphProjectionError,
     },
+    /// Complete raw all-language syntax-site preparation failed.
+    RawSyntaxPreparation {
+        /// Stable raw syntax-site projection failure.
+        source: crate::RawSyntaxPreparationError,
+    },
+    /// Complete path-only repository topology preparation failed.
+    RepositoryTopologyPreparation {
+        /// Stable path-only topology preparation failure.
+        source: crate::RepositoryTopologyPreparationError,
+    },
     /// Rust graph staging failed without activation.
     GraphPublicationStaging {
+        /// Stable SQLite boundary failure.
+        source: SqliteStoreError,
+    },
+    /// Raw syntax-site staging failed without activation.
+    RawSyntaxPublicationStaging {
+        /// Stable SQLite boundary failure.
+        source: SqliteStoreError,
+    },
+    /// Path-only topology staging failed without activation.
+    RepositoryTopologyPublicationStaging {
         /// Stable SQLite boundary failure.
         source: SqliteStoreError,
     },
@@ -214,7 +244,15 @@ impl fmt::Display for LocalIndexError {
             Self::WorkspaceRegistration { .. } => "local index workspace registration failed",
             Self::PublicationStaging { .. } => "local index generation staging failed",
             Self::GraphPreparation { .. } => "local Rust graph preparation failed",
+            Self::RawSyntaxPreparation { .. } => "local raw syntax-site preparation failed",
+            Self::RepositoryTopologyPreparation { .. } => {
+                "local repository topology preparation failed"
+            }
             Self::GraphPublicationStaging { .. } => "local Rust graph staging failed",
+            Self::RawSyntaxPublicationStaging { .. } => "local raw syntax-site staging failed",
+            Self::RepositoryTopologyPublicationStaging { .. } => {
+                "local repository topology staging failed"
+            }
             Self::FinalSourceFence { .. } => "local index final source fence failed",
             Self::PublicationActivation { .. } => "local index generation activation failed",
             Self::Checkpoint { .. } => "local index checkpoint failed after activation",
@@ -248,10 +286,14 @@ impl Error for LocalIndexError {
             | Self::WorkspaceRegistration { source }
             | Self::PublicationStaging { source }
             | Self::GraphPublicationStaging { source }
+            | Self::RawSyntaxPublicationStaging { source }
+            | Self::RepositoryTopologyPublicationStaging { source }
             | Self::PublicationActivation { source }
             | Self::Checkpoint { source }
             | Self::Shutdown { source } => Some(source),
             Self::GraphPreparation { source } => Some(source),
+            Self::RawSyntaxPreparation { source } => Some(source),
+            Self::RepositoryTopologyPreparation { source } => Some(source),
             Self::FinalSourceFence { source } => Some(source),
             Self::InvalidEffectiveConfiguration
             | Self::DeadlineNotRepresentable
@@ -295,6 +337,8 @@ struct PreparedLocalIndexPublication {
     identity: RustSourceSnapshotIdentity,
     prepared: repowitness_application::PreparedRustIndex,
     graph: PreparedLocalRustGraphProjection,
+    raw_syntax: crate::PreparedRawSyntaxGeneration,
+    topology: Option<crate::PreparedRepositoryTopology>,
     coverage: RustIndexCoverage,
 }
 
@@ -454,6 +498,29 @@ fn publish_prepared_local_index_at_epoch(
                 LocalIndexError::GraphPublicationStaging { source }
             })
         })?;
+    writer
+        .stage_raw_syntax_sites(
+            generation,
+            publication.raw_syntax,
+            Arc::clone(cancelled),
+            deadline,
+        )
+        .map_err(|source| {
+            map_index_mutation_error(LocalIndexMutation::RawSyntaxSiteStaging, source, |source| {
+                LocalIndexError::RawSyntaxPublicationStaging { source }
+            })
+        })?;
+    if let Some(topology) = publication.topology {
+        writer
+            .stage_repository_topology(generation, topology, Arc::clone(cancelled), deadline)
+            .map_err(|source| {
+                map_index_mutation_error(
+                    LocalIndexMutation::RepositoryTopologyStaging,
+                    source,
+                    |source| LocalIndexError::RepositoryTopologyPublicationStaging { source },
+                )
+            })?;
+    }
     after_graph_staging();
     let completed = complete_staged_source_slot_index(writer, final_fence, staged).map_err(
         |error| match error {

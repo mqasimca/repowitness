@@ -276,8 +276,7 @@ fn mcp_stdio_indexes_searches_retrieves_and_rejects_a_stale_selector() {
     );
     let (child, mut input, mut output) = start_mcp(&repository, &database);
     initialize_mcp(&mut input, &mut output);
-    assert_mcp_tools(&mut input, &mut output);
-    assert_mcp_scip_not_produced(&mut input, &mut output);
+    assert_mcp_primary_discovery_tools(&mut input, &mut output);
     let exact_arguments = mcp_search_selector(&mut input, &mut output);
     assert_mcp_symbol(&mut input, &mut output, &exact_arguments);
     assert_mcp_context(

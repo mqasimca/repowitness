@@ -43,10 +43,16 @@ pub enum SqliteStoreError {
     InvalidWorkspaceView,
     /// A prepared Rust graph projection violates the persistence contract.
     InvalidGraphPublication,
+    /// A prepared all-language raw syntax-site projection violates the persistence contract.
+    InvalidSyntaxSitePublication,
+    /// A prepared path-only repository topology violates the persistence contract.
+    InvalidRepositoryTopologyPublication,
     /// A prepared SCIP precision overlay violates the persistence contract.
     InvalidScipOverlay,
     /// SCIP evidence results exceeded their declared encoded-output bound.
     ScipEvidenceOutputLimitExceeded,
+    /// Supplied SCIP relationship trace limits are invalid.
+    InvalidScipRelationshipTraceLimits,
     /// Supplied memory import values failed adapter-boundary validation.
     InvalidMemoryImport,
     /// A correspondence review selector or target was not exact and current.
@@ -95,6 +101,10 @@ pub enum SqliteStoreError {
     MutationOutcomeUnknown,
     /// Lexical search limits are zero or exceed Phase 0 ceilings.
     InvalidSearchLimits,
+    /// Raw syntax-site read limits are zero or exceed compiled ceilings.
+    InvalidRawSyntaxSiteReadLimits,
+    /// A complete raw syntax-site result exceeded its declared output ceiling.
+    RawSyntaxSiteReadOutputLimitExceeded,
     /// Search-projection rebuild limits are zero or exceed Phase 0 ceilings.
     InvalidProjectionRebuildLimits,
     /// Memory-projection load or result limits are invalid.
@@ -152,9 +162,16 @@ impl fmt::Display for SqliteStoreError {
             Self::ConnectedWorkspaceUnavailable => "SQLite connected workspace is unavailable",
             Self::InvalidWorkspaceView => "SQLite workspace view is invalid",
             Self::InvalidGraphPublication => "SQLite Rust graph publication is invalid",
+            Self::InvalidSyntaxSitePublication => "SQLite raw syntax-site publication is invalid",
+            Self::InvalidRepositoryTopologyPublication => {
+                "SQLite repository topology publication is invalid"
+            }
             Self::InvalidScipOverlay => "SQLite SCIP overlay publication is invalid",
             Self::ScipEvidenceOutputLimitExceeded => {
                 "SCIP evidence results exceeded the configured output limit"
+            }
+            Self::InvalidScipRelationshipTraceLimits => {
+                "SCIP relationship trace limits are invalid"
             }
             Self::InvalidMemoryImport => "memory import input is invalid",
             Self::InvalidMemoryCorrespondenceReview => {
@@ -184,6 +201,12 @@ impl fmt::Display for SqliteStoreError {
             Self::ReplyTimeout => "SQLite writer reply deadline exceeded",
             Self::MutationOutcomeUnknown => "SQLite mutation outcome could not be determined",
             Self::InvalidSearchLimits => "SQLite search limits are invalid",
+            Self::InvalidRawSyntaxSiteReadLimits => {
+                "SQLite raw syntax-site read limits are invalid"
+            }
+            Self::RawSyntaxSiteReadOutputLimitExceeded => {
+                "SQLite raw syntax-site result exceeded its output limit"
+            }
             Self::InvalidProjectionRebuildLimits => {
                 "SQLite search projection rebuild limits are invalid"
             }

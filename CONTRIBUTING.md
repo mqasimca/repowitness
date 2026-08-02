@@ -53,7 +53,8 @@ no-default-feature and release profiles. `make test-sqlite-benchmarks` runs
 manual SQLite timing and resource probes. These results are not release
 budgets.
 
-Pull requests run the same commands in the GitHub Actions `ci` job. The
-workflow has read-only repository permissions. It pins external actions by full
-commit and checks the complete pull-request diff. The `main` branch requires
-this job.
+Pull requests run equivalent checks in the GitHub Actions `ci` job: the
+non-test baseline followed by every supported test profile exactly once. The
+workflow has read-only repository permissions, pins external actions by full
+commit, caches only Cargo dependencies and the pinned dependency-policy tool,
+and checks the complete pull-request diff. The `main` branch requires this job.

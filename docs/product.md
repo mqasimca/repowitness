@@ -132,15 +132,22 @@ implemented. Its local memory-management base is also implemented:
 - owned SQLite connections, immutable generations, atomic activation,
   bounded/cancellable startup recovery, double-buffered FTS5, checkpoints, and
   validated online backup;
-- evidence-bearing literal `code_search`, exact digest-verified `symbol_get`,
+- bounded multi-language `architecture_map` file inventory with exact source/artifact receipts,
+  source-only `architecture_overview` structural orientation and syntax-only `function main` candidates,
+  and a separately digested path-only `repository_topology` inventory of cached tracked
+  non-source assets (excluding untracked and deleted paths),
+  evidence-bearing literal `code_search`, bounded lexical `locate_relevant_paths` that groups returned declaration evidence by canonical path without semantic inference, typed exact/prefix `symbol_search`, exact digest-verified `symbol_get`,
+  exact declaration-contained `outbound_sites`, repository-scoped `test_markers`, and exact raw-target `syntax_site_search` raw parser observations without target resolution,
+  and the finite MCP `code_graph_query` envelope over those discovery operations,
   and immutable-view Rust graph status, exact-name search, site evidence,
   architecture, trace, and conservative impact application use cases;
-- `index`, `search`, `symbol-get`, `graph`, `memory-manage`, `memory-revalidate`,
-  `memory-recall`, `context-build`, `diagnostics`, `mcp-serve`, and
-  `inspect-paths` CLI commands, plus path-free `config explain` and read-only
-  `doctor`; explicit bounded user/workspace/repository configuration is
+- `index`, `onboard`, `architecture-map`, `architecture-overview`, `repository-topology`, `search`, `locate-relevant-paths`, `symbol-search`, `outbound-sites`, `syntax-site-search`, `test-markers`,
+  `symbol-get`, `scip-symbol-resolve`, `scip-relationship-trace`, `graph`, `memory-manage`, `memory-revalidate`, `memory-recall`,
+  `context-build`, `diagnostics`, `mcp-serve`, and `inspect-paths` CLI commands,
+  plus path-free `config explain` and read-only `doctor`; explicit bounded
+  user/workspace/repository configuration is
   resolved once and enforced by indexing, retrieval, graph reads, context,
-  diagnostics, and MCP startup, with eleven read-only retrieval, graph,
+  diagnostics, and MCP startup, with twenty-four read-only retrieval, graph,
   context, and diagnostic tools exposed by default over local stdio MCP and an
   explicitly enabled, fixed-actor `memory_manage` mutation tool;
 - the accepted bounded version-1 memory domain, hostile-YAML parser,

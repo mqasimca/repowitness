@@ -1716,6 +1716,8 @@ dependencies = [
 name = "repowitness-cli"
 version = "0.1.0-alpha.3"
 dependencies = [
+ "cap-fs-ext",
+ "cap-std",
  "repowitness-local",
  "repowitness-mcp",
  "rustix",

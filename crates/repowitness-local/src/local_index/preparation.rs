@@ -79,6 +79,17 @@ fn prepare_with_artifact_reuse(
             ),
             None => Ok(Default::default()),
         },
+        |requested, load_deadline| match &reuse_reader {
+            Some(reader) => reader.load_reusable_raw_syntax_artifacts(
+                requested,
+                raw_syntax_artifact_identities(),
+                limits.preparation(),
+                repowitness_analysis::RawSyntaxSiteAnalysisLimits::DEFAULT,
+                Arc::clone(cancelled),
+                load_deadline,
+            ),
+            None => Ok(Default::default()),
+        },
     )
     .map_err(|source| match source {
         LocalRustIndexError::ExcludedFileAlias => LocalIndexError::DatabaseHasMultipleLinks,
@@ -144,7 +155,8 @@ fn prepare_local_index_publication(
         return Err(LocalIndexError::DatabaseChangedDuringIndexing);
     }
 
-    let (prepared, graph_artifacts) = preparation.into_prepared_parts();
+    let (prepared, graph_artifacts, raw_syntax_artifacts, topology_paths) =
+        preparation.into_prepared_parts();
     let graph = prepare_local_rust_graph_projection(
         context.repository,
         &prepared,
@@ -153,11 +165,25 @@ fn prepare_local_index_publication(
         context.deadline,
     )
     .map_err(|source| LocalIndexError::GraphPreparation { source })?;
+    let raw_syntax = prepare_local_raw_syntax_projection(
+        raw_syntax_artifacts,
+        context.cancelled.as_ref(),
+        context.deadline,
+    )
+    .map_err(|source| LocalIndexError::RawSyntaxPreparation { source })?;
+    let topology = topology_paths
+        .map(|paths| {
+            crate::prepare_repository_topology(paths, context.cancelled.as_ref(), context.deadline)
+        })
+        .transpose()
+        .map_err(|source| LocalIndexError::RepositoryTopologyPreparation { source })?;
     Ok((
         PreparedLocalIndexPublication {
             identity,
             prepared,
             graph,
+            raw_syntax,
+            topology,
             coverage,
         },
         report_input,
@@ -223,7 +249,8 @@ fn prepare_scoped_local_index_publication(
         return Err(LocalIndexError::DatabaseChangedDuringIndexing);
     }
 
-    let (prepared, graph_artifacts) = preparation.into_prepared_parts();
+    let (prepared, graph_artifacts, raw_syntax_artifacts, _topology_paths) =
+        preparation.into_prepared_parts();
     let graph = prepare_local_rust_graph_projection_for_source_slot(
         context.connected_workspace,
         context.source_slot,
@@ -233,15 +260,38 @@ fn prepare_scoped_local_index_publication(
         context.deadline,
     )
     .map_err(|source| LocalIndexError::GraphPreparation { source })?;
+    let raw_syntax = prepare_local_raw_syntax_projection(
+        raw_syntax_artifacts,
+        context.cancelled.as_ref(),
+        context.deadline,
+    )
+    .map_err(|source| LocalIndexError::RawSyntaxPreparation { source })?;
     Ok((
         PreparedLocalIndexPublication {
             identity,
             prepared,
             graph,
+            raw_syntax,
+            topology: None,
             coverage,
         },
         report_input,
     ))
+}
+
+fn prepare_local_raw_syntax_projection(
+    artifacts: Box<[crate::rust_index::PreparedLocalRawSyntaxArtifact]>,
+    cancelled: &AtomicBool,
+    deadline: Instant,
+) -> Result<crate::PreparedRawSyntaxGeneration, crate::RawSyntaxPreparationError> {
+    crate::prepare_raw_syntax_generation(
+        artifacts
+            .into_vec()
+            .into_iter()
+            .map(crate::rust_index::PreparedLocalRawSyntaxArtifact::into_parts)
+            .collect(),
+        crate::RawSyntaxPreparationControl::new(cancelled, deadline),
+    )
 }
 
 fn connected_scope_configuration(

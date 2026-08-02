@@ -375,8 +375,26 @@ fn discover_paths(
     })
 }
 
+fn discover_tracked_paths(
+    worktree_root: &Path,
+    limits: GitPathDiscoveryLimits,
+    cancelled: &AtomicBool,
+    deadline: Instant,
+) -> Result<DiscoveredRepositoryPaths, LocalRustIndexError> {
+    let limits = capped_discovery_limits(limits, deadline)?;
+    discover_cached_repository_paths_with_cancel(worktree_root, limits, || {
+        cancelled.load(Ordering::Relaxed)
+    })
+    .map_err(|source| match source {
+        GitPathDiscoveryError::Cancelled => LocalRustIndexError::Cancelled,
+        GitPathDiscoveryError::DeadlineExceeded { .. } => LocalRustIndexError::DeadlineExceeded,
+        source => LocalRustIndexError::Discovery { source },
+    })
+}
+
 struct ScopedRepositoryPaths {
     paths: Box<[repowitness_domain::RepositoryPath]>,
+    topology_paths: Option<Box<[repowitness_domain::RepositoryPath]>>,
     discovered_paths: u64,
     policy_omitted_paths: u64,
 }
@@ -384,6 +402,10 @@ struct ScopedRepositoryPaths {
 impl ScopedRepositoryPaths {
     fn paths(&self) -> &[repowitness_domain::RepositoryPath] {
         &self.paths
+    }
+
+    fn topology_paths(&self) -> Option<&[repowitness_domain::RepositoryPath]> {
+        self.topology_paths.as_deref()
     }
 
     const fn discovered_paths(&self) -> u64 {
@@ -397,14 +419,18 @@ impl ScopedRepositoryPaths {
 
 fn select_discovered_paths(
     discovered: DiscoveredRepositoryPaths,
+    topology_discovered: Option<DiscoveredRepositoryPaths>,
     package_scope: Option<&PackageScope>,
     cancelled: &AtomicBool,
     deadline: Instant,
 ) -> Result<ScopedRepositoryPaths, LocalRustIndexError> {
     let Some(package_scope) = package_scope else {
+        let paths = discovered.into_paths();
         return Ok(ScopedRepositoryPaths {
-            discovered_paths: discovered.stats().path_count(),
-            paths: discovered.into_paths(),
+            discovered_paths: u64::try_from(paths.len())
+                .map_err(|_| LocalRustIndexError::SourceByteCountOverflowed)?,
+            topology_paths: topology_discovered.map(DiscoveredRepositoryPaths::into_paths),
+            paths,
             policy_omitted_paths: 0,
         });
     };
@@ -424,6 +450,7 @@ fn select_discovered_paths(
     let stats = selected.stats();
     Ok(ScopedRepositoryPaths {
         paths: selected.into_paths(),
+        topology_paths: None,
         discovered_paths: stats.discovered_paths(),
         policy_omitted_paths: stats.policy_omitted_paths(),
     })
@@ -436,14 +463,36 @@ fn revalidate_path_set(
     discovery_limits: GitPathDiscoveryLimits,
     cancelled: &AtomicBool,
     deadline: Instant,
+    source_state_before: Option<&CapturedSourceState>,
 ) -> Result<(), LocalRustIndexError> {
     let current = select_discovered_paths(
         discover_paths(worktree_root, discovery_limits, cancelled, deadline)?,
+        original
+            .topology_paths()
+            .is_some()
+            .then(|| discover_tracked_paths(worktree_root, discovery_limits, cancelled, deadline))
+            .transpose()?,
         package_scope,
         cancelled,
         deadline,
     )?;
     if current.paths() != original.paths() {
+        return Err(LocalRustIndexError::StalePathSet);
+    }
+    if current.topology_paths() != original.topology_paths() {
+        if let Some(source_state_before) = source_state_before {
+            let source_state_after = recapture_source_state_for_index(
+                worktree_root,
+                discovery_limits,
+                cancelled,
+                deadline,
+            )?;
+            if source_state_after != *source_state_before {
+                return Err(LocalRustIndexError::SourceState {
+                    source: SourceStateError::ConcurrentSourceChange,
+                });
+            }
+        }
         return Err(LocalRustIndexError::StalePathSet);
     }
     Ok(())

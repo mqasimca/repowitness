@@ -582,6 +582,10 @@ fn eligible_retention_generations(
     Ok((eligible, truncated))
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "the bounded SQL projection must keep every generation-owned row type auditable together"
+)]
 fn estimate_retention_generation(
     transaction: &Transaction<'_>,
     generation: GenerationId,
@@ -601,6 +605,9 @@ fn estimate_retention_generation(
                  WHERE generation_id = ?1
                  UNION
                  SELECT site_artifact_digest FROM generation_graph_resolutions
+                 WHERE generation_id = ?1
+                 UNION
+                 SELECT syntax_site_artifact_digest FROM generation_syntax_site_artifacts
                  WHERE generation_id = ?1
              )
              SELECT
@@ -638,6 +645,18 @@ fn estimate_retention_generation(
                     WHERE generation_id = ?1)
                  + (SELECT count(*) FROM generation_graph_requirements
                     WHERE generation_id = ?1)
+                 + (SELECT count(*) FROM generation_syntax_site_artifacts
+                    WHERE generation_id = ?1)
+                 + (SELECT count(*) FROM generation_syntax_site_publications
+                    WHERE generation_id = ?1)
+                 + (SELECT count(*) FROM generation_syntax_site_requirements
+                    WHERE generation_id = ?1)
+                 + (SELECT count(*) FROM generation_repository_topology_entries
+                    WHERE generation_id = ?1)
+                 + (SELECT count(*) FROM generation_repository_topology_publications
+                    WHERE generation_id = ?1)
+                 + (SELECT count(*) FROM generation_repository_topology_requirements
+                    WHERE generation_id = ?1)
                  + (SELECT count(*) FROM source_snapshots
                     WHERE snapshot_digest = (
                         SELECT snapshot_digest FROM index_generations
@@ -656,6 +675,10 @@ fn estimate_retention_generation(
                  + (SELECT count(*) FROM rust_graph_artifacts
                     WHERE artifact_digest IN candidate_artifacts)
                  + (SELECT count(*) FROM rust_graph_sites
+                    WHERE artifact_digest IN candidate_artifacts)
+                 + (SELECT count(*) FROM syntax_site_artifacts
+                    WHERE artifact_digest IN candidate_artifacts)
+                 + (SELECT count(*) FROM syntax_sites
                     WHERE artifact_digest IN candidate_artifacts)",
             [generation.get()],
             |row| row.get(0),

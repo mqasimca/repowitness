@@ -435,6 +435,107 @@ pub fn discover_repository_paths_with_cancel(
     )
 }
 
+/// Discovers only Git-indexed, presently existing repository paths while polling cancellation.
+///
+/// This deliberately excludes untracked paths. It is suitable for path-only
+/// inventory profiles that must not persist or expose local filenames outside
+/// the Git index.
+///
+/// # Errors
+///
+/// Returns the same bounded process, cancellation, malformed-output, and
+/// repository-path failures as [`discover_repository_paths_with_cancel`].
+pub fn discover_cached_repository_paths_with_cancel(
+    root: &Path,
+    limits: GitPathDiscoveryLimits,
+    mut is_cancelled: impl FnMut() -> bool,
+) -> Result<DiscoveredRepositoryPaths, GitPathDiscoveryError> {
+    if is_cancelled() {
+        return Err(GitPathDiscoveryError::Cancelled);
+    }
+    if limits.deadline().is_zero() {
+        return Err(GitPathDiscoveryError::DeadlineExceeded {
+            deadline: limits.deadline(),
+        });
+    }
+    let deadline = Instant::now()
+        .checked_add(limits.deadline())
+        .ok_or(GitPathDiscoveryError::DeadlineNotRepresentable)?;
+    let worktree_root = discovered_worktree_root(root)?;
+    let mut captured_output_bytes = 0_u64;
+    let cached = capture_git_scope_output(
+        &worktree_root,
+        GitPathDiscoveryScope::Cached,
+        limits,
+        deadline,
+        &mut captured_output_bytes,
+        &mut is_cancelled,
+    )?;
+    let deleted = capture_git_scope_output(
+        &worktree_root,
+        GitPathDiscoveryScope::Deleted,
+        limits,
+        deadline,
+        &mut captured_output_bytes,
+        &mut is_cancelled,
+    )?;
+    let cached = parse_git_paths_with_control(cached, limits, deadline, &mut is_cancelled)?;
+    let deleted = parse_git_paths_with_control(deleted, limits, deadline, &mut is_cancelled)?;
+    let mut retained = cached
+        .into_paths()
+        .into_vec()
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    remove_deleted_cached_paths(
+        &mut retained,
+        deleted.into_paths(),
+        limits,
+        deadline,
+        &mut is_cancelled,
+    )?;
+    discovered_repository_paths_from_set(
+        retained,
+        captured_output_bytes,
+        limits,
+        deadline,
+        &mut is_cancelled,
+    )
+}
+
+fn discovered_repository_paths_from_set(
+    paths: BTreeSet<RepositoryPath>,
+    output_bytes: u64,
+    limits: GitPathDiscoveryLimits,
+    deadline: Instant,
+    is_cancelled: &mut impl FnMut() -> bool,
+) -> Result<DiscoveredRepositoryPaths, GitPathDiscoveryError> {
+    let path_count =
+        u64::try_from(paths.len()).map_err(|_| GitPathDiscoveryError::PathCountOverflowed)?;
+    if path_count > limits.paths() {
+        return Err(GitPathDiscoveryError::PathLimitExceeded {
+            limit: limits.paths(),
+        });
+    }
+    let mut stats = GitPathDiscoveryStats::new(output_bytes, 0, 0, 0, 0);
+    for path in &paths {
+        check_operation_control(deadline, limits.deadline(), is_cancelled)?;
+        stats.path_count = stats
+            .path_count
+            .checked_add(1)
+            .ok_or(GitPathDiscoveryError::PathCountOverflowed)?;
+        stats.total_path_bytes = stats
+            .total_path_bytes
+            .checked_add(path.byte_count().get())
+            .ok_or(GitPathDiscoveryError::TotalPathBytesOverflowed)?;
+        stats.longest_path_bytes = stats.longest_path_bytes.max(path.byte_count().get());
+        stats.most_components = stats.most_components.max(path.component_count().get());
+    }
+    Ok(DiscoveredRepositoryPaths {
+        paths: paths.into_iter().collect::<Vec<_>>().into_boxed_slice(),
+        stats,
+    })
+}
+
 fn capture_git_path_outputs(
     root: &Path,
     limits: GitPathDiscoveryLimits,

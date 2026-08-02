@@ -72,21 +72,42 @@ no-follow SQLite open, post-open path revalidation, and guarded new-file
 cleanup prevent worktree database aliases or path replacement from redirecting
 writes.
 
-The implemented read path provides bounded literal `code_search`, exact
-`symbol_get`, current-projection `memory_recall`, deterministic
-`context_build`, transactionally pinned `diagnostics`, and native Rust graph
-status, exact-name search, site evidence, count-only architecture, trace, and
-conservative inbound impact. These return evidence-bearing application results
-rather than storage rows. Graph reads pin one immutable workspace view and
-generation and expose categorical resolution, candidate cardinality, coverage,
-and independent truncation. Diagnostics retains the raw Tree-sitter
+The implemented read path provides a bounded multi-language `architecture_map`
+file inventory, source-only `architecture_overview`, bounded literal `code_search`, lexical evidence-only `locate_relevant_paths`, typed exact/prefix
+`symbol_search`, exact `symbol_get`, exact declaration-contained `outbound_sites`, repository-scoped `test_markers`, exact raw-target `syntax_site_search`, current-projection `memory_recall`,
+deterministic `context_build`, transactionally pinned `diagnostics`, and native
+Rust graph status, exact-name search, site evidence, count-only architecture,
+trace, and conservative inbound impact. The architecture map is intentionally a
+file inventory: it returns exact path, language, source/artifact/producer
+receipts, declaration counts, coverage, and explicit truncation, but makes no
+import, call, ownership, or cross-language relationship claim. The overview
+adds only structural repository-root/top-level-path buckets and direct-syntax
+`function main` candidates; those buckets are not package or ownership
+boundaries, and candidates never prove runtime entry points. These return
+evidence-bearing application results rather than storage rows. Graph reads pin
+one immutable workspace view and generation and expose categorical resolution,
+candidate cardinality, coverage, and independent truncation. Diagnostics retains the raw Tree-sitter
 error/missing-node total, reports recognized parser limitations only as a
 non-subtractive subset, and identifies the graph as Rust-only and
 syntax-derived. Package-aware resolution, macro expansion, SCIP, dynamic
 dispatch, and cross-language edges remain unavailable or explicitly
-unresolved. The CLI and MCP adapters share the same use cases, and the MCP
+unresolved. `outbound_sites` returns immutable parser observations only: raw
+target spellings, spans, extraction evidence, coverage, and explicit truncation;
+it never associates a spelling with a declaration. `syntax_site_search` uses an
+exact raw-target predicate over the same immutable all-language projection and
+returns only canonical raw observations plus a query digest, coverage, and
+pre-limit total; equal text never resolves a declaration or establishes a
+caller, reference, or graph edge. `test_markers` returns only raw marker observations, with per-language support coverage so unavailable extraction cannot look like an observed absence, and never claims test execution or relationship resolution. The MCP-only `code_graph_query` envelope dispatches exactly one existing bounded operation and rejects arbitrary Cypher, SQL, and cross-operation fields. The CLI and MCP adapters share the same use cases, and the MCP
 server fixes the repository, source root, and database at startup. Exact source
-declarations use labeled UTF-8 when valid and display-safe, and lowercase
+`repository_topology` is a separate generation-pinned receipt over cached
+tracked Git-index paths (excluding untracked and deleted paths): it classifies
+only a fixed allow-list of path shapes, never opens non-source content, and
+carries its own digest, coverage, and truncation. Its reader verifies the
+published profile and recomputes the complete persisted inventory digest before
+returning a bounded response. The explicit `onboard` CLI composition path generates or validates
+an opaque identity and places its database beneath private Unix user state via
+no-follow directory capabilities; it refuses unsupported platform ACL models,
+does not discover roots, and adds no mutating MCP operation. Exact source declarations use labeled UTF-8 when valid and display-safe, and lowercase
 hexadecimal otherwise. CLI report data is JSON-escaped into one field, while
 MCP keeps the representation label and declaration separate.
 
@@ -286,6 +307,15 @@ These categories are origins with documented limits, not universal numeric proba
 
 The current domain foundation implements semantic material-result contract version 1. It requires item-bounded evidence and notice collections, preserves supporting and contradictory evidence explicitly, and rejects resolved claims without support, resolved claims with contradictory evidence, unexplained ambiguity or indeterminacy, and unresolved outcomes that omit unresolved coverage. Evidence identity now has a typed structure, fixed-width byte offsets and lengths, validated half-open byte spans, explicit whole-file/span/symbol-occurrence locations, and a separate producer ID/version structure. Empty spans represent points or insertion boundaries; the adapter that owns the source bytes must also reject endpoints outside the referenced blob. The Phase 0 `code_search` application use case admits a bounded canonical literal query, records only its domain-separated digest in the claim, maps ordered supported-language syntax candidates to attributed symbol-occurrence evidence, pins the result to the SQLite-returned snapshot and opaque generation, adds an explicit lexical-only limitation, reports exact pre-limit match counts, and converts index omissions plus query truncation into independent coverage categories. Each occurrence carries its persisted language; that language must agree with the exact case-sensitive repository extension, and producer attribution follows the validated language instead of guessing it from the path. An empty candidate set is `unresolved`, not proof of absence. The corresponding `symbol_get` use case accepts the complete snapshot, generation, path, content, artifact, and fact-ordinal selector; requires the adapter to return that exact active context and occurrence; revalidates the path/language association, declaration bounds, and name bytes; and returns one syntax-attributed definition with explicit no-references coverage. The local adapter reads the authoritative generation mapping rather than the disposable FTS projection, then capability-contains the source read and verifies its whole-file digest before slicing the declaration. Stale generations, modified source, and inconsistent persisted language fail instead of retargeting or misattributing evidence. Repository-path and repository-ID text encodings are fixed; remaining claim, producer, generation, notice, and MCP wire encodings stay separate from persistence.
 
+`locate_relevant_paths` is a pure bounded presentation of one completed
+`code_search` receipt: it groups only returned syntax evidence by canonical
+path, rejects conflicting content identity, orders paths by returned-match
+count then canonical path, and retains the underlying evidence, snapshot,
+generation, and coverage. Its path totals and path-limit flag cover only those
+returned candidates, never paths that might occur in omitted candidates; the
+underlying match totals and coverage remain authoritative for that uncertainty.
+It makes no semantic, relationship, ownership, runtime, or absence claim.
+
 ## Logical identity and correspondence
 
 RepoWitness separates:
@@ -372,11 +402,17 @@ never reports configuration paths or source text.
 
 ## MCP and CLI boundary
 
-The implemented canonical local stdio MCP surface exposes exactly eleven
+The implemented canonical local stdio MCP surface exposes exactly twenty-four
 read-only tools by default:
 
+- `architecture_map`
+- `architecture_overview`
+- `repository_topology`
+- `code_graph_query`
 - `code_search`
+- `locate_relevant_paths`
 - `context_build`
+- `phase2_context_build`
 - `diagnostics`
 - `graph_architecture`
 - `graph_evidence`
@@ -384,20 +420,37 @@ read-only tools by default:
 - `graph_status`
 - `graph_trace`
 - `impact_analyze`
+- `historical_memory`
 - `memory_recall`
+- `outbound_sites`
+- `syntax_site_search`
+- `scip_evidence`
+- `scip_relationship_trace`
+- `scip_symbol_resolve`
 - `symbol_get`
+- `symbol_search`
 
-Explicit fixed-actor startup authorization adds `memory_manage` as the twelfth
+`scip_symbol_resolve` accepts one `symbol_search` candidate's immutable
+selector and name span, validates it against the selected source slot and
+workspace view, and maps only an exact canonical path/content/name-span occurrence in one pinned overlay to an
+opaque provider symbol. `scip_evidence` remains the separately bounded source
+of provider-declared relationship evidence. `scip_relationship_trace` follows
+only those persisted producer rows in one immutable overlay, source slot, and
+package scope. It exposes incoming or outgoing bounded breadth-first evidence
+with explicit depth, edge, symbol, and output coverage; it does not infer
+source calls, runtime behavior, or repository-wide completeness.
+
+Explicit fixed-actor startup authorization adds `memory_manage` as the twenty-fifth
 tool. An explicit compatibility profile adds only the bounded, schema-tested
 aliases listed by ADR-0030; it does not alter the native default inventory.
 The current receipts assert name compatibility only, report incompatible
 request shapes, and leave response and behavior compatibility unassessed.
-General `query_graph` compatibility is excluded until a versioned, bounded
-query language and safety contract is approved.
+General `query_graph` compatibility remains excluded: `code_graph_query` is the
+only versioned, finite, bounded discovery envelope.
 
 Use a released, pinned MCP specification/SDK pair. MCP DTOs stay outside
 application and domain types. Local stdio is the Phase 0 transport. The current
-server pins MCP `2025-11-25` through `rmcp` 2.2.0 and exposes the eleven
+server pins MCP `2025-11-25` through `rmcp` 2.2.0 and exposes the twenty-four
 read-only tools listed above in deterministic name order. It adds
 `memory_manage` only when startup explicitly
 enables writes with one fixed validated local actor, the effective monotonic

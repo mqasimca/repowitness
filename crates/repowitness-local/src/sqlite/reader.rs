@@ -13,17 +13,31 @@ use std::{
 
 use repowitness_analysis::{
     RUST_CORRESPONDENCE_PROFILE_ID, RUST_CORRESPONDENCE_PROFILE_VERSION,
-    RUST_GRAPH_SITE_PROFILE_VERSION, RustAnalysisLimits, RustGraphAnalysisControl,
-    RustGraphAnalysisError, RustGraphAnalysisLimits, RustGraphEnclosingDefinition, RustGraphSite,
-    RustGraphSiteAnalysis, RustGraphSiteKind, RustGraphSiteOrdinal, RustOccurrenceFingerprint,
-    RustSourceAnalysis, RustSymbolFact, RustSymbolKind,
+    RUST_GRAPH_SITE_PROFILE_VERSION, RawSyntaxLanguage, RawSyntaxSite, RawSyntaxSiteAnalysis,
+    RawSyntaxSiteAnalysisControl, RawSyntaxSiteAnalysisError, RawSyntaxSiteAnalysisLimits,
+    RawSyntaxSiteEvidence, RawSyntaxSiteKind, RawSyntaxSiteOrdinal, RawSyntaxSiteSupport,
+    RustAnalysisLimits, RustGraphAnalysisControl, RustGraphAnalysisError, RustGraphAnalysisLimits,
+    RustGraphEnclosingDefinition, RustGraphSite, RustGraphSiteAnalysis, RustGraphSiteKind,
+    RustGraphSiteOrdinal, RustOccurrenceFingerprint, RustSourceAnalysis, RustSymbolFact,
+    RustSymbolKind,
 };
 use repowitness_application::{
-    CodeSearchCandidate, CodeSearchLimits, CodeSearchPort, CodeSearchPortResult, CodeSearchQuery,
-    MemoryRecallLimits, MemoryRecallPort, MemoryRecallPortResult, MemoryRecallQuery, PackageScope,
-    RepositoryDiagnosticsPort, RepositoryDiagnosticsPortResult, RustArtifactIdentity,
-    RustIndexCoverage, RustIndexLimits, RustSymbolOccurrence, SourceArtifactEvidence,
-    SourceLanguage, SymbolGetSelector, hash_analysis_artifact_key, hash_analysis_artifact_payload,
+    ArchitectureMapFile, ArchitectureMapLanguageSummary, ArchitectureMapLimits,
+    ArchitectureMapPort, ArchitectureMapPortResult, ArchitectureOverviewEntryPointCandidate,
+    ArchitectureOverviewKindSummary, ArchitectureOverviewLimits, ArchitectureOverviewPort,
+    ArchitectureOverviewPortResult, ArchitectureOverviewSourceRoot,
+    ArchitectureOverviewSourceRootSummary, CodeSearchCandidate, CodeSearchLimits, CodeSearchPort,
+    CodeSearchPortResult, CodeSearchQuery, MAX_SYMBOL_SEARCH_NAME_BYTES, MemoryRecallLimits,
+    MemoryRecallPort, MemoryRecallPortResult, MemoryRecallQuery, PackageScope,
+    RepositoryDiagnosticsPort, RepositoryDiagnosticsPortResult, RepositoryTopologyCategory,
+    RepositoryTopologyCategorySummary, RepositoryTopologyCoverage, RepositoryTopologyEntry,
+    RepositoryTopologyLimits, RepositoryTopologyPort, RepositoryTopologyPortResult,
+    RepositoryTopologyReceipt, RustArtifactIdentity, RustIndexCoverage, RustIndexLimits,
+    RustSymbolOccurrence, ScipRelationshipTraceDepth, ScipRelationshipTraceDirection,
+    ScipRelationshipTraceMaxEdges, SourceArtifactEvidence, SourceArtifactIdentities,
+    SourceLanguage, SymbolGetSelector, SymbolSearchNameMatch, SymbolSearchPort, SymbolSearchQuery,
+    SyntaxSiteSearchPort, SyntaxSiteSearchPortRequest, SyntaxSiteSearchPortResult,
+    TestMarkersQuery, hash_analysis_artifact_key, hash_analysis_artifact_payload,
 };
 use repowitness_domain::{
     AnalysisArtifactDigest, AnalysisArtifactKey, AnalysisArtifactPayloadDigest, ByteOffset,
@@ -55,11 +69,23 @@ const PROGRESS_OPCODES: i32 = 1_000;
 const PERSISTED_PATH_LIMITS: RepositoryPathLimits = RepositoryPathLimits::new(1_048_576, 1_048_576);
 
 type SearchReply = SyncSender<Result<SearchResults, SqliteStoreError>>;
+type ArchitectureMapReply =
+    SyncSender<Result<ArchitectureMapPortResult<GenerationId>, SqliteStoreError>>;
+type ArchitectureOverviewReply =
+    SyncSender<Result<ArchitectureOverviewPortResult<GenerationId>, SqliteStoreError>>;
+type RepositoryTopologyReply =
+    SyncSender<Result<RepositoryTopologyPortResult<GenerationId>, SqliteStoreError>>;
 type SymbolReply = SyncSender<Result<SymbolLookupResults, SqliteStoreError>>;
 type ArtifactReply =
     SyncSender<Result<BTreeMap<AnalysisArtifactDigest, RustSourceAnalysis>, SqliteStoreError>>;
 type GraphArtifactReply =
     SyncSender<Result<BTreeMap<AnalysisArtifactDigest, RustGraphSiteAnalysis>, SqliteStoreError>>;
+type RawSyntaxArtifactReply =
+    SyncSender<Result<BTreeMap<AnalysisArtifactDigest, RawSyntaxSiteAnalysis>, SqliteStoreError>>;
+type RawSyntaxSitesReply = SyncSender<Result<RawSyntaxSitesReadResult, SqliteStoreError>>;
+type RawSyntaxSiteSearchReply = SyncSender<Result<RawSyntaxSiteSearchReadResult, SqliteStoreError>>;
+type RawSyntaxTestMarkersReply =
+    SyncSender<Result<RawSyntaxTestMarkersReadResult, SqliteStoreError>>;
 type MemoryRecallReply =
     SyncSender<Result<MemoryRecallPortResult<GenerationId, i64>, SqliteStoreError>>;
 type DiagnosticsReply =
@@ -67,6 +93,7 @@ type DiagnosticsReply =
 type WorkspaceViewReply = SyncSender<Result<Option<PinnedWorkspaceView>, SqliteStoreError>>;
 type ScipOverlayReply = SyncSender<Result<ScipOverlayAvailability, SqliteStoreError>>;
 type ScipEvidenceReply = SyncSender<Result<ScipSymbolEvidenceResult, SqliteStoreError>>;
+type ScipRelationshipTraceReply = SyncSender<Result<ScipRelationshipTraceResult, SqliteStoreError>>;
 type ScipSyntaxSymbolReply = SyncSender<Result<ScipSyntaxSymbolResolution, SqliteStoreError>>;
 type ScipImportScopeReply = SyncSender<Result<ScipOverlayImportScope, SqliteStoreError>>;
 type HistoryEvidenceReply = SyncSender<Result<Vec<GitHistoryEvidence>, SqliteStoreError>>;
@@ -77,10 +104,18 @@ type PersonalMemoryReadReply = SyncSender<Result<Vec<PersonalMemoryRecord>, Sqli
 
 enum ReaderCommand {
     Search(Box<SearchCommand>),
+    SymbolSearch(Box<SymbolSearchCommand>),
+    ArchitectureMap(Box<ArchitectureMapCommand>),
+    ArchitectureOverview(Box<ArchitectureOverviewCommand>),
+    RepositoryTopology(Box<RepositoryTopologyCommand>),
     WorkspaceSearch(Box<WorkspaceSearchCommand>),
     GetSymbol(Box<SymbolCommand>),
     LoadArtifacts(Box<ArtifactCommand>),
     LoadGraphArtifacts(Box<GraphArtifactCommand>),
+    LoadRawSyntaxArtifacts(Box<RawSyntaxArtifactCommand>),
+    RawSyntaxSites(Box<RawSyntaxSitesCommand>),
+    RawSyntaxSiteSearch(Box<RawSyntaxSiteSearchCommand>),
+    RawSyntaxTestMarkers(Box<RawSyntaxTestMarkersCommand>),
     RecallMemory(Box<MemoryRecallCommand>),
     HistoryEvidence(Box<HistoryEvidenceCommand>),
     KnownAtHistoryEvidence(Box<KnownAtHistoryEvidenceCommand>),
@@ -92,6 +127,7 @@ enum ReaderCommand {
     WorkspaceView(Box<WorkspaceViewCommand>),
     ScipOverlayStatus(Box<ScipOverlayStatusCommand>),
     ScipSymbolEvidence(Box<ScipSymbolEvidenceCommand>),
+    ScipRelationshipTrace(Box<ScipRelationshipTraceCommand>),
     ScipSyntaxSymbol(Box<ScipSyntaxSymbolCommand>),
     ScipImportScope(Box<ScipImportScopeCommand>),
     Graph(Box<GraphCommand>),
@@ -107,6 +143,39 @@ struct SearchCommand {
     cancelled: Arc<AtomicBool>,
     deadline: Instant,
     reply: SearchReply,
+}
+
+struct SymbolSearchCommand {
+    repository: RepositoryIdentityDigest,
+    query: SymbolSearchQuery,
+    limits: SearchLimits,
+    cancelled: Arc<AtomicBool>,
+    deadline: Instant,
+    reply: SearchReply,
+}
+
+struct ArchitectureMapCommand {
+    repository: RepositoryIdentityDigest,
+    limits: ArchitectureMapLimits,
+    cancelled: Arc<AtomicBool>,
+    deadline: Instant,
+    reply: ArchitectureMapReply,
+}
+
+struct ArchitectureOverviewCommand {
+    repository: RepositoryIdentityDigest,
+    limits: ArchitectureOverviewLimits,
+    cancelled: Arc<AtomicBool>,
+    deadline: Instant,
+    reply: ArchitectureOverviewReply,
+}
+
+struct RepositoryTopologyCommand {
+    repository: RepositoryIdentityDigest,
+    limits: RepositoryTopologyLimits,
+    cancelled: Arc<AtomicBool>,
+    deadline: Instant,
+    reply: RepositoryTopologyReply,
 }
 
 struct WorkspaceSearchCommand {
@@ -147,6 +216,45 @@ struct GraphArtifactCommand {
     cancelled: Arc<AtomicBool>,
     deadline: Instant,
     reply: GraphArtifactReply,
+}
+
+struct RawSyntaxArtifactCommand {
+    requested: Box<[AnalysisArtifactDigest]>,
+    identities: SourceArtifactIdentities,
+    limits: RustIndexLimits,
+    raw_syntax_limits: RawSyntaxSiteAnalysisLimits,
+    cancelled: Arc<AtomicBool>,
+    deadline: Instant,
+    reply: RawSyntaxArtifactReply,
+}
+
+struct RawSyntaxSitesCommand {
+    repository: RepositoryIdentityDigest,
+    expected_snapshot: SourceSnapshotDigest,
+    expected_generation: GenerationId,
+    selector: SymbolGetSelector,
+    limits: RawSyntaxSiteReadLimits,
+    cancelled: Arc<AtomicBool>,
+    deadline: Instant,
+    reply: RawSyntaxSitesReply,
+}
+
+struct RawSyntaxSiteSearchCommand {
+    repository: RepositoryIdentityDigest,
+    target: String,
+    limits: RawSyntaxSiteReadLimits,
+    cancelled: Arc<AtomicBool>,
+    deadline: Instant,
+    reply: RawSyntaxSiteSearchReply,
+}
+
+struct RawSyntaxTestMarkersCommand {
+    repository: RepositoryIdentityDigest,
+    query: TestMarkersQuery,
+    limits: RawSyntaxSiteReadLimits,
+    cancelled: Arc<AtomicBool>,
+    deadline: Instant,
+    reply: RawSyntaxTestMarkersReply,
 }
 
 struct MemoryRecallCommand {
@@ -448,6 +556,20 @@ struct ScipSymbolEvidenceCommand {
     cancelled: Arc<AtomicBool>,
     deadline: Instant,
     reply: ScipEvidenceReply,
+}
+
+struct ScipRelationshipTraceCommand {
+    view: PinnedWorkspaceView,
+    source_slot: repowitness_domain::SourceSlotId,
+    package_scope: PackageScope,
+    root: ScipSymbol,
+    direction: ScipRelationshipTraceDirection,
+    max_depth: ScipRelationshipTraceDepth,
+    max_edges: ScipRelationshipTraceMaxEdges,
+    limits: ScipRelationshipTraceReadLimits,
+    cancelled: Arc<AtomicBool>,
+    deadline: Instant,
+    reply: ScipRelationshipTraceReply,
 }
 
 struct ScipSyntaxSymbolCommand {
@@ -819,6 +941,120 @@ impl OwnedSqliteReader {
         )?;
         match receive_reply(&receiver, deadline) {
             Ok(results) => Ok(results),
+            Err(error) => {
+                cancelled.store(true, Ordering::Release);
+                Err(error)
+            }
+        }
+    }
+
+    /// Searches direct declaration facts in one active immutable generation.
+    pub fn search_symbols(
+        &self,
+        repository: RepositoryIdentityDigest,
+        query: SymbolSearchQuery,
+        limits: SearchLimits,
+        cancelled: Arc<AtomicBool>,
+        deadline: Instant,
+    ) -> Result<SearchResults, SqliteStoreError> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.send(
+            ReaderCommand::SymbolSearch(Box::new(SymbolSearchCommand {
+                repository,
+                query,
+                limits,
+                cancelled: Arc::clone(&cancelled),
+                deadline,
+                reply,
+            })),
+            deadline,
+        )?;
+        match receive_reply(&receiver, deadline) {
+            Ok(results) => Ok(results),
+            Err(error) => {
+                cancelled.store(true, Ordering::Release);
+                Err(error)
+            }
+        }
+    }
+
+    /// Maps exact indexed files from the active generation across every supported language.
+    pub fn architecture_map(
+        &self,
+        repository: RepositoryIdentityDigest,
+        limits: ArchitectureMapLimits,
+        cancelled: Arc<AtomicBool>,
+        deadline: Instant,
+    ) -> Result<ArchitectureMapPortResult<GenerationId>, SqliteStoreError> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.send(
+            ReaderCommand::ArchitectureMap(Box::new(ArchitectureMapCommand {
+                repository,
+                limits,
+                cancelled: Arc::clone(&cancelled),
+                deadline,
+                reply,
+            })),
+            deadline,
+        )?;
+        match receive_reply(&receiver, deadline) {
+            Ok(result) => Ok(result),
+            Err(error) => {
+                cancelled.store(true, Ordering::Release);
+                Err(error)
+            }
+        }
+    }
+
+    /// Summarizes direct source facts from one active immutable generation without inferring relationships.
+    pub fn architecture_overview(
+        &self,
+        repository: RepositoryIdentityDigest,
+        limits: ArchitectureOverviewLimits,
+        cancelled: Arc<AtomicBool>,
+        deadline: Instant,
+    ) -> Result<ArchitectureOverviewPortResult<GenerationId>, SqliteStoreError> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.send(
+            ReaderCommand::ArchitectureOverview(Box::new(ArchitectureOverviewCommand {
+                repository,
+                limits,
+                cancelled: Arc::clone(&cancelled),
+                deadline,
+                reply,
+            })),
+            deadline,
+        )?;
+        match receive_reply(&receiver, deadline) {
+            Ok(result) => Ok(result),
+            Err(error) => {
+                cancelled.store(true, Ordering::Release);
+                Err(error)
+            }
+        }
+    }
+
+    /// Returns the path-only repository topology from one active immutable generation.
+    pub fn repository_topology(
+        &self,
+        repository: RepositoryIdentityDigest,
+        limits: RepositoryTopologyLimits,
+        cancelled: Arc<AtomicBool>,
+        deadline: Instant,
+    ) -> Result<RepositoryTopologyPortResult<GenerationId>, SqliteStoreError> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.send(
+            ReaderCommand::RepositoryTopology(Box::new(RepositoryTopologyCommand {
+                repository,
+                limits,
+                cancelled: Arc::clone(&cancelled),
+                deadline,
+                reply,
+            })),
+            deadline,
+        )?;
+        match receive_reply(&receiver, deadline) {
+            Ok(result) => Ok(result),
             Err(error) => {
                 cancelled.store(true, Ordering::Release);
                 Err(error)
@@ -1209,9 +1445,15 @@ impl OwnedSqliteReader {
 }
 
 include!("reader/adapters.rs");
+include!("reader/architecture_map.rs");
+include!("reader/architecture_overview.rs");
+include!("reader/repository_topology.rs");
 include!("reader/artifact_commands.rs");
 include!("reader/artifacts.rs");
 include!("reader/graph_artifact_reuse.rs");
+include!("reader/raw_syntax_artifact_reuse.rs");
+include!("reader/raw_syntax_sites.rs");
+include!("reader/test_markers.rs");
 include!("reader/diagnostics.rs");
 include!("reader/graph_commands.rs");
 include!("reader/graph_decode.rs");
@@ -1220,6 +1462,7 @@ include!("reader/graph_query.rs");
 include!("reader/graph_relationships.rs");
 include!("reader/graph_traversal.rs");
 include!("reader/query.rs");
+include!("reader/symbol_search.rs");
 include!("reader/history.rs");
 include!("reader/task.rs");
 include!("reader/personal_memory.rs");

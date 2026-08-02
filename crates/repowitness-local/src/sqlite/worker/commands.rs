@@ -21,6 +21,8 @@ enum WriterCommand {
     Stage(Box<StageCommand>),
     StageSourceSlot(Box<StageSourceSlotCommand>),
     StageGraph(Box<StageGraphCommand>),
+    StageSyntaxSites(Box<StageSyntaxSitesCommand>),
+    StageRepositoryTopology(Box<StageRepositoryTopologyCommand>),
     StageScipOverlay(Box<StageScipOverlayCommand>),
     ImportMemory(Box<MemoryImportCommand>),
     SyncTeamMemory(Box<MemoryImportCommand>),
@@ -87,6 +89,8 @@ impl WriterCommand {
             | Self::Stage(_)
             | Self::StageSourceSlot(_)
             | Self::StageGraph(_)
+            | Self::StageSyntaxSites(_)
+            | Self::StageRepositoryTopology(_)
             | Self::StageScipOverlay(_)
             | Self::ImportMemory(_)
             | Self::SyncTeamMemory(_)
@@ -125,6 +129,8 @@ impl WriterCommand {
             Self::Stage(command) => reject_unresolved_reply(command.reply),
             Self::StageSourceSlot(command) => reject_unresolved_reply(command.reply),
             Self::StageGraph(command) => reject_unresolved_reply(command.reply),
+            Self::StageSyntaxSites(command) => reject_unresolved_reply(command.reply),
+            Self::StageRepositoryTopology(command) => reject_unresolved_reply(command.reply),
             Self::StageScipOverlay(command) => reject_unresolved_reply(command.reply),
             Self::ImportMemory(command) => reject_unresolved_reply(command.reply),
             Self::SyncTeamMemory(command) => reject_unresolved_reply(command.reply),
@@ -187,6 +193,22 @@ struct StageSourceSlotCommand {
 struct StageGraphCommand {
     generation: GenerationId,
     prepared: PreparedRustGraphGeneration,
+    cancelled: Arc<AtomicBool>,
+    deadline: Instant,
+    reply: Reply<()>,
+}
+
+struct StageSyntaxSitesCommand {
+    generation: GenerationId,
+    prepared: PreparedRawSyntaxGeneration,
+    cancelled: Arc<AtomicBool>,
+    deadline: Instant,
+    reply: Reply<()>,
+}
+
+struct StageRepositoryTopologyCommand {
+    generation: GenerationId,
+    prepared: PreparedRepositoryTopology,
     cancelled: Arc<AtomicBool>,
     deadline: Instant,
     reply: Reply<()>,

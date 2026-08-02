@@ -3,7 +3,10 @@
 //!
 //! CLI and MCP adapters call the same use cases through this package.
 
+mod architecture_map;
+mod architecture_overview;
 mod canonical_digest;
+mod code_graph_query;
 mod code_search;
 mod configuration;
 mod context_build;
@@ -13,12 +16,16 @@ mod memory_import;
 mod memory_projection;
 mod memory_recall;
 mod memory_record_id_text;
+mod outbound_sites;
 mod package_scope;
 mod personal_memory;
 mod python_profile;
+mod raw_syntax_profile;
+mod relevant_paths;
 mod repository_diagnostics;
 mod repository_identity_text;
 mod repository_path_text;
+mod repository_topology;
 mod rust_graph_profile;
 mod rust_graph_read;
 mod rust_index;
@@ -26,18 +33,46 @@ mod rust_profile;
 mod scip_evidence_read;
 mod scip_overlay_identity;
 mod scip_overlay_import;
+mod scip_relationship_trace;
+mod scip_symbol_resolve;
 mod source_profile;
 mod source_slot_publication;
 mod source_snapshot;
 mod symbol_get;
+mod symbol_search;
+mod syntax_site_search;
 mod task_checkpoint;
+mod test_markers;
 mod typescript_profile;
 mod workspace_identity_text;
 
+pub use architecture_map::{
+    ARCHITECTURE_MAP_PROFILE_VERSION, ArchitectureMapError, ArchitectureMapFile,
+    ArchitectureMapLanguageSummary, ArchitectureMapLimitError, ArchitectureMapLimits,
+    ArchitectureMapPort, ArchitectureMapPortOutputError, ArchitectureMapPortResult,
+    ArchitectureMapRequest, ArchitectureMapResult, DEFAULT_ARCHITECTURE_MAP_FILES,
+    DEFAULT_ARCHITECTURE_MAP_OUTPUT_BYTES, MAX_ARCHITECTURE_MAP_FILES,
+    MAX_ARCHITECTURE_MAP_OUTPUT_BYTES, architecture_map,
+};
+pub use architecture_overview::{
+    ARCHITECTURE_OVERVIEW_PROFILE_VERSION, ArchitectureOverviewEntryPointCandidate,
+    ArchitectureOverviewError, ArchitectureOverviewKindSummary, ArchitectureOverviewLimitError,
+    ArchitectureOverviewLimits, ArchitectureOverviewPort, ArchitectureOverviewPortOutputError,
+    ArchitectureOverviewPortResult, ArchitectureOverviewRequest, ArchitectureOverviewResult,
+    ArchitectureOverviewSourceRoot, ArchitectureOverviewSourceRootSummary,
+    DEFAULT_ARCHITECTURE_OVERVIEW_ENTRY_POINT_CANDIDATES, DEFAULT_ARCHITECTURE_OVERVIEW_FILES,
+    DEFAULT_ARCHITECTURE_OVERVIEW_OUTPUT_BYTES, DEFAULT_ARCHITECTURE_OVERVIEW_ROOTS,
+    MAX_ARCHITECTURE_OVERVIEW_ENTRY_POINT_CANDIDATES, MAX_ARCHITECTURE_OVERVIEW_FILES,
+    MAX_ARCHITECTURE_OVERVIEW_OUTPUT_BYTES, MAX_ARCHITECTURE_OVERVIEW_ROOTS, architecture_overview,
+};
 pub use canonical_digest::{
     ANALYSIS_ARTIFACT_PAYLOAD_VERSION, CanonicalAnalysisArtifactKey, CanonicalSourceManifest,
     hash_analysis_artifact_key, hash_analysis_artifact_payload, hash_source_content,
     hash_source_manifest,
+};
+pub use code_graph_query::{
+    CODE_GRAPH_QUERY_PROFILE_VERSION, CodeGraphQueryError, CodeGraphQueryOperation,
+    CodeGraphQueryRequest, CodeGraphQueryResult, code_graph_query,
 };
 pub use code_search::{
     CODE_SEARCH_PROFILE_VERSION, CodeSearchCandidate, CodeSearchClaim, CodeSearchError,
@@ -106,6 +141,14 @@ pub use memory_recall::{
 pub use memory_record_id_text::{
     MEMORY_RECORD_ID_TEXT_BYTES, MemoryRecordIdTextError, MemoryRecordIdTextV1,
 };
+pub use outbound_sites::{
+    DEFAULT_OUTBOUND_SITES_OUTPUT_BYTES, DEFAULT_OUTBOUND_SITES_RESULTS,
+    MAX_OUTBOUND_SITES_OUTPUT_BYTES, MAX_OUTBOUND_SITES_RESULTS, OUTBOUND_SITES_PROFILE_VERSION,
+    OutboundSitesAvailability, OutboundSitesDeclaration, OutboundSitesError,
+    OutboundSitesLimitError, OutboundSitesLimits, OutboundSitesNotice, OutboundSitesPort,
+    OutboundSitesPortOutputError, OutboundSitesPortRequest, OutboundSitesPortResult,
+    OutboundSitesRequest, OutboundSitesResult, OutboundSyntaxSite, outbound_sites,
+};
 pub use package_scope::{
     MAX_PACKAGE_SCOPE_ROOTS, PACKAGE_SCOPE_VERSION, PackageRootCount, PackageRootOrdinal,
     PackageScope, PackageScopeDigest, PackageScopeError,
@@ -118,6 +161,16 @@ pub use python_profile::{
     PHASE0_PYTHON_ANALYSIS_SCHEMA_VERSION, PHASE0_PYTHON_CANONICALIZATION_VERSION,
     PHASE0_PYTHON_CONFIGURATION_VERSION, PHASE0_PYTHON_PRODUCER_MANIFEST_VERSION,
     phase0_python_artifact_identity,
+};
+pub use raw_syntax_profile::{
+    RAW_SYNTAX_ANALYSIS_SCHEMA_VERSION, RAW_SYNTAX_CANONICALIZATION_VERSION,
+    RAW_SYNTAX_CONFIGURATION_VERSION, RAW_SYNTAX_PRODUCER_MANIFEST_VERSION,
+    raw_syntax_artifact_identities, raw_syntax_artifact_identity,
+};
+pub use relevant_paths::{
+    DEFAULT_RELEVANT_PATHS, MAX_RELEVANT_PATHS, RELEVANT_PATHS_CANDIDATES_PER_PATH,
+    RELEVANT_PATHS_PROFILE_VERSION, RelevantPath, RelevantPathsError, RelevantPathsLimitError,
+    RelevantPathsLimits, RelevantPathsResult, locate_relevant_paths,
 };
 pub use repository_diagnostics::{
     REPOSITORY_DIAGNOSTICS_PROFILE_VERSION, RepositoryDiagnosticCapability,
@@ -133,6 +186,16 @@ pub use repository_identity_text::{
 pub use repository_path_text::{
     RepositoryPathLimits, RepositoryPathTextByteCount, RepositoryPathTextByteLimit,
     RepositoryPathTextError, RepositoryPathTextV1, RepositoryPathTextVersion,
+};
+pub use repository_topology::{
+    DEFAULT_REPOSITORY_TOPOLOGY_OUTPUT_BYTES, DEFAULT_REPOSITORY_TOPOLOGY_PATHS,
+    MAX_REPOSITORY_TOPOLOGY_OUTPUT_BYTES, MAX_REPOSITORY_TOPOLOGY_PATHS,
+    REPOSITORY_TOPOLOGY_PROFILE_VERSION, RepositoryTopologyCategory,
+    RepositoryTopologyCategorySummary, RepositoryTopologyCoverage, RepositoryTopologyEntry,
+    RepositoryTopologyError, RepositoryTopologyLimitError, RepositoryTopologyLimits,
+    RepositoryTopologyPort, RepositoryTopologyPortOutputError, RepositoryTopologyPortResult,
+    RepositoryTopologyReceipt, RepositoryTopologyRequest, RepositoryTopologyResult,
+    repository_topology,
 };
 pub use repowitness_analysis::{
     MAX_PHASE2_CONTEXT_BUDGET_UNITS, MAX_PHASE2_CONTEXT_CANDIDATES,
@@ -184,6 +247,19 @@ pub use scip_overlay_import::{
     PreparedScipOverlayImport, ScipOverlayImportError, ScipOverlayImportRequest,
     prepare_scip_overlay_import,
 };
+pub use scip_relationship_trace::{
+    DEFAULT_SCIP_RELATIONSHIP_TRACE_DEPTH, DEFAULT_SCIP_RELATIONSHIP_TRACE_EDGES,
+    MAX_SCIP_RELATIONSHIP_TRACE_DEPTH, MAX_SCIP_RELATIONSHIP_TRACE_EDGES,
+    ScipRelationshipTraceDepth, ScipRelationshipTraceDepthError, ScipRelationshipTraceDirection,
+    ScipRelationshipTraceError, ScipRelationshipTraceMaxEdges, ScipRelationshipTraceMaxEdgesError,
+    ScipRelationshipTracePort, ScipRelationshipTracePortResult, ScipRelationshipTraceRequest,
+    ScipRelationshipTraceResult, ScipRelationshipTraceSelectionError, scip_relationship_trace,
+};
+pub use scip_symbol_resolve::{
+    ScipSymbolResolveError, ScipSymbolResolvePort, ScipSymbolResolvePortResult,
+    ScipSymbolResolveRequest, ScipSymbolResolveResult, ScipSymbolResolveSelectionError,
+    scip_symbol_resolve,
+};
 pub use source_profile::{
     PHASE0_SOURCE_CANONICALIZATION_VERSION, PHASE0_SOURCE_SNAPSHOT_PROFILE_VERSION,
     SourceSnapshotProfile, phase0_source_artifact_identities, phase0_source_snapshot_profile,
@@ -209,9 +285,34 @@ pub use symbol_get::{
     SymbolGetProducer, SymbolGetProducerIdentity, SymbolGetRequest, SymbolGetResult,
     SymbolGetSelector, symbol_get,
 };
+pub use symbol_search::{
+    MAX_SYMBOL_SEARCH_NAME_BYTES, SYMBOL_SEARCH_PROFILE_VERSION, SymbolSearchClaim,
+    SymbolSearchError, SymbolSearchEvidenceIdentity, SymbolSearchNameMatch, SymbolSearchNotice,
+    SymbolSearchPort, SymbolSearchPortResult, SymbolSearchProducerIdentity, SymbolSearchQuery,
+    SymbolSearchQueryDigest, SymbolSearchQueryError, SymbolSearchRequest, SymbolSearchResult,
+    symbol_search,
+};
+pub use syntax_site_search::{
+    DEFAULT_SYNTAX_SITE_SEARCH_OUTPUT_BYTES, DEFAULT_SYNTAX_SITE_SEARCH_RESULTS,
+    MAX_SYNTAX_SITE_SEARCH_OUTPUT_BYTES, MAX_SYNTAX_SITE_SEARCH_RESULTS,
+    MAX_SYNTAX_SITE_SEARCH_TARGET_BYTES, SYNTAX_SITE_SEARCH_PROFILE_VERSION, SyntaxSiteSearchClaim,
+    SyntaxSiteSearchError, SyntaxSiteSearchLimitError, SyntaxSiteSearchLimits,
+    SyntaxSiteSearchNotice, SyntaxSiteSearchPort, SyntaxSiteSearchPortOutputError,
+    SyntaxSiteSearchPortRequest, SyntaxSiteSearchPortResult, SyntaxSiteSearchQuery,
+    SyntaxSiteSearchQueryDigest, SyntaxSiteSearchQueryError, SyntaxSiteSearchRequest,
+    SyntaxSiteSearchResult, syntax_site_search,
+};
 pub use task_checkpoint::{
     EngineeringTaskError, EngineeringTaskPort, TaskCheckpointReceipt, TaskStatusPort,
     TaskVerificationReceipt, append_task_checkpoint, append_task_verification, poll_task,
+};
+pub use test_markers::{
+    DEFAULT_TEST_MARKER_OUTPUT_BYTES, DEFAULT_TEST_MARKER_RESULTS, FIXED_TEST_MARKER_OUTPUT_BYTES,
+    MAX_TEST_MARKER_OUTPUT_BYTES, MAX_TEST_MARKER_RESULTS, TEST_MARKERS_PROFILE_VERSION,
+    TestMarkerLanguageCoverage, TestMarkersAvailability, TestMarkersError, TestMarkersLimitError,
+    TestMarkersLimits, TestMarkersPort, TestMarkersPortOutputError, TestMarkersPortPayload,
+    TestMarkersPortRequest, TestMarkersPortResult, TestMarkersQuery, TestMarkersQueryError,
+    TestMarkersRequest, TestMarkersResult, test_marker_record_output_bytes, test_markers,
 };
 pub use typescript_profile::{
     PHASE0_TYPESCRIPT_ANALYSIS_SCHEMA_VERSION, PHASE0_TYPESCRIPT_CANONICALIZATION_VERSION,

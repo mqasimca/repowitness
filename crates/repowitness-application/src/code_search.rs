@@ -448,7 +448,7 @@ impl CodeSearchCandidate {
         }
     }
 
-    fn into_parts(self) -> (RepositoryPath, SourceContentDigest, RustSymbolOccurrence) {
+    pub(crate) fn into_parts(self) -> (RepositoryPath, SourceContentDigest, RustSymbolOccurrence) {
         (self.path, self.content_digest, self.occurrence)
     }
 }
@@ -493,6 +493,31 @@ impl<G> CodeSearchPortResult<G> {
             total_matches,
             output_bytes,
         }
+    }
+
+    /// Decomposes the validated storage-neutral response for a sibling use case.
+    #[allow(
+        clippy::type_complexity,
+        reason = "this internal adapter boundary preserves the complete immutable response"
+    )]
+    pub(crate) fn into_parts(
+        self,
+    ) -> (
+        SourceSnapshotDigest,
+        G,
+        RustIndexCoverage,
+        Vec<CodeSearchCandidate>,
+        u64,
+        u64,
+    ) {
+        (
+            self.snapshot,
+            self.generation,
+            self.index_coverage,
+            self.candidates,
+            self.total_matches,
+            self.output_bytes,
+        )
     }
 }
 

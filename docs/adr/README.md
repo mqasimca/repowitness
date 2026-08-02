@@ -84,6 +84,14 @@ passed, so maintainers accepted ADR-0018 and then ADR-0021.
 | [0038](0038-phase3-memory-scopes-and-kinds.md) | Separate Phase 3 team, personal, and archival memory | Accepted |
 | [0039](0039-phase3-historical-correspondence.md) | Preserve reviewed multi-parent and historical correspondence | Accepted |
 | [0040](0040-phase3-task-checkpoints-and-verification.md) | Keep task checkpoints application-owned and project them through MCP Tasks | Accepted |
+| [0041](0041-bounded-multi-language-architecture-map.md) | Map exact multi-language indexed source files without relationship inference | Proposed |
+| [0042](0042-evidence-backed-agent-code-discovery.md) | Add bounded multi-language agent discovery and raw syntax-site navigation | Proposed |
+| [0043](0043-bounded-repository-topology-inventory.md) | Inventory bounded non-source repository topology without semantic inference | Proposed |
+| [0044](0044-explicit-private-local-onboarding.md) | Onboard one explicit repository into private local state | Proposed |
+| [0045](0045-exact-scip-declaration-receipts.md) | Resolve exact declaration receipts to SCIP symbols | Proposed |
+| [0046](0046-bounded-lexical-path-navigation.md) | Group bounded lexical declaration evidence into canonical paths | Proposed |
+| [0047](0047-bounded-raw-syntax-target-search.md) | Navigate exact all-language raw syntax targets without relationship inference | Proposed |
+| [0048](0048-bounded-scip-relationship-traversal.md) | Traverse validated SCIP relationships through a bounded precision profile | Proposed |
 
 Use [0000-template.md](0000-template.md) for a new decision.
 

@@ -222,6 +222,7 @@ pub(crate) fn capture_confirmed_local_source_snapshot(
             request.deadline,
         )
         .map_err(map_local_error)?,
+        None,
         request.package_scope,
         request.cancelled,
         request.deadline,
@@ -261,6 +262,7 @@ pub(crate) fn capture_confirmed_local_source_snapshot(
         request.limits.discovery(),
         request.cancelled,
         request.deadline,
+        None,
     )
     .map_err(map_local_error)?;
     revalidate_selected_content(

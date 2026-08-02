@@ -20,7 +20,7 @@ use crate::{
     McpMemoryCoverage, McpMemoryProducer, McpMemoryTarget, McpSearchMatch, McpSpan, McpSymbol,
     MemoryManageDatabaseIdentityStatus, MemoryManageMaintenanceStatus,
     MemoryManageMaintenanceStepStatus, MemoryManageOperation, MemoryRecallServiceSelection,
-    PersonalMemoryOperation, SymbolSelectorOutput,
+    PersonalMemoryOperation, RepositoryTopologyOutput, SymbolSelectorOutput,
 };
 
 mod fixtures;
@@ -43,16 +43,23 @@ const fn checkpoint_deferred_memory_maintenance() -> MemoryManageMaintenanceStat
 }
 
 struct FakeService {
+    architecture_map_calls: AtomicUsize,
+    architecture_overview_calls: AtomicUsize,
+    repository_topology_calls: AtomicUsize,
+    code_graph_query_calls: AtomicUsize,
     search_calls: AtomicUsize,
     context_calls: AtomicUsize,
     phase2_context_calls: AtomicUsize,
     diagnostics_calls: AtomicUsize,
     graph_calls: AtomicUsize,
     scip_calls: AtomicUsize,
+    scip_relationship_trace_calls: AtomicUsize,
     invalid_diagnostics: AtomicBool,
     manage_calls: AtomicUsize,
     memory_calls: AtomicUsize,
     symbol_calls: AtomicUsize,
+    outbound_sites_calls: AtomicUsize,
+    syntax_site_search_calls: AtomicUsize,
     search_request: Mutex<Option<(String, u16)>>,
     context_request: Mutex<Option<(String, u64, u16)>>,
     memory_request: Mutex<Option<(bool, u16)>>,
@@ -115,16 +122,23 @@ impl RepositoryService for ConcurrencyService {
 impl FakeService {
     fn new() -> Self {
         Self {
+            architecture_map_calls: AtomicUsize::new(0),
+            architecture_overview_calls: AtomicUsize::new(0),
+            repository_topology_calls: AtomicUsize::new(0),
+            code_graph_query_calls: AtomicUsize::new(0),
             search_calls: AtomicUsize::new(0),
             context_calls: AtomicUsize::new(0),
             phase2_context_calls: AtomicUsize::new(0),
             diagnostics_calls: AtomicUsize::new(0),
             graph_calls: AtomicUsize::new(0),
             scip_calls: AtomicUsize::new(0),
+            scip_relationship_trace_calls: AtomicUsize::new(0),
             invalid_diagnostics: AtomicBool::new(false),
             manage_calls: AtomicUsize::new(0),
             memory_calls: AtomicUsize::new(0),
             symbol_calls: AtomicUsize::new(0),
+            outbound_sites_calls: AtomicUsize::new(0),
+            syntax_site_search_calls: AtomicUsize::new(0),
             search_request: Mutex::new(None),
             context_request: Mutex::new(None),
             memory_request: Mutex::new(None),
@@ -215,6 +229,134 @@ impl RepositoryService for FakeService {
         Ok(search_output())
     }
 
+    fn relevant_paths(
+        &self,
+        request: RelevantPathsServiceRequest,
+        _cancelled: Arc<AtomicBool>,
+    ) -> Result<RelevantPathsOutput, RepositoryServiceError> {
+        assert_eq!(request.query(), "run");
+        assert_eq!(request.max_paths(), 7);
+        Ok(relevant_paths_output())
+    }
+
+    fn code_graph_query(
+        &self,
+        request: CodeGraphQueryServiceRequest,
+        _cancelled: Arc<AtomicBool>,
+    ) -> Result<CodeGraphQueryOutput, RepositoryServiceError> {
+        self.code_graph_query_calls.fetch_add(1, Ordering::Relaxed);
+        match request {
+            CodeGraphQueryServiceRequest::Files(request) => {
+                assert_eq!(request.max_files(), 1);
+                Ok(CodeGraphQueryOutput::new(
+                    crate::CodeGraphQueryResultOutput::Files(architecture_map_output()),
+                ))
+            }
+            _ => Err(RepositoryServiceError::CodeGraphQuery),
+        }
+    }
+
+    fn symbol_search(
+        &self,
+        request: SymbolSearchServiceRequest,
+        _cancelled: Arc<AtomicBool>,
+    ) -> Result<SymbolSearchOutput, RepositoryServiceError> {
+        assert_eq!(request.name(), "run");
+        assert_eq!(request.match_mode().as_str(), "prefix");
+        assert_eq!(
+            request.language().map(|language| language.as_str()),
+            Some("rust")
+        );
+        assert_eq!(request.kind().map(|kind| kind.as_str()), Some("struct"));
+        assert_eq!(request.path_prefix(), Some("src"));
+        assert_eq!(request.max_results(), 7);
+        Ok(symbol_search_output())
+    }
+
+    fn outbound_sites(
+        &self,
+        request: OutboundSitesServiceRequest,
+        _cancelled: Arc<AtomicBool>,
+    ) -> Result<OutboundSitesOutput, RepositoryServiceError> {
+        self.outbound_sites_calls.fetch_add(1, Ordering::Relaxed);
+        assert_eq!(request.generation(), 9);
+        assert_eq!(request.fact_ordinal(), 7);
+        assert_eq!(request.max_sites(), 7);
+        Ok(OutboundSitesOutput {
+            schema_version: 1,
+            outbound_sites_profile: 1,
+            snapshot_sha256: "11".repeat(32),
+            generation: 9,
+            selector: crate::OutboundSitesSelectorOutput {
+                path: "rwp1:h:7372632F6C69622E7273".to_owned(),
+                content_sha256: "22".repeat(32),
+                artifact_sha256: "33".repeat(32),
+                fact_ordinal: 7,
+            },
+            availability: "complete".to_owned(),
+            declaration: None,
+            coverage: McpCoverage {
+                searched: 1,
+                skipped: 0,
+                unresolved: 0,
+                truncated: 0,
+            },
+            sites_returned: 0,
+            sites_total: 0,
+            truncated: false,
+            output_bytes: 0,
+            limitation: "raw_syntax_observations_only_no_target_resolution_or_inferred_edges"
+                .to_owned(),
+            sites: Vec::new(),
+        })
+    }
+
+    fn syntax_site_search(
+        &self,
+        request: SyntaxSiteSearchServiceRequest,
+        _cancelled: Arc<AtomicBool>,
+    ) -> Result<SyntaxSiteSearchOutput, RepositoryServiceError> {
+        self.syntax_site_search_calls
+            .fetch_add(1, Ordering::Relaxed);
+        assert_eq!(request.target(), "run");
+        assert_eq!(request.max_sites(), 7);
+        Ok(syntax_site_search_output())
+    }
+
+    fn architecture_map(
+        &self,
+        request: ArchitectureMapServiceRequest,
+        _cancelled: Arc<AtomicBool>,
+    ) -> Result<ArchitectureMapOutput, RepositoryServiceError> {
+        self.architecture_map_calls.fetch_add(1, Ordering::Relaxed);
+        assert_eq!(request.max_files(), 7);
+        Ok(architecture_map_output())
+    }
+
+    fn architecture_overview(
+        &self,
+        request: ArchitectureOverviewServiceRequest,
+        _cancelled: Arc<AtomicBool>,
+    ) -> Result<ArchitectureOverviewOutput, RepositoryServiceError> {
+        self.architecture_overview_calls
+            .fetch_add(1, Ordering::Relaxed);
+        assert_eq!(request.max_roots(), 3);
+        assert_eq!(request.max_entry_point_candidates(), 5);
+        assert_eq!(request.max_files(), 7);
+        Ok(architecture_overview_output())
+    }
+
+    fn repository_topology(
+        &self,
+        request: RepositoryTopologyServiceRequest,
+        _cancelled: Arc<AtomicBool>,
+    ) -> Result<RepositoryTopologyOutput, RepositoryServiceError> {
+        self.repository_topology_calls
+            .fetch_add(1, Ordering::Relaxed);
+        assert_eq!(request.max_paths(), 7);
+        Ok(repository_topology_output())
+    }
+
     fn symbol_get(
         &self,
         request: SymbolGetServiceRequest,
@@ -283,6 +425,23 @@ impl RepositoryService for FakeService {
         Ok(scip_evidence_output())
     }
 
+    fn scip_relationship_trace(
+        &self,
+        request: ScipRelationshipTraceServiceRequest,
+        _cancelled: Arc<AtomicBool>,
+    ) -> Result<ScipRelationshipTraceOutput, RepositoryServiceError> {
+        self.scip_relationship_trace_calls
+            .fetch_add(1, Ordering::Relaxed);
+        assert_eq!(request.symbol().as_str(), "scip-rust pkg 1 Symbol.");
+        assert!(matches!(
+            request.direction(),
+            repowitness_application::ScipRelationshipTraceDirection::Outgoing
+        ));
+        assert_eq!(request.max_depth().get(), 2);
+        assert_eq!(request.max_edges().get(), 8);
+        Ok(scip_relationship_trace_output())
+    }
+
     fn memory_recall(
         &self,
         request: MemoryRecallServiceRequest,
@@ -343,6 +502,10 @@ mod memory_manage;
 mod mutation_timeout;
 
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one exact advertised-tool contract keeps the inventory, strict schemas, annotations, and protocol version assertions together"
+)]
 fn tool_contract_is_exact_sorted_versioned_and_read_only() {
     let server = RepoWitnessMcpServer::new(Arc::new(FakeService::new()));
     assert_eq!(
@@ -377,10 +540,50 @@ fn tool_contract_is_exact_sorted_versioned_and_read_only() {
             .as_deref()
             .is_some_and(|description| description.contains("Python"))
     );
+    let code_graph_query = server
+        .tools
+        .iter()
+        .find(|tool| tool.name.as_ref() == CODE_GRAPH_QUERY_TOOL_NAME)
+        .expect("code graph query tool");
+    let properties = code_graph_query
+        .input_schema
+        .get("properties")
+        .and_then(serde_json::Value::as_object)
+        .expect("code graph query properties");
+    for field in [
+        "operation",
+        "name",
+        "match_mode",
+        "language",
+        "kind",
+        "path_prefix",
+        "query",
+        "max_results",
+        "timeout_ms",
+        "snapshot_sha256",
+        "generation",
+        "path",
+        "content_sha256",
+        "artifact_sha256",
+        "fact_ordinal",
+        "max_sites",
+        "target",
+        "max_roots",
+        "max_entry_point_candidates",
+        "max_files",
+        "max_paths",
+    ] {
+        assert!(
+            properties.contains_key(field),
+            "the advertised closed-union schema must permit {field:?} for its matching variant"
+        );
+    }
     for tool_name in [
+        ARCHITECTURE_MAP_TOOL_NAME,
         CODE_SEARCH_TOOL_NAME,
         CONTEXT_BUILD_TOOL_NAME,
         SYMBOL_GET_TOOL_NAME,
+        SYMBOL_SEARCH_TOOL_NAME,
     ] {
         let tool = server
             .tools
@@ -507,6 +710,106 @@ async fn initialized_client_lists_and_calls_all_tools() {
         graph::native_tool_names()
     );
 
+    let architecture_map = client
+        .call_tool(
+            CallToolRequestParams::new(ARCHITECTURE_MAP_TOOL_NAME)
+                .with_arguments(json_object(serde_json::json!({"max_files": 7}))),
+        )
+        .await
+        .expect("architecture-map response");
+    assert_eq!(architecture_map.is_error, Some(false));
+    let architecture_content = architecture_map
+        .structured_content
+        .as_ref()
+        .expect("architecture map structured content");
+    assert_eq!(
+        architecture_content
+            .get("schema_version")
+            .and_then(serde_json::Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        architecture_content
+            .get("limitation")
+            .and_then(serde_json::Value::as_str),
+        Some("file_inventory_only_no_relationship_inference")
+    );
+
+    let architecture_overview = client
+        .call_tool(
+            CallToolRequestParams::new(ARCHITECTURE_OVERVIEW_TOOL_NAME).with_arguments(
+                json_object(serde_json::json!({
+                    "max_roots": 3,
+                    "max_entry_point_candidates": 5,
+                    "max_files": 7,
+                })),
+            ),
+        )
+        .await
+        .expect("architecture-overview response");
+    assert_eq!(architecture_overview.is_error, Some(false));
+    let architecture_overview_content = architecture_overview
+        .structured_content
+        .as_ref()
+        .expect("architecture overview structured content");
+    assert_eq!(
+        architecture_overview_content
+            .get("overview_profile")
+            .and_then(serde_json::Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        architecture_overview_content
+            .get("limitations")
+            .and_then(serde_json::Value::as_array)
+            .map(|limitations| limitations.len()),
+        Some(3)
+    );
+
+    let repository_topology = client
+        .call_tool(
+            CallToolRequestParams::new(REPOSITORY_TOPOLOGY_TOOL_NAME)
+                .with_arguments(json_object(serde_json::json!({"max_paths": 7}))),
+        )
+        .await
+        .expect("repository-topology response");
+    assert_eq!(repository_topology.is_error, Some(false));
+    let repository_topology_content = repository_topology
+        .structured_content
+        .as_ref()
+        .expect("repository topology structured content");
+    assert_eq!(
+        repository_topology_content
+            .get("topology_profile")
+            .and_then(serde_json::Value::as_u64),
+        Some(1)
+    );
+
+    let code_graph_query = client
+        .call_tool(
+            CallToolRequestParams::new(CODE_GRAPH_QUERY_TOOL_NAME).with_arguments(json_object(
+                serde_json::json!({
+                    "operation": "files",
+                    "max_files": 1,
+                }),
+            )),
+        )
+        .await
+        .expect("code graph query response");
+    assert_eq!(code_graph_query.is_error, Some(false));
+    let code_graph_content = code_graph_query
+        .structured_content
+        .as_ref()
+        .expect("code graph query structured content");
+    assert_eq!(
+        code_graph_content.get("code_graph_query_profile"),
+        Some(&serde_json::json!(1))
+    );
+    assert_eq!(
+        code_graph_content.get("operation"),
+        Some(&serde_json::json!("files"))
+    );
+
     let search = client
         .call_tool(
             CallToolRequestParams::new(CODE_SEARCH_TOOL_NAME).with_arguments(json_object(
@@ -523,6 +826,120 @@ async fn initialized_client_lists_and_calls_all_tools() {
             .and_then(|value| value.get("schema_version"))
             .and_then(serde_json::Value::as_u64),
         Some(3)
+    );
+
+    let relevant_paths = client
+        .call_tool(
+            CallToolRequestParams::new(RELEVANT_PATHS_TOOL_NAME).with_arguments(json_object(
+                serde_json::json!({"query": "run", "max_paths": 7}),
+            )),
+        )
+        .await
+        .expect("relevant-path response");
+    assert_eq!(relevant_paths.is_error, Some(false));
+    assert_eq!(
+        relevant_paths
+            .structured_content
+            .as_ref()
+            .and_then(|value| value.get("path_ranking_profile"))
+            .and_then(serde_json::Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        relevant_paths
+            .structured_content
+            .as_ref()
+            .and_then(|value| value.get("limitations"))
+            .and_then(serde_json::Value::as_array)
+            .map(|limitations| limitations.len()),
+        Some(4)
+    );
+    let relevant_paths = relevant_paths
+        .structured_content
+        .as_ref()
+        .expect("relevant-path content");
+    assert_eq!(relevant_paths["matches_returned"], 1);
+    assert_eq!(relevant_paths["matches_total"], 2);
+    assert_eq!(relevant_paths["coverage"]["truncated"], 1);
+    assert_eq!(relevant_paths["paths_returned"], 1);
+    assert_eq!(relevant_paths["returned_match_paths_total"], 1);
+    assert_eq!(relevant_paths["returned_match_paths_truncated"], false);
+
+    let symbol_search = client
+        .call_tool(
+            CallToolRequestParams::new(SYMBOL_SEARCH_TOOL_NAME).with_arguments(json_object(
+                serde_json::json!({
+                    "name": "run",
+                    "match_mode": "prefix",
+                    "language": "rust",
+                    "kind": "struct",
+                    "path_prefix": "src",
+                    "max_results": 7,
+                }),
+            )),
+        )
+        .await
+        .expect("symbol-search response");
+    assert_eq!(symbol_search.is_error, Some(false));
+    assert_eq!(
+        symbol_search
+            .structured_content
+            .as_ref()
+            .and_then(|value| value.get("schema_version"))
+            .and_then(serde_json::Value::as_u64),
+        Some(1)
+    );
+
+    let outbound_sites = client
+        .call_tool(
+            CallToolRequestParams::new(OUTBOUND_SITES_TOOL_NAME).with_arguments(json_object(
+                serde_json::json!({
+                    "snapshot_sha256": "11".repeat(32),
+                    "generation": 9,
+                    "path": "rwp1:h:7372632F6C69622E7273",
+                    "content_sha256": "22".repeat(32),
+                    "artifact_sha256": "33".repeat(32),
+                    "fact_ordinal": 7,
+                    "max_sites": 7,
+                }),
+            )),
+        )
+        .await
+        .expect("outbound-sites response");
+    assert_eq!(outbound_sites.is_error, Some(false));
+    assert_eq!(
+        outbound_sites
+            .structured_content
+            .as_ref()
+            .and_then(|value| value.get("limitation"))
+            .and_then(serde_json::Value::as_str),
+        Some("raw_syntax_observations_only_no_target_resolution_or_inferred_edges")
+    );
+
+    let syntax_site_search = client
+        .call_tool(
+            CallToolRequestParams::new(SYNTAX_SITE_SEARCH_TOOL_NAME).with_arguments(json_object(
+                serde_json::json!({"target": "run", "max_sites": 7}),
+            )),
+        )
+        .await
+        .expect("syntax-site-search response");
+    assert_eq!(syntax_site_search.is_error, Some(false));
+    assert_eq!(
+        syntax_site_search
+            .structured_content
+            .as_ref()
+            .and_then(|value| value.get("syntax_site_search_profile"))
+            .and_then(serde_json::Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        syntax_site_search
+            .structured_content
+            .as_ref()
+            .and_then(|value| value.get("limitation"))
+            .and_then(serde_json::Value::as_str),
+        Some("exact_raw_target_syntax_observations_only_no_target_resolution_or_inferred_edges")
     );
 
     let context = client
@@ -658,6 +1075,28 @@ async fn initialized_client_lists_and_calls_all_tools() {
             .and_then(serde_json::Value::as_str),
         Some("not_produced")
     );
+    let scip_trace = client
+        .call_tool(
+            CallToolRequestParams::new(SCIP_RELATIONSHIP_TRACE_TOOL_NAME).with_arguments(
+                json_object(serde_json::json!({
+                    "symbol": "scip-rust pkg 1 Symbol.",
+                    "direction": "outgoing",
+                    "max_depth": 2,
+                    "max_edges": 8,
+                })),
+            ),
+        )
+        .await
+        .expect("SCIP relationship trace response");
+    assert_eq!(scip_trace.is_error, Some(false));
+    assert_eq!(
+        scip_trace
+            .structured_content
+            .as_ref()
+            .and_then(|value| value.get("resolution"))
+            .and_then(serde_json::Value::as_str),
+        Some("not_produced")
+    );
     for (tool, arguments) in graph::tool_requests() {
         let response = client
             .call_tool(CallToolRequestParams::new(tool).with_arguments(json_object(arguments)))
@@ -674,13 +1113,28 @@ async fn initialized_client_lists_and_calls_all_tools() {
             "{tool}"
         );
     }
+    assert_eq!(service.architecture_map_calls.load(Ordering::Relaxed), 1);
+    assert_eq!(
+        service.architecture_overview_calls.load(Ordering::Relaxed),
+        1
+    );
+    assert_eq!(service.repository_topology_calls.load(Ordering::Relaxed), 1);
+    assert_eq!(service.code_graph_query_calls.load(Ordering::Relaxed), 1);
     assert_eq!(service.search_calls.load(Ordering::Relaxed), 1);
     assert_eq!(service.context_calls.load(Ordering::Relaxed), 1);
     assert_eq!(service.phase2_context_calls.load(Ordering::Relaxed), 1);
     assert_eq!(service.diagnostics_calls.load(Ordering::Relaxed), 1);
     assert_eq!(service.memory_calls.load(Ordering::Relaxed), 1);
     assert_eq!(service.symbol_calls.load(Ordering::Relaxed), 1);
+    assert_eq!(service.outbound_sites_calls.load(Ordering::Relaxed), 1);
+    assert_eq!(service.syntax_site_search_calls.load(Ordering::Relaxed), 1);
     assert_eq!(service.scip_calls.load(Ordering::Relaxed), 1);
+    assert_eq!(
+        service
+            .scip_relationship_trace_calls
+            .load(Ordering::Relaxed),
+        1
+    );
     assert_eq!(service.graph_calls.load(Ordering::Relaxed), 6);
     assert_eq!(
         service.search_request.lock().expect("lock").as_ref(),
@@ -819,6 +1273,19 @@ async fn invalid_arguments_do_not_invoke_the_service() {
         .expect_err("invalid params must be a protocol error");
     assert!(error.to_string().contains("bounded literal"));
     assert_eq!(service.search_calls.load(Ordering::Relaxed), 0);
+    let error = client
+        .call_tool(
+            CallToolRequestParams::new(CODE_GRAPH_QUERY_TOOL_NAME).with_arguments(json_object(
+                serde_json::json!({
+                    "operation": "cypher",
+                    "query": "MATCH (n)",
+                }),
+            )),
+        )
+        .await
+        .expect_err("unknown finite operation must be a protocol error");
+    assert!(!error.to_string().is_empty());
+    assert_eq!(service.code_graph_query_calls.load(Ordering::Relaxed), 0);
     client.cancel().await.expect("client closes");
     server_task.await.expect("server task");
 }

@@ -5,7 +5,7 @@ use std::{collections::BTreeSet, error::Error, fmt};
 use repowitness_analysis::ScipOverlayDocument;
 use repowitness_application::{
     PackageScopeDigest, RustSourceSnapshotIdentity, ScipOverlayIdentityInput,
-    ScipOverlayScopeIdentity, hash_scip_overlay_identity,
+    ScipOverlayScopeIdentity, ScipRelationshipTraceDirection, hash_scip_overlay_identity,
 };
 use repowitness_domain::{
     ByteSpan, ConnectedWorkspaceId, RepositoryPath, ScipOverlayDigest, ScipRelationshipKinds,
@@ -23,6 +23,12 @@ pub const MAX_SCIP_EVIDENCE_OCCURRENCES: u16 = 1_000;
 pub const MAX_SCIP_EVIDENCE_RELATIONSHIPS: u16 = 1_000;
 /// Inclusive encoded-output ceiling for one overlay evidence read.
 pub const MAX_SCIP_EVIDENCE_OUTPUT_BYTES: u64 = 1_048_576;
+/// Inclusive maximum retained relationship edges for one bounded SCIP trace.
+pub const MAX_SCIP_RELATIONSHIP_TRACE_EDGES: u16 = 256;
+/// Inclusive maximum distinct opaque symbols visited by one bounded SCIP trace.
+pub const MAX_SCIP_RELATIONSHIP_TRACE_NODES: u16 = 257;
+/// Inclusive conservative JSON-encoded edge-output ceiling for one bounded SCIP trace.
+pub const MAX_SCIP_RELATIONSHIP_TRACE_OUTPUT_BYTES: u64 = 1_048_576;
 
 /// Exact completed source member selected for one contained SCIP import.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -589,6 +595,299 @@ pub enum ScipSymbolEvidenceResult {
     NoMatch(ScipOverlaySummary),
     /// Matching evidence, including explicit independent truncation signals.
     Found(ScipSymbolEvidence),
+}
+
+/// Independent traversal and output ceilings for one SCIP relationship trace.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ScipRelationshipTraceReadLimits {
+    max_edges: u16,
+    max_nodes: u16,
+    max_output_bytes: u64,
+}
+
+impl ScipRelationshipTraceReadLimits {
+    /// Validates independent relationship, symbol, and output ceilings.
+    pub const fn try_new(
+        max_edges: u16,
+        max_nodes: u16,
+        max_output_bytes: u64,
+    ) -> Result<Self, ScipRelationshipTraceReadLimitsError> {
+        if max_edges == 0
+            || max_edges > MAX_SCIP_RELATIONSHIP_TRACE_EDGES
+            || max_nodes == 0
+            || max_nodes > MAX_SCIP_RELATIONSHIP_TRACE_NODES
+            || max_output_bytes == 0
+            || max_output_bytes > MAX_SCIP_RELATIONSHIP_TRACE_OUTPUT_BYTES
+        {
+            return Err(ScipRelationshipTraceReadLimitsError);
+        }
+        Ok(Self {
+            max_edges,
+            max_nodes,
+            max_output_bytes,
+        })
+    }
+
+    /// Returns the inclusive retained-edge ceiling.
+    #[must_use]
+    pub const fn max_edges(self) -> u16 {
+        self.max_edges
+    }
+
+    /// Returns the inclusive distinct-symbol ceiling.
+    #[must_use]
+    pub const fn max_nodes(self) -> u16 {
+        self.max_nodes
+    }
+
+    /// Returns the inclusive conservative JSON-encoded edge-output ceiling.
+    #[must_use]
+    pub const fn max_output_bytes(self) -> u64 {
+        self.max_output_bytes
+    }
+}
+
+impl Default for ScipRelationshipTraceReadLimits {
+    fn default() -> Self {
+        Self {
+            max_edges: MAX_SCIP_RELATIONSHIP_TRACE_EDGES,
+            max_nodes: MAX_SCIP_RELATIONSHIP_TRACE_NODES,
+            max_output_bytes: MAX_SCIP_RELATIONSHIP_TRACE_OUTPUT_BYTES,
+        }
+    }
+}
+
+/// The supplied SCIP relationship-trace bounds were invalid.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ScipRelationshipTraceReadLimitsError;
+
+impl fmt::Display for ScipRelationshipTraceReadLimitsError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("SCIP relationship trace limits are invalid")
+    }
+}
+
+impl Error for ScipRelationshipTraceReadLimitsError {}
+
+/// One immutable producer-declared relationship retained by a bounded trace.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ScipRelationshipTraceEdge {
+    document_ordinal: u32,
+    relationship_ordinal: u32,
+    depth: u8,
+    relationship: ScipRelationshipEvidence,
+}
+
+impl ScipRelationshipTraceEdge {
+    /// Constructs one exact relationship edge at one validated traversal depth.
+    pub(crate) const fn new(
+        document_ordinal: u32,
+        relationship_ordinal: u32,
+        depth: u8,
+        relationship: ScipRelationshipEvidence,
+    ) -> Self {
+        Self {
+            document_ordinal,
+            relationship_ordinal,
+            depth,
+            relationship,
+        }
+    }
+
+    /// Returns the immutable document ordinal in the selected overlay.
+    #[must_use]
+    pub const fn document_ordinal(&self) -> u32 {
+        self.document_ordinal
+    }
+
+    /// Returns the immutable relationship ordinal in that overlay document.
+    #[must_use]
+    pub const fn relationship_ordinal(&self) -> u32 {
+        self.relationship_ordinal
+    }
+
+    /// Returns the one-based breadth-first traversal depth.
+    #[must_use]
+    pub const fn depth(&self) -> u8 {
+        self.depth
+    }
+
+    /// Returns the exact producer-declared relationship evidence.
+    #[must_use]
+    pub const fn relationship(&self) -> &ScipRelationshipEvidence {
+        &self.relationship
+    }
+}
+
+/// Complete bounded producer-declared relationship traversal evidence.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ScipRelationshipTrace {
+    overlay: ScipOverlaySummary,
+    package_scope: PackageScopeDigest,
+    direction: ScipRelationshipTraceDirection,
+    max_depth: u8,
+    edges: Box<[ScipRelationshipTraceEdge]>,
+    visited_symbols: u16,
+    unexpanded_frontier_symbols: u16,
+    depth_limit_reached: bool,
+    edge_limit_reached: bool,
+    symbol_limit_reached: bool,
+    output_limit_reached: bool,
+    output_bytes: u64,
+}
+
+impl ScipRelationshipTrace {
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "all bounds, coverage, and immutable evidence identities are material"
+    )]
+    pub(crate) fn new(
+        overlay: ScipOverlaySummary,
+        package_scope: PackageScopeDigest,
+        direction: ScipRelationshipTraceDirection,
+        max_depth: u8,
+        edges: Vec<ScipRelationshipTraceEdge>,
+        visited_symbols: u16,
+        unexpanded_frontier_symbols: u16,
+        depth_limit_reached: bool,
+        edge_limit_reached: bool,
+        symbol_limit_reached: bool,
+        output_limit_reached: bool,
+        output_bytes: u64,
+    ) -> Self {
+        Self {
+            overlay,
+            package_scope,
+            direction,
+            max_depth,
+            edges: edges.into_boxed_slice(),
+            visited_symbols,
+            unexpanded_frontier_symbols,
+            depth_limit_reached,
+            edge_limit_reached,
+            symbol_limit_reached,
+            output_limit_reached,
+            output_bytes,
+        }
+    }
+
+    /// Returns the exact selected immutable overlay summary.
+    #[must_use]
+    pub const fn overlay(&self) -> ScipOverlaySummary {
+        self.overlay
+    }
+
+    /// Returns the semantic identity of the caller-provided package scope.
+    #[must_use]
+    pub const fn package_scope(&self) -> PackageScopeDigest {
+        self.package_scope
+    }
+
+    /// Returns the explicit producer-edge traversal direction.
+    #[must_use]
+    pub const fn direction(&self) -> ScipRelationshipTraceDirection {
+        self.direction
+    }
+
+    /// Returns the requested inclusive maximum traversal depth.
+    #[must_use]
+    pub const fn max_depth(&self) -> u8 {
+        self.max_depth
+    }
+
+    /// Returns exact retained edges in deterministic breadth-first order.
+    #[must_use]
+    pub fn edges(&self) -> &[ScipRelationshipTraceEdge] {
+        &self.edges
+    }
+
+    /// Returns the count of distinct opaque symbols admitted to traversal.
+    #[must_use]
+    pub const fn visited_symbols(&self) -> u16 {
+        self.visited_symbols
+    }
+
+    /// Returns known discovered symbols that could not be completely expanded.
+    ///
+    /// Edge and output ceilings can stop discovery before every omitted symbol
+    /// is observed, so this is a lower bound when either ceiling is reached.
+    #[must_use]
+    pub const fn unexpanded_frontier_symbols(&self) -> u16 {
+        self.unexpanded_frontier_symbols
+    }
+
+    /// Reports that discovered frontier symbols reached the requested depth.
+    #[must_use]
+    pub const fn depth_limit_reached(&self) -> bool {
+        self.depth_limit_reached
+    }
+
+    /// Reports that further relationship rows exceeded the retained-edge ceiling.
+    #[must_use]
+    pub const fn edge_limit_reached(&self) -> bool {
+        self.edge_limit_reached
+    }
+
+    /// Reports that a new frontier symbol exceeded the distinct-symbol ceiling.
+    #[must_use]
+    pub const fn symbol_limit_reached(&self) -> bool {
+        self.symbol_limit_reached
+    }
+
+    /// Reports that another retained edge would exceed the output-byte ceiling.
+    #[must_use]
+    pub const fn output_limit_reached(&self) -> bool {
+        self.output_limit_reached
+    }
+
+    /// Returns conservative JSON-encoded edge-byte accounting for retained evidence.
+    #[must_use]
+    pub const fn output_bytes(&self) -> u64 {
+        self.output_bytes
+    }
+}
+
+/// An overlay exists but no producer-declared relationship starts the requested trace.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ScipRelationshipTraceNoRelationships {
+    overlay: ScipOverlaySummary,
+    package_scope: PackageScopeDigest,
+}
+
+impl ScipRelationshipTraceNoRelationships {
+    /// Constructs one explicit no-relationship result for a selected overlay and scope.
+    pub(crate) const fn new(
+        overlay: ScipOverlaySummary,
+        package_scope: PackageScopeDigest,
+    ) -> Self {
+        Self {
+            overlay,
+            package_scope,
+        }
+    }
+
+    /// Returns the exact selected immutable overlay summary.
+    #[must_use]
+    pub const fn overlay(self) -> ScipOverlaySummary {
+        self.overlay
+    }
+
+    /// Returns the semantic identity of the caller-provided package scope.
+    #[must_use]
+    pub const fn package_scope(self) -> PackageScopeDigest {
+        self.package_scope
+    }
+}
+
+/// Categorical result of one bounded producer-declared relationship traversal.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ScipRelationshipTraceResult {
+    /// No exact complete overlay is selected for the requested pinned view/slot.
+    NotProduced,
+    /// An exact overlay exists but no relationship starts from the supplied root and scope.
+    NoRelationships(ScipRelationshipTraceNoRelationships),
+    /// Retained producer-declared relationship edges with explicit coverage.
+    Found(ScipRelationshipTrace),
 }
 
 /// Categorical exact syntax-span to opaque SCIP-symbol resolution in one selected overlay.

@@ -16,6 +16,9 @@ fn assert_mcp_tools(input: &mut ChildStdin, output: &mut BufReader<ChildStdout>)
             .map(|tool| tool["name"].as_str().expect("tool name"))
             .collect::<Vec<_>>(),
         [
+            "architecture_map",
+            "architecture_overview",
+            "code_graph_query",
             "code_search",
             "context_build",
             "diagnostics",
@@ -26,10 +29,17 @@ fn assert_mcp_tools(input: &mut ChildStdin, output: &mut BufReader<ChildStdout>)
             "graph_trace",
             "historical_memory",
             "impact_analyze",
+            "locate_relevant_paths",
             "memory_recall",
+            "outbound_sites",
             "phase2_context_build",
+            "repository_topology",
             "scip_evidence",
-            "symbol_get"
+            "scip_relationship_trace",
+            "scip_symbol_resolve",
+            "symbol_get",
+            "symbol_search",
+            "syntax_site_search"
         ]
     );
     let diagnostics = tools
@@ -41,6 +51,539 @@ fn assert_mcp_tools(input: &mut ChildStdin, output: &mut BufReader<ChildStdout>)
         .expect("diagnostics output properties");
     assert!(output_properties.contains_key("syntax_error_nodes"));
     assert!(output_properties.contains_key("known_parser_limitation_nodes"));
+}
+
+fn assert_mcp_repository_topology(input: &mut ChildStdin, output: &mut BufReader<ChildStdout>) {
+    let topology = mcp_request(
+        input,
+        output,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 111,
+            "method": "tools/call",
+            "params": {
+                "name": "repository_topology",
+                "arguments": {"max_paths": 1}
+            }
+        }),
+    );
+    assert_eq!(topology["result"]["isError"], serde_json::json!(false));
+    let topology = &topology["result"]["structuredContent"];
+    assert_eq!(topology["schema_version"], serde_json::json!(1));
+    assert_eq!(topology["topology_profile"], serde_json::json!(1));
+    assert_eq!(topology["coverage"]["omitted_paths"], serde_json::json!(0));
+    assert_eq!(topology["paths_returned"], serde_json::json!(1));
+    assert_eq!(topology["truncated"], serde_json::json!(true));
+    assert_eq!(
+        topology["limitation"],
+        serde_json::json!("inventory_only_no_semantic_relationship_inference")
+    );
+    assert!(topology["total_paths"].as_u64().is_some_and(|total| total > 1));
+    assert!(topology["snapshot_sha256"]
+        .as_str()
+        .is_some_and(|digest| digest.len() == 64));
+    assert!(topology["topology_sha256"]
+        .as_str()
+        .is_some_and(|digest| digest.len() == 64));
+    assert_eq!(topology["entries"].as_array().map(Vec::len), Some(1));
+    assert!(topology["entries"][0]["path"]
+        .as_str()
+        .is_some_and(|path| path.starts_with("rwp1:h:")));
+}
+
+fn assert_mcp_relevant_paths(input: &mut ChildStdin, output: &mut BufReader<ChildStdout>) {
+    let located = mcp_request(
+        input,
+        output,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 112,
+            "method": "tools/call",
+            "params": {
+                "name": "locate_relevant_paths",
+                "arguments": {"query": "Widget", "max_paths": 5}
+            }
+        }),
+    );
+    assert_eq!(located["result"]["isError"], serde_json::json!(false));
+    let located = &located["result"]["structuredContent"];
+    assert_mcp_relevant_paths_receipt(located);
+}
+
+fn assert_mcp_relevant_paths_receipt(located: &serde_json::Value) {
+    assert_eq!(located["schema_version"], serde_json::json!(1));
+    assert_eq!(located["path_ranking_profile"], serde_json::json!(1));
+    assert_eq!(located["resolution"], serde_json::json!("confirmed"));
+    assert!(located["matches_returned"].as_u64().is_some_and(|count| count >= 1));
+    assert!(located["matches_total"]
+        .as_u64()
+        .zip(located["matches_returned"].as_u64())
+        .is_some_and(|(total, returned)| total >= returned));
+    for field in ["searched", "skipped", "unresolved", "truncated"] {
+        assert!(located["coverage"][field].as_u64().is_some());
+    }
+    assert_eq!(
+        located["paths_returned"],
+        serde_json::json!(located["paths"].as_array().expect("paths").len())
+    );
+    assert!(located["returned_match_paths_total"]
+        .as_u64()
+        .is_some_and(|total| total >= 1));
+    assert_eq!(
+        located["returned_match_paths_truncated"],
+        serde_json::json!(
+            located["paths_returned"].as_u64()
+                < located["returned_match_paths_total"].as_u64()
+        )
+    );
+    assert!(located["paths"][0]["path"]
+        .as_str()
+        .is_some_and(|path| path.starts_with("rwp1:h:")));
+    assert_eq!(
+        located["limitations"],
+        serde_json::json!([
+            "indexed_supported_language_declaration_lexical_only",
+            "ordered_by_returned_match_count_then_canonical_path",
+            "path_summaries_cover_only_returned_declaration_matches",
+            "no_relationship_or_semantic_relevance_claim"
+        ])
+    );
+    assert_eq!(
+        located["matches"].as_array().map(Vec::len),
+        located["matches_returned"].as_u64().map(|count| count as usize)
+    );
+}
+
+fn assert_mcp_primary_discovery_tools(
+    input: &mut ChildStdin,
+    output: &mut BufReader<ChildStdout>,
+) {
+    assert_mcp_tools(input, output);
+    assert_mcp_architecture_map(input, output);
+    assert_mcp_architecture_overview(input, output);
+    assert_mcp_repository_topology(input, output);
+    assert_mcp_relevant_paths(input, output);
+    assert_mcp_code_graph_query(input, output);
+    assert_mcp_symbol_search(input, output);
+    assert_mcp_syntax_site_search(input, output);
+    assert_mcp_outbound_sites(input, output);
+    assert_mcp_scip_not_produced(input, output);
+    assert_mcp_scip_relationship_trace_not_produced(input, output);
+    assert_mcp_scip_symbol_resolve_not_produced(input, output);
+}
+
+fn assert_mcp_architecture_overview(input: &mut ChildStdin, output: &mut BufReader<ChildStdout>) {
+    let overview = mcp_request(
+        input,
+        output,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 89,
+            "method": "tools/call",
+            "params": {
+                "name": "architecture_overview",
+                "arguments": {
+                    "max_roots": 1,
+                    "max_entry_point_candidates": 1,
+                    "max_files": 1
+                }
+            }
+        }),
+    );
+    assert_eq!(overview["result"]["isError"], serde_json::json!(false));
+    let overview = &overview["result"]["structuredContent"];
+    assert_eq!(overview["schema_version"], serde_json::json!(1));
+    assert_eq!(overview["overview_profile"], serde_json::json!(1));
+    assert_eq!(overview["total_files"], serde_json::json!(5));
+    assert_eq!(overview["files_returned"], serde_json::json!(1));
+    assert_eq!(overview["files_truncated"], serde_json::json!(true));
+    assert_eq!(overview["total_source_roots"], serde_json::json!(1));
+    assert_eq!(overview["source_roots_returned"], serde_json::json!(1));
+    assert_eq!(overview["source_roots_truncated"], serde_json::json!(false));
+    assert_eq!(overview["total_entry_point_candidates"], serde_json::json!(0));
+    assert_eq!(
+        overview["limitations"],
+        serde_json::json!([
+            "source_fact_aggregate_only_no_relationship_inference",
+            "top_level_path_buckets_are_not_package_or_ownership_boundaries",
+            "function_named_main_candidates_are_not_runtime_entry_point_proof"
+        ])
+    );
+    assert_eq!(
+        overview["source_roots"][0]["kind"],
+        serde_json::json!("top_level_directory")
+    );
+    assert!(overview["source_roots"][0]["path"]
+        .as_str()
+        .is_some_and(|path| path.starts_with("rwp1:h:")));
+    assert!(overview["kinds"].as_array().is_some_and(|kinds| !kinds.is_empty()));
+}
+
+fn assert_mcp_architecture_map(input: &mut ChildStdin, output: &mut BufReader<ChildStdout>) {
+    let mapped = mcp_request(
+        input,
+        output,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 90,
+            "method": "tools/call",
+            "params": {
+                "name": "architecture_map",
+                "arguments": {"max_files": 1}
+            }
+        }),
+    );
+    assert_eq!(mapped["result"]["isError"], serde_json::json!(false));
+    let mapped = &mapped["result"]["structuredContent"];
+    assert_eq!(mapped["schema_version"], serde_json::json!(1));
+    assert_eq!(mapped["map_profile"], serde_json::json!(1));
+    assert_eq!(mapped["total_files"], serde_json::json!(5));
+    assert_eq!(mapped["files_returned"], serde_json::json!(1));
+    assert_eq!(mapped["truncated"], serde_json::json!(true));
+    assert_eq!(
+        mapped["limitation"],
+        serde_json::json!("file_inventory_only_no_relationship_inference")
+    );
+    assert_eq!(
+        mapped["languages"],
+        serde_json::json!([
+            {"language": "go", "files": 1, "declarations": 2},
+            {"language": "python", "files": 1, "declarations": 2},
+            {"language": "rust", "files": 1, "declarations": 3},
+            {"language": "tsx", "files": 1, "declarations": 1},
+            {"language": "typescript", "files": 1, "declarations": 1},
+        ])
+    );
+    let files = mapped["files"].as_array().expect("architecture-map files");
+    assert_eq!(files.len(), 1);
+    assert!(files[0]["path"]
+        .as_str()
+        .is_some_and(|path| path.starts_with("rwp1:h:")));
+}
+
+fn assert_mcp_code_graph_query(input: &mut ChildStdin, output: &mut BufReader<ChildStdout>) {
+    assert_mcp_code_graph_query_general_operations(input, output);
+    assert_mcp_code_graph_query_relevant_paths(input, output);
+    assert_mcp_code_graph_query_outbound_sites(input, output);
+    assert_mcp_code_graph_query_syntax_site_search(input, output);
+    assert_mcp_code_graph_query_test_markers(input, output);
+}
+
+fn assert_mcp_code_graph_query_general_operations(
+    input: &mut ChildStdin,
+    output: &mut BufReader<ChildStdout>,
+) {
+    for (id, operation, assertions) in [
+        (94, "symbols", serde_json::json!({"name": "Widget", "max_results": 1})),
+        (95, "architecture", serde_json::json!({"max_roots": 1, "max_entry_point_candidates": 1, "max_files": 1})),
+        (96, "files", serde_json::json!({"max_files": 1})),
+    ] {
+        let mut arguments = assertions;
+        arguments["operation"] = serde_json::json!(operation);
+        let response = mcp_request(
+            input,
+            output,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "method": "tools/call",
+                "params": {"name": "code_graph_query", "arguments": arguments}
+            }),
+        );
+        assert_eq!(response["result"]["isError"], serde_json::json!(false));
+        let content = &response["result"]["structuredContent"];
+        assert_code_graph_query_envelope(content, operation);
+        assert!(content["result"].is_object());
+    }
+}
+
+fn assert_mcp_code_graph_query_relevant_paths(
+    input: &mut ChildStdin,
+    output: &mut BufReader<ChildStdout>,
+) {
+    let response = mcp_request(
+        input,
+        output,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 100,
+            "method": "tools/call",
+            "params": {
+                "name": "code_graph_query",
+                "arguments": {
+                    "operation": "relevant_paths",
+                    "query": "Widget",
+                    "max_paths": 5
+                }
+            }
+        }),
+    );
+    assert_eq!(response["result"]["isError"], serde_json::json!(false));
+    let content = &response["result"]["structuredContent"];
+    assert_code_graph_query_envelope(content, "relevant_paths");
+    assert_mcp_relevant_paths_receipt(&content["result"]);
+}
+
+fn assert_mcp_code_graph_query_outbound_sites(
+    input: &mut ChildStdin,
+    output: &mut BufReader<ChildStdout>,
+) {
+    let searched = mcp_call_search(input, output, 97, "invoke");
+    let searched = &searched["result"]["structuredContent"];
+    let candidate = &searched["matches"][0];
+    let response = mcp_request(
+        input,
+        output,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 98,
+            "method": "tools/call",
+            "params": {
+                "name": "code_graph_query",
+                "arguments": {
+                    "operation": "outbound_sites",
+                    "snapshot_sha256": searched["snapshot_sha256"],
+                    "generation": searched["generation"],
+                    "path": candidate["path"],
+                    "content_sha256": candidate["content_sha256"],
+                    "artifact_sha256": candidate["artifact_sha256"],
+                    "fact_ordinal": candidate["fact_ordinal"],
+                    "max_sites": 1
+                }
+            }
+        }),
+    );
+    assert_eq!(response["result"]["isError"], serde_json::json!(false));
+    let content = &response["result"]["structuredContent"];
+    assert_code_graph_query_envelope(content, "outbound_sites");
+    assert_eq!(content["result"]["outbound_sites_profile"], serde_json::json!(1));
+}
+
+fn assert_mcp_code_graph_query_syntax_site_search(
+    input: &mut ChildStdin,
+    output: &mut BufReader<ChildStdout>,
+) {
+    let response = mcp_request(
+        input,
+        output,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 101,
+            "method": "tools/call",
+            "params": {
+                "name": "code_graph_query",
+                "arguments": {
+                    "operation": "syntax_site_search",
+                    "target": "run",
+                    "max_sites": 5
+                }
+            }
+        }),
+    );
+    assert_eq!(response["result"]["isError"], serde_json::json!(false));
+    let content = &response["result"]["structuredContent"];
+    assert_code_graph_query_envelope(content, "syntax_site_search");
+    assert_mcp_syntax_site_search_receipt(&content["result"]);
+}
+
+fn assert_mcp_code_graph_query_test_markers(
+    input: &mut ChildStdin,
+    output: &mut BufReader<ChildStdout>,
+) {
+    let response = mcp_request(
+        input,
+        output,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 99,
+            "method": "tools/call",
+            "params": {
+                "name": "code_graph_query",
+                "arguments": {
+                    "operation": "test_markers",
+                    "language": "rust",
+                    "max_results": 1
+                }
+            }
+        }),
+    );
+    assert_eq!(response["result"]["isError"], serde_json::json!(false));
+    let content = &response["result"]["structuredContent"];
+    assert_code_graph_query_envelope(content, "test_markers");
+    let markers = &content["result"];
+    assert_eq!(markers["schema_version"], serde_json::json!(1));
+    assert_eq!(markers["test_markers_profile"], serde_json::json!(1));
+    assert_eq!(markers["availability"], serde_json::json!("complete"));
+    assert!(
+        markers["language_coverage"]
+            .as_array()
+            .is_some_and(|coverage| coverage.len() == 1)
+    );
+    assert_eq!(
+        markers["language_coverage"],
+        serde_json::json!([
+            {
+                "language": "rust",
+                "indexed_files": 1,
+                "supported_files": 1,
+                "unsupported_files": 0,
+                "emitted_markers": 0,
+            }
+        ])
+    );
+    assert_eq!(
+        markers["limitation"],
+        serde_json::json!("raw_syntax_observations_only_not_test_execution_or_relationship_resolution")
+    );
+}
+
+fn assert_code_graph_query_envelope(content: &serde_json::Value, operation: &str) {
+    assert_eq!(content["schema_version"], serde_json::json!(1));
+    assert_eq!(content["code_graph_query_profile"], serde_json::json!(1));
+    assert_eq!(content["operation"], serde_json::json!(operation));
+    assert!(
+        content["output_bytes"]
+            .as_u64()
+            .is_some_and(|bytes| bytes >= u64::try_from(content.to_string().len()).expect("JSON length"))
+    );
+}
+
+fn assert_mcp_symbol_search(input: &mut ChildStdin, output: &mut BufReader<ChildStdout>) {
+    let searched = mcp_request(
+        input,
+        output,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 91,
+            "method": "tools/call",
+            "params": {
+                "name": "symbol_search",
+                "arguments": {
+                    "name": "Widget",
+                    "match_mode": "exact",
+                    "language": "rust",
+                    "kind": "struct",
+                    "path_prefix": "src",
+                    "max_results": 5
+                }
+            }
+        }),
+    );
+    assert_eq!(searched["result"]["isError"], serde_json::json!(false));
+    let searched = &searched["result"]["structuredContent"];
+    assert_eq!(searched["schema_version"], serde_json::json!(1));
+    assert_eq!(searched["query_profile"], serde_json::json!(1));
+    assert!(searched["connected_workspace"].as_str().is_some());
+    assert!(searched["workspace_view"].as_i64().is_some_and(|view| view > 0));
+    assert!(searched["source_slot"].as_str().is_some());
+    assert_eq!(searched["match_mode"], serde_json::json!("exact"));
+    assert_eq!(searched["matches_returned"], serde_json::json!(1));
+    assert_eq!(searched["matches"][0]["name"], serde_json::json!("Widget"));
+    assert_eq!(
+        searched["limitations"],
+        serde_json::json!([
+            "direct_syntax_declarations_only",
+            "no_name_based_relationship_resolution"
+        ])
+    );
+}
+
+fn assert_mcp_outbound_sites(input: &mut ChildStdin, output: &mut BufReader<ChildStdout>) {
+    let searched = mcp_call_search(input, output, 92, "invoke");
+    let searched = &searched["result"]["structuredContent"];
+    assert_eq!(searched["matches_returned"], serde_json::json!(1));
+    let candidate = &searched["matches"][0];
+    let sites = mcp_request(
+        input,
+        output,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 93,
+            "method": "tools/call",
+            "params": {
+                "name": "outbound_sites",
+                "arguments": {
+                    "snapshot_sha256": searched["snapshot_sha256"],
+                    "generation": searched["generation"],
+                    "path": candidate["path"],
+                    "content_sha256": candidate["content_sha256"],
+                    "artifact_sha256": candidate["artifact_sha256"],
+                    "fact_ordinal": candidate["fact_ordinal"],
+                    "max_sites": 5
+                }
+            }
+        }),
+    );
+    assert_eq!(sites["result"]["isError"], serde_json::json!(false));
+    let sites = &sites["result"]["structuredContent"];
+    assert_eq!(sites["schema_version"], serde_json::json!(1));
+    assert_eq!(sites["outbound_sites_profile"], serde_json::json!(1));
+    assert_eq!(sites["availability"], serde_json::json!("complete"));
+    assert_eq!(sites["selector"]["path"], candidate["path"]);
+    assert_eq!(sites["declaration"]["language"], serde_json::json!("rust"));
+    assert_eq!(
+        sites["limitation"],
+        serde_json::json!("raw_syntax_observations_only_no_target_resolution_or_inferred_edges")
+    );
+    assert!(sites["sites"].as_array().is_some_and(|records| {
+        records.iter().any(|record| {
+            record["kind"] == serde_json::json!("call")
+                && record["raw_target"] == serde_json::json!("run")
+                && record["target_resolution"]
+                    == serde_json::json!("not_attempted_no_resolution_profile")
+        })
+    }));
+}
+
+fn assert_mcp_syntax_site_search(input: &mut ChildStdin, output: &mut BufReader<ChildStdout>) {
+    let response = mcp_request(
+        input,
+        output,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 102,
+            "method": "tools/call",
+            "params": {
+                "name": "syntax_site_search",
+                "arguments": {"target": "run", "max_sites": 5}
+            }
+        }),
+    );
+    assert_eq!(response["result"]["isError"], serde_json::json!(false));
+    assert_mcp_syntax_site_search_receipt(&response["result"]["structuredContent"]);
+}
+
+fn assert_mcp_syntax_site_search_receipt(result: &serde_json::Value) {
+    assert_eq!(result["schema_version"], serde_json::json!(1));
+    assert_eq!(result["syntax_site_search_profile"], serde_json::json!(1));
+    assert_eq!(result["availability"], serde_json::json!("complete"));
+    assert!(result["target_sha256"]
+        .as_str()
+        .is_some_and(|digest| digest.len() == 64));
+    assert!(result["sites_returned"].as_u64().is_some_and(|count| count >= 1));
+    assert!(result["sites_total"]
+        .as_u64()
+        .zip(result["sites_returned"].as_u64())
+        .is_some_and(|(total, returned)| total >= returned));
+    assert_eq!(
+        result["truncated"],
+        serde_json::json!(
+            result["sites_returned"].as_u64() < result["sites_total"].as_u64()
+        )
+    );
+    assert_eq!(
+        result["limitation"],
+        serde_json::json!(
+            "exact_raw_target_syntax_observations_only_no_target_resolution_or_inferred_edges"
+        )
+    );
+    assert!(result["sites"].as_array().is_some_and(|records| {
+        records.iter().any(|record| {
+            record["raw_target"] == serde_json::json!("run")
+                && record["target_resolution"]
+                    == serde_json::json!("not_attempted_no_resolution_profile")
+        })
+    }));
 }
 
 fn assert_mcp_scip_not_produced(input: &mut ChildStdin, output: &mut BufReader<ChildStdout>) {
@@ -63,6 +606,108 @@ fn assert_mcp_scip_not_produced(input: &mut ChildStdin, output: &mut BufReader<C
     assert!(content["overlay"].is_null());
     assert!(content["occurrences"].as_array().is_some_and(Vec::is_empty));
     assert!(content["relationships"].as_array().is_some_and(Vec::is_empty));
+}
+
+fn assert_mcp_scip_relationship_trace_not_produced(
+    input: &mut ChildStdin,
+    output: &mut BufReader<ChildStdout>,
+) {
+    let response = mcp_request(
+        input,
+        output,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 18,
+            "method": "tools/call",
+            "params": {
+                "name": "scip_relationship_trace",
+                "arguments": {
+                    "symbol": "scip-rust pkg 1 Widget#",
+                    "direction": "outgoing"
+                }
+            }
+        }),
+    );
+    assert_eq!(response["result"]["isError"], serde_json::json!(false));
+    let content = &response["result"]["structuredContent"];
+    assert_eq!(content["schema_version"], serde_json::json!(1));
+    assert_eq!(content["resolution"], serde_json::json!("not_produced"));
+    assert!(content["overlay"].is_null());
+    assert!(content["package_scope_sha256"].is_null());
+    assert_eq!(content["direction"], serde_json::json!("outgoing"));
+    assert_eq!(content["max_depth"], serde_json::json!(2));
+    assert_eq!(content["max_edges"], serde_json::json!(100));
+    for field in [
+        "visited_symbols",
+        "unexpanded_frontier_symbols",
+        "output_bytes",
+    ] {
+        assert_eq!(content[field], serde_json::json!(0));
+    }
+    for field in [
+        "depth_limit_reached",
+        "edge_limit_reached",
+        "symbol_limit_reached",
+        "output_limit_reached",
+        "truncated",
+    ] {
+        assert_eq!(content[field], serde_json::json!(false));
+    }
+    assert!(content["edges"].as_array().is_some_and(Vec::is_empty));
+}
+
+fn assert_mcp_scip_symbol_resolve_not_produced(
+    input: &mut ChildStdin,
+    output: &mut BufReader<ChildStdout>,
+) {
+    let searched = mcp_request(
+        input,
+        output,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 107,
+            "method": "tools/call",
+            "params": {
+                "name": "symbol_search",
+                "arguments": {
+                    "name": "Widget",
+                    "match_mode": "exact",
+                    "language": "rust",
+                    "kind": "struct"
+                }
+            }
+        }),
+    );
+    let searched = &searched["result"]["structuredContent"];
+    let candidate = &searched["matches"][0];
+    let response = mcp_request(
+        input,
+        output,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 108,
+            "method": "tools/call",
+            "params": {
+                "name": "scip_symbol_resolve",
+                "arguments": {
+                    "snapshot_sha256": searched["snapshot_sha256"],
+                    "generation": searched["generation"],
+                    "path": candidate["path"],
+                    "content_sha256": candidate["content_sha256"],
+                    "artifact_sha256": candidate["artifact_sha256"],
+                    "fact_ordinal": candidate["fact_ordinal"],
+                    "name_span": candidate["name_span"],
+                    "workspace_view": searched["workspace_view"]
+                }
+            }
+        }),
+    );
+    assert_eq!(response["result"]["isError"], serde_json::json!(false));
+    let content = &response["result"]["structuredContent"];
+    assert_eq!(content["schema_version"], serde_json::json!(1));
+    assert_eq!(content["resolution"], serde_json::json!("not_produced"));
+    assert!(content["symbol"].is_null());
+    assert!(content["workspace_view"].as_i64().is_some_and(|view| view > 0));
 }
 
 fn mcp_search_selector(

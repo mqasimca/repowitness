@@ -49,7 +49,7 @@ Prove that RepoWitness can connect a source change to memory revalidation and a 
 
 ### Explicitly deferred
 
-Languages beyond Rust, Go, TypeScript, TSX, and Python, SCIP, PostgreSQL,
+Languages beyond Rust, Go, TypeScript, TSX, and Python, additional SCIP producers, PostgreSQL,
 remote MCP, persisted tasks, automatic memory extraction, runtime telemetry,
 UI, extension execution, raw ranking weights, vectors, and general
 `query_graph` compatibility.
@@ -63,9 +63,9 @@ The output is a design-partner alpha, not a general public beta.
 | Rust workspace and engineering baseline | Implemented | Six packages, enforced dependency policy, pinned Rust/MSRV and dependencies, formatting, Clippy, docs, lockfile, license/advisory/source checks, Make targets, and required Ubuntu PR CI |
 | Repository and source identity | Implemented | Sanitized bounded Git discovery, canonical Git/worktree receipts, exact byte paths, capability-contained no-follow reads, final stability fence, and fail-closed sparse/gitlink scope |
 | Rust, Go, TypeScript, TSX, and Python analysis and incremental reuse | Implemented | Bounded language-specific Tree-sitter facts, one canonical mixed snapshot, five independent artifact identities and payload digests, a checksum-pinned reviewed TypeScript/TSX grammar fix, exact per-language/dialect reuse validation, and clean-versus-incremental equivalence |
-| SQLite publication and recovery | Implemented | Immutable baseline-version-1, compatible accepted parser-diagnostic-version-2, connected-workspace/version-3, and SCIP-overlay/version-4 migrations with exact ledger rows and populated upgrade coverage; version 3 adds globally unique bounded source slots, immutable published workspace views, atomic active-view switching, pinned recovery, generation-scoped Rust graph publication, and explicit deterministic bounded retention plan/apply with root revalidation and aggregate audit; version 4 adds source-slot/view-scoped immutable SCIP receipts, atomic active-overlay switching, retention-safe overlay collection, and pinned package-scope symbol/relationship reads |
-| Evidence retrieval | Implemented | Bounded literal `code_search`, exact digest-verified `symbol_get`, persisted language, language-specific producer attribution, and native generation-pinned Rust graph status, search, site evidence, architecture, trace, and conservative impact with explicit coverage and limits |
-| CLI and local stdio MCP | Implemented | CLI commands cover indexing, exact retrieval, six native Rust graph reads, contained source-slot-scoped SCIP import, package-scoped SCIP evidence reads, canonical memory write/approval/history/review, memory revalidation/recall, Phase 0 and separate Phase 2 context compilation, diagnostics, and path inspection; MCP exposes thirteen deterministically ordered read-only tools by default and adds fixed-actor `memory_manage` only under explicit startup authorization |
+| SQLite publication and recovery | Implemented | Immutable baseline-version-1, compatible accepted parser-diagnostic-version-2, connected-workspace/version-3, SCIP-overlay/version-4, raw-syntax-site/version-7, repository-topology/version-9, exact raw-target-index/version-10, and directional SCIP-relationship-index/version-11 migrations with exact ledger rows and populated upgrade coverage; version 3 adds globally unique bounded source slots, immutable published workspace views, atomic active-view switching, pinned recovery, generation-scoped Rust graph publication, and explicit deterministic bounded retention plan/apply with root revalidation and aggregate audit; version 4 adds source-slot/view-scoped immutable SCIP receipts, atomic active-overlay switching, retention-safe overlay collection, and pinned package-scope symbol/relationship reads; version 7 adds independent all-language raw-site artifacts, complete-generation receipts, integrity-checked reuse, and retention-safe collection; version 9 adds complete path-only topology publication as an activation guard while retaining rejection of retired development schema version 8; version 10 adds an exact raw-target lookup index without altering generation contents; version 11 adds inbound and outbound trace indexes without changing overlay facts |
+| Evidence retrieval | Implemented | Bounded multi-language `architecture_map` file inventory, source-only `architecture_overview` with structural path buckets and syntax-only `function main` candidates, separately digested path-only `repository_topology`, literal `code_search`, lexical evidence-only `locate_relevant_paths` grouping returned declaration matches by canonical path, typed exact/prefix `symbol_search`, exact digest-verified `symbol_get`, declaration-contained `outbound_sites`, repository-scoped `test_markers`, and exact raw-target `syntax_site_search` observations without target resolution, a finite typed `code_graph_query` envelope, exact declaration-receipt-to-opaque-SCIP navigation, bounded incoming/outgoing traversal of persisted producer-declared SCIP rows, persisted language, language-specific producer attribution, and native generation-pinned Rust graph status, search, site evidence, architecture, trace, and conservative impact with explicit coverage and limits |
+| CLI and local stdio MCP | Implemented | CLI commands cover explicit private onboarding, indexing, topology/architecture-map/overview retrieval, lexical path navigation, typed declaration discovery, exact retrieval, exact raw outbound-site, raw-target, and test-marker observations, six native Rust graph reads, contained source-slot-scoped SCIP import, exact declaration-receipt SCIP symbol navigation, package-scoped SCIP evidence and producer-declared relationship-trace reads, canonical memory write/approval/history/review, memory revalidation/recall, Phase 0 and separate Phase 2 context compilation, diagnostics, and path inspection; MCP exposes twenty-four deterministically ordered read-only tools by default, including finite `code_graph_query`, and adds fixed-actor `memory_manage` only under explicit startup authorization |
 | Engineering-memory format | Implemented | Accepted version-1 pure domain values, strict hostile-YAML parser, bounded canonicalizer and deterministic writer, exact golden vectors, independent mutation/property oracle, release resource probes, and a coverage-guided fuzz target |
 | Engineering-memory import and persistence | Implemented | Capability-contained worktree admission and canonical writes, scope-checked import, observation-only bounded Git history, separately trusted approvals, immutable SQLite journal rows, and rebuildable current projections pass rollback, reopen, corruption, idempotency, and online-backup tests |
 | Correspondence and memory revalidation | Implemented | Versioned Rust fingerprints, exact/same-path-rename/exact-Git-move correspondence, explicit ambiguity and staleness, Git-DAG/worktree validity, head conflicts, idempotent approve/reject/manual-link audit events, deterministic conflict aggregation, and atomic projection activation are implemented |
@@ -114,6 +114,22 @@ activation.
 - Import SCIP and define evidence precedence.
 - Add package-aware cross-file resolution.
 - Implement deterministic multi-stage ranking, named profiles, and token allocation.
+- Continue the staged discovery family proposed by
+  [ADR-0042](adr/0042-evidence-backed-agent-code-discovery.md): implemented
+  all-language typed declaration search, lexical evidence-only path navigation, source-only architecture overview,
+  bounded raw syntax sites, exact raw-target navigation, and the finite `code_graph_query` operation algebra
+  are implemented. Package-aware and cross-language relationships remain
+  separate evidence profiles rather than syntax-only claims.
+- The proposed [ADR-0043](adr/0043-bounded-repository-topology-inventory.md)
+  and [ADR-0044](adr/0044-explicit-private-local-onboarding.md) implementation
+  slices are complete: topology is a path-only activation-gated receipt and
+  onboarding is one explicit-root private-state CLI flow. Their decision status
+  remains Proposed pending maintainer review.
+- The proposed [ADR-0048](adr/0048-bounded-scip-relationship-traversal.md)
+  implementation slice is complete: a selected overlay can expose bounded
+  inbound or outbound producer-declared rows with explicit depth, edge, node,
+  and output coverage. It remains Proposed pending maintainer review and does
+  not broaden the native syntax graph or permit general graph queries.
 - Initial progress: `phase2-evidence-balanced-v1` has a separate CLI/MCP contract and
   deterministic pinned syntax/current-memory allocation. An explicit exact SCIP symbol can
   contribute one source-verified unambiguous overlay occurrence. Unique in-scope native graph

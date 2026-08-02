@@ -10,6 +10,7 @@ mod retention;
 mod retention_read;
 mod schema;
 mod scip_overlay;
+mod syntax_sites;
 mod worker;
 mod workspace;
 mod writer;
@@ -51,8 +52,9 @@ pub use self::graph::{
 };
 pub use self::reader::{
     GitHistoryEvidence, KnownAtApplicability, KnownAtEvidenceBasis, KnownAtHistoryCoverage,
-    KnownAtHistoryReceipt, KnownAtObservationEvidence, OwnedSqliteReader, SearchHit, SearchLimits,
-    SearchResults, SymbolLookupResults,
+    KnownAtHistoryReceipt, KnownAtObservationEvidence, OwnedSqliteReader,
+    RawSyntaxSiteProjectionAvailability, RawSyntaxSiteReadLimits, RawSyntaxSiteRecord,
+    RawSyntaxSitesReadResult, SearchHit, SearchLimits, SearchResults, SymbolLookupResults,
 };
 pub use self::retention::*;
 pub(crate) use self::retention_read::load_retention_apply_outcome_read_only;
@@ -60,14 +62,22 @@ pub use self::retention_read::plan_generation_retention_read_only;
 use self::schema::{
     APPLICATION_ID, MIGRATION_1, MIGRATION_1_NAME, MIGRATION_2, MIGRATION_2_NAME, MIGRATION_3,
     MIGRATION_3_NAME, MIGRATION_4, MIGRATION_4_NAME, MIGRATION_5, MIGRATION_5_NAME, MIGRATION_6,
-    MIGRATION_6_NAME, SCHEMA_VERSION,
+    MIGRATION_6_NAME, MIGRATION_7, MIGRATION_7_NAME, MIGRATION_9, MIGRATION_9_NAME, MIGRATION_10,
+    MIGRATION_10_NAME, MIGRATION_11, MIGRATION_11_NAME, SCHEMA_VERSION,
 };
 pub use self::scip_overlay::{
     MAX_SCIP_OVERLAY_DOCUMENTS, PreparedScipOverlay, ScipEvidenceReadLimits,
     ScipEvidenceReadLimitsError, ScipOccurrenceEvidence, ScipOverlayAvailability,
     ScipOverlayImportScope, ScipOverlayPreparationError, ScipOverlaySummary,
-    ScipRelationshipDirection, ScipRelationshipEvidence, ScipSymbolEvidence,
-    ScipSymbolEvidenceResult, ScipSyntaxSymbolResolution,
+    ScipRelationshipDirection, ScipRelationshipEvidence, ScipRelationshipTrace,
+    ScipRelationshipTraceEdge, ScipRelationshipTraceNoRelationships,
+    ScipRelationshipTraceReadLimits, ScipRelationshipTraceReadLimitsError,
+    ScipRelationshipTraceResult, ScipSymbolEvidence, ScipSymbolEvidenceResult,
+    ScipSyntaxSymbolResolution,
+};
+pub use self::syntax_sites::{
+    PreparedRawSyntaxArtifact, PreparedRawSyntaxGeneration, RawSyntaxPreparationControl,
+    RawSyntaxPreparationError, prepare_raw_syntax_generation,
 };
 pub(crate) use self::worker::ObservedMemoryHistoryItem;
 pub(crate) use self::worker::{CompletedWorkspaceSource, SqliteMutationLease};
@@ -471,7 +481,10 @@ fn migrate_or_validate(
     let valid_version = if database_created {
         user_version == 0
     } else {
-        (1..=SCHEMA_VERSION).contains(&user_version)
+        (1..=7).contains(&user_version)
+            || user_version == 9
+            || user_version == 10
+            || user_version == SCHEMA_VERSION
     };
     if !valid_version {
         return Err(SqliteStoreError::SchemaVersionMismatch);
@@ -601,7 +614,7 @@ fn validate_migration_ledger_through(
     Ok(())
 }
 
-const fn migrations() -> [(i64, &'static str, &'static str); 6] {
+const fn migrations() -> [(i64, &'static str, &'static str); 10] {
     [
         (1, MIGRATION_1_NAME, MIGRATION_1),
         (2, MIGRATION_2_NAME, MIGRATION_2),
@@ -609,6 +622,10 @@ const fn migrations() -> [(i64, &'static str, &'static str); 6] {
         (4, MIGRATION_4_NAME, MIGRATION_4),
         (5, MIGRATION_5_NAME, MIGRATION_5),
         (6, MIGRATION_6_NAME, MIGRATION_6),
+        (7, MIGRATION_7_NAME, MIGRATION_7),
+        (9, MIGRATION_9_NAME, MIGRATION_9),
+        (10, MIGRATION_10_NAME, MIGRATION_10),
+        (11, MIGRATION_11_NAME, MIGRATION_11),
     ]
 }
 

@@ -1,3 +1,5 @@
+use std::collections::{BTreeSet, VecDeque};
+
 use repowitness_application::RustSourceSnapshotIdentity;
 use repowitness_domain::{
     AnalysisSchemaDigest, GitStateDigest, ScipOverlayDigest, ScipRelationshipKinds,
@@ -7,7 +9,9 @@ use repowitness_domain::{
 use crate::sqlite::{
     ScipEvidenceReadLimits, ScipOccurrenceEvidence, ScipOverlayAvailability, ScipOverlaySummary,
     ScipOverlayImportScope, ScipRelationshipDirection, ScipRelationshipEvidence, ScipSymbolEvidence,
-    ScipSymbolEvidenceResult, ScipSyntaxSymbolResolution,
+    ScipRelationshipTrace, ScipRelationshipTraceEdge, ScipRelationshipTraceNoRelationships,
+    ScipRelationshipTraceReadLimits, ScipRelationshipTraceResult, ScipSymbolEvidenceResult,
+    ScipSyntaxSymbolResolution,
 };
 
 struct ActiveOverlayRow {
@@ -76,6 +80,58 @@ impl OwnedSqliteReader {
         )?;
         match receive_reply(&receiver, deadline) {
             Ok(status) => Ok(status),
+            Err(error) => {
+                cancelled.store(true, Ordering::Release);
+                Err(error)
+            }
+        }
+    }
+}
+
+impl OwnedSqliteReader {
+    /// Traces one exact opaque SCIP symbol through one pinned immutable overlay.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "view, slot, scope, root, traversal profile, limits, and controls are independent trust inputs"
+    )]
+    pub fn scip_relationship_trace(
+        &self,
+        view: &PinnedWorkspaceView,
+        source_slot: SourceSlotId,
+        package_scope: PackageScope,
+        root: ScipSymbol,
+        direction: ScipRelationshipTraceDirection,
+        max_depth: ScipRelationshipTraceDepth,
+        max_edges: ScipRelationshipTraceMaxEdges,
+        limits: ScipRelationshipTraceReadLimits,
+        cancelled: Arc<AtomicBool>,
+        deadline: Instant,
+    ) -> Result<ScipRelationshipTraceResult, SqliteStoreError> {
+        if !view.members().iter().any(|member| member.source_slot() == source_slot)
+            || limits.max_edges() != max_edges.get()
+        {
+            return Err(SqliteStoreError::InvalidScipRelationshipTraceLimits);
+        }
+        check_control(&cancelled, deadline)?;
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.send(
+            ReaderCommand::ScipRelationshipTrace(Box::new(ScipRelationshipTraceCommand {
+                view: view.clone(),
+                source_slot,
+                package_scope,
+                root,
+                direction,
+                max_depth,
+                max_edges,
+                limits,
+                cancelled: Arc::clone(&cancelled),
+                deadline,
+                reply,
+            })),
+            deadline,
+        )?;
+        match receive_reply(&receiver, deadline) {
+            Ok(result) => Ok(result),
             Err(error) => {
                 cancelled.store(true, Ordering::Release);
                 Err(error)
@@ -356,6 +412,269 @@ fn execute_scip_symbol_evidence_command(
     )))
 }
 
+fn execute_scip_relationship_trace_command(
+    connection: &mut Connection,
+    command: &ScipRelationshipTraceCommand,
+) -> Result<ScipRelationshipTraceResult, SqliteStoreError> {
+    check_control(&command.cancelled, command.deadline)?;
+    let progress_cancelled = Arc::clone(&command.cancelled);
+    let deadline = command.deadline;
+    connection
+        .progress_handler(
+            PROGRESS_OPCODES,
+            Some(move || {
+                progress_cancelled.load(Ordering::Acquire) || Instant::now() >= deadline
+            }),
+        )
+        .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
+    let result = execute_scip_relationship_trace_transaction(connection, command);
+    connection
+        .progress_handler(0, None::<fn() -> bool>)
+        .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
+    match result {
+        Ok(result) => {
+            check_control(&command.cancelled, command.deadline)?;
+            Ok(result)
+        }
+        Err(SqliteStoreError::DatabaseOperationFailed) => {
+            check_control(&command.cancelled, command.deadline)?;
+            Err(SqliteStoreError::DatabaseOperationFailed)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "one transaction owns overlay selection and the bounded BFS so no partial trace can escape its immutable view"
+)]
+fn execute_scip_relationship_trace_transaction(
+    connection: &mut Connection,
+    command: &ScipRelationshipTraceCommand,
+) -> Result<ScipRelationshipTraceResult, SqliteStoreError> {
+    if command.limits.max_edges() != command.max_edges.get() {
+        return Err(SqliteStoreError::InvalidScipRelationshipTraceLimits);
+    }
+    check_control(&command.cancelled, command.deadline)?;
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Deferred)
+        .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
+    let Some(row) = load_active_overlay_summary(&transaction, &command.view, command.source_slot)?
+    else {
+        return Ok(ScipRelationshipTraceResult::NotProduced);
+    };
+    let overlay = ScipOverlaySummary::new(
+        ScipOverlayDigest::try_from_slice(&row.digest)
+            .map_err(|_| SqliteStoreError::IntegrityCheckFailed)?,
+        command.source_slot,
+        u64::try_from(row.documents).map_err(|_| SqliteStoreError::IntegrityCheckFailed)?,
+        u64::try_from(row.occurrences).map_err(|_| SqliteStoreError::IntegrityCheckFailed)?,
+        u64::try_from(row.relationships).map_err(|_| SqliteStoreError::IntegrityCheckFailed)?,
+    );
+    let package_scope = command.package_scope.semantic_digest();
+    let mut queued = VecDeque::from([(command.root.clone(), 0_u8)]);
+    let mut visited = BTreeSet::from([command.root.as_str().to_owned()]);
+    let mut unexpanded_frontier = BTreeSet::new();
+    let mut edges = Vec::new();
+    let mut root_had_relationship = false;
+    let mut depth_limit_reached = false;
+    let mut edge_limit_reached = false;
+    let mut symbol_limit_reached = false;
+    let mut output_limit_reached = false;
+    let mut output_bytes = 0_u64;
+
+    'traversal: while let Some((current, current_depth)) = queued.pop_front() {
+        check_control(&command.cancelled, command.deadline)?;
+        if current_depth == command.max_depth.get() {
+            depth_limit_reached = true;
+            unexpanded_frontier.insert(current.as_str().to_owned());
+            continue;
+        }
+        let retained = u16::try_from(edges.len())
+            .map_err(|_| SqliteStoreError::CountNotRepresentable)?;
+        if retained == command.limits.max_edges() {
+            let rows = read_scip_relationship_trace_rows(
+                &transaction,
+                overlay.digest(),
+                &command.package_scope,
+                &current,
+                command.direction,
+                1,
+                &command.cancelled,
+                command.deadline,
+            )?;
+            if let Some(row) = rows.first() {
+                edge_limit_reached = true;
+                unexpanded_frontier.insert(current.as_str().to_owned());
+                record_queued_frontier(
+                    &mut unexpanded_frontier,
+                    &queued,
+                    command.max_depth.get(),
+                    &mut depth_limit_reached,
+                );
+                let next_depth = current_depth
+                    .checked_add(1)
+                    .ok_or(SqliteStoreError::CountNotRepresentable)?;
+                let next = trace_next_symbol(row, command.direction);
+                record_unexpanded_frontier(
+                    &mut unexpanded_frontier,
+                    &visited,
+                    next.as_str(),
+                );
+                if next_depth == command.max_depth.get()
+                    && !visited.contains(next.as_str())
+                {
+                    depth_limit_reached = true;
+                }
+                break;
+            }
+            continue;
+        }
+        let query_limit = command
+            .limits
+            .max_edges()
+            .checked_sub(retained)
+            .and_then(|remaining| remaining.checked_add(1))
+            .ok_or(SqliteStoreError::CountNotRepresentable)?;
+        let rows = read_scip_relationship_trace_rows(
+            &transaction,
+            overlay.digest(),
+            &command.package_scope,
+            &current,
+            command.direction,
+            query_limit,
+            &command.cancelled,
+            command.deadline,
+        )?;
+        if current_depth == 0 && !rows.is_empty() {
+            root_had_relationship = true;
+        }
+        for row in rows {
+            check_control(&command.cancelled, command.deadline)?;
+            let next = trace_next_symbol(&row, command.direction);
+            let next_key = next.as_str().to_owned();
+            let depth = current_depth
+                .checked_add(1)
+                .ok_or(SqliteStoreError::CountNotRepresentable)?;
+            if edges.len() == usize::from(command.limits.max_edges()) {
+                edge_limit_reached = true;
+                unexpanded_frontier.insert(current.as_str().to_owned());
+                record_queued_frontier(
+                    &mut unexpanded_frontier,
+                    &queued,
+                    command.max_depth.get(),
+                    &mut depth_limit_reached,
+                );
+                record_unexpanded_frontier(&mut unexpanded_frontier, &visited, &next_key);
+                if depth == command.max_depth.get() && !visited.contains(&next_key) {
+                    depth_limit_reached = true;
+                }
+                break 'traversal;
+            }
+            let edge_bytes = scip_relationship_trace_edge_output_bytes(&row.relationship)?;
+            let next_output_bytes = output_bytes
+                .checked_add(edge_bytes)
+                .ok_or(SqliteStoreError::CountNotRepresentable)?;
+            if next_output_bytes > command.limits.max_output_bytes() {
+                unexpanded_frontier.insert(current.as_str().to_owned());
+                record_queued_frontier(
+                    &mut unexpanded_frontier,
+                    &queued,
+                    command.max_depth.get(),
+                    &mut depth_limit_reached,
+                );
+                record_unexpanded_frontier(&mut unexpanded_frontier, &visited, &next_key);
+                if depth == command.max_depth.get() && !visited.contains(&next_key) {
+                    depth_limit_reached = true;
+                }
+                output_limit_reached = true;
+                break 'traversal;
+            }
+            output_bytes = next_output_bytes;
+            let expand = if visited.contains(&next_key) {
+                false
+            } else if visited.len() == usize::from(command.limits.max_nodes()) {
+                symbol_limit_reached = true;
+                record_unexpanded_frontier(&mut unexpanded_frontier, &visited, &next_key);
+                if depth == command.max_depth.get() {
+                    depth_limit_reached = true;
+                }
+                false
+            } else {
+                let inserted = visited.insert(next_key);
+                if !inserted {
+                    return Err(SqliteStoreError::IntegrityCheckFailed);
+                }
+                true
+            };
+            edges.push(ScipRelationshipTraceEdge::new(
+                row.document_ordinal,
+                row.relationship_ordinal,
+                depth,
+                row.relationship,
+            ));
+            if expand {
+                queued.push_back((next, depth));
+            }
+        }
+    }
+    check_control(&command.cancelled, command.deadline)?;
+    if !root_had_relationship {
+        return Ok(ScipRelationshipTraceResult::NoRelationships(
+            ScipRelationshipTraceNoRelationships::new(overlay, package_scope),
+        ));
+    }
+    Ok(ScipRelationshipTraceResult::Found(ScipRelationshipTrace::new(
+        overlay,
+        package_scope,
+        command.direction,
+        command.max_depth.get(),
+        edges,
+        u16::try_from(visited.len()).map_err(|_| SqliteStoreError::CountNotRepresentable)?,
+        u16::try_from(unexpanded_frontier.len())
+            .map_err(|_| SqliteStoreError::CountNotRepresentable)?,
+        depth_limit_reached,
+        edge_limit_reached,
+        symbol_limit_reached,
+        output_limit_reached,
+        output_bytes,
+    )))
+}
+
+fn trace_next_symbol(
+    row: &ScipRelationshipTraceRow,
+    direction: ScipRelationshipTraceDirection,
+) -> ScipSymbol {
+    match direction {
+        ScipRelationshipTraceDirection::Outgoing => row.relationship.target().clone(),
+        ScipRelationshipTraceDirection::Incoming => row.relationship.source().clone(),
+    }
+}
+
+fn record_unexpanded_frontier(
+    unexpanded_frontier: &mut BTreeSet<String>,
+    visited: &BTreeSet<String>,
+    symbol: &str,
+) {
+    if !visited.contains(symbol) {
+        unexpanded_frontier.insert(symbol.to_owned());
+    }
+}
+
+fn record_queued_frontier(
+    unexpanded_frontier: &mut BTreeSet<String>,
+    queued: &VecDeque<(ScipSymbol, u8)>,
+    max_depth: u8,
+    depth_limit_reached: &mut bool,
+) {
+    for (symbol, depth) in queued {
+        unexpanded_frontier.insert(symbol.as_str().to_owned());
+        if *depth == max_depth {
+            *depth_limit_reached = true;
+        }
+    }
+}
+
 fn execute_scip_syntax_symbol_command(
     connection: &mut Connection,
     command: &ScipSyntaxSymbolCommand,
@@ -600,6 +919,95 @@ fn read_scip_relationships(
     Ok((result, truncated))
 }
 
+struct ScipRelationshipTraceRow {
+    document_ordinal: u32,
+    relationship_ordinal: u32,
+    relationship: ScipRelationshipEvidence,
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "transaction, immutable scope, traversal controls, and cancellation/deadline are independent query inputs"
+)]
+fn read_scip_relationship_trace_rows(
+    transaction: &Transaction<'_>,
+    digest: ScipOverlayDigest,
+    package_scope: &PackageScope,
+    symbol: &ScipSymbol,
+    direction: ScipRelationshipTraceDirection,
+    row_limit: u16,
+    cancelled: &AtomicBool,
+    deadline: Instant,
+) -> Result<Vec<ScipRelationshipTraceRow>, SqliteStoreError> {
+    let (predicate, relationship_direction) = match direction {
+        ScipRelationshipTraceDirection::Outgoing => {
+            ("relationship.source_symbol = ?", ScipRelationshipDirection::Outgoing)
+        }
+        ScipRelationshipTraceDirection::Incoming => {
+            ("relationship.target_symbol = ?", ScipRelationshipDirection::Incoming)
+        }
+    };
+    let mut sql = format!(
+        "SELECT document.repository_path, document.content_digest,
+                relationship.document_ordinal, relationship.relationship_ordinal,
+                relationship.source_symbol, relationship.target_symbol, relationship.kinds
+         FROM scip_overlay_relationships AS relationship
+         JOIN scip_overlay_documents AS document
+           ON document.overlay_digest = relationship.overlay_digest
+          AND document.document_ordinal = relationship.document_ordinal
+         WHERE relationship.overlay_digest = ?
+           AND {predicate}"
+    );
+    let mut parameters = vec![
+        rusqlite::types::Value::Blob(digest.as_bytes().to_vec()),
+        rusqlite::types::Value::Blob(symbol.as_str().as_bytes().to_vec()),
+    ];
+    append_package_scope_predicate(&mut sql, &mut parameters, package_scope);
+    sql.push_str(
+        " ORDER BY relationship.document_ordinal, relationship.relationship_ordinal LIMIT ?",
+    );
+    parameters.push(rusqlite::types::Value::Integer(i64::from(row_limit)));
+    let mut statement = transaction
+        .prepare(&sql)
+        .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
+    let rows = statement
+        .query_map(rusqlite::params_from_iter(parameters.iter()), |row| {
+            Ok((
+                row.get::<_, Vec<u8>>(0)?,
+                row.get::<_, Vec<u8>>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, Vec<u8>>(4)?,
+                row.get::<_, Vec<u8>>(5)?,
+                row.get::<_, i64>(6)?,
+            ))
+        })
+        .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
+    let mut result = Vec::with_capacity(usize::from(row_limit));
+    for row in rows {
+        check_control(cancelled, deadline)?;
+        let (path, content, document_ordinal, relationship_ordinal, source, target, kinds) =
+            row.map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
+        result.push(ScipRelationshipTraceRow {
+            document_ordinal: u32::try_from(document_ordinal)
+                .map_err(|_| SqliteStoreError::IntegrityCheckFailed)?,
+            relationship_ordinal: u32::try_from(relationship_ordinal)
+                .map_err(|_| SqliteStoreError::IntegrityCheckFailed)?,
+            relationship: ScipRelationshipEvidence::new(
+                RepositoryPath::try_from_bytes(&path, PERSISTED_PATH_LIMITS)
+                    .map_err(|_| SqliteStoreError::IntegrityCheckFailed)?,
+                SourceContentDigest::try_from_slice(&content)
+                    .map_err(|_| SqliteStoreError::IntegrityCheckFailed)?,
+                relationship_direction,
+                decode_symbol(source)?,
+                decode_symbol(target)?,
+                decode_relationship_kinds(kinds)?,
+            ),
+        });
+    }
+    Ok(result)
+}
+
 fn append_package_scope_predicate(
     sql: &mut String,
     parameters: &mut Vec<rusqlite::types::Value>,
@@ -668,4 +1076,41 @@ fn evidence_output_bytes(
             .ok_or(SqliteStoreError::CountNotRepresentable)?;
     }
     Ok(total)
+}
+
+fn scip_relationship_trace_edge_output_bytes(
+    relationship: &ScipRelationshipEvidence,
+) -> Result<u64, SqliteStoreError> {
+    // This bounds the JSON representation used by both CLI and MCP, rather
+    // than the raw SQLite values. JSON may escape each input byte as `\\u00XX`.
+    // The path is emitted in the byte-preserving `rwp1:h:` hexadecimal form.
+    const FIXED_EDGE_JSON_BYTES: u64 = 512;
+    const PATH_TEXT_PREFIX_BYTES: u64 = 7;
+
+    let path = relationship
+        .path()
+        .byte_count()
+        .get()
+        .checked_mul(2)
+        .and_then(|value| value.checked_add(PATH_TEXT_PREFIX_BYTES))
+        .ok_or(SqliteStoreError::CountNotRepresentable)?;
+    let source = json_string_upper_bound(relationship.source().as_str().len())?;
+    let target = json_string_upper_bound(relationship.target().as_str().len())?;
+    FIXED_EDGE_JSON_BYTES
+        .checked_add(path)
+        .and_then(|value| value.checked_add(source))
+        .and_then(|value| value.checked_add(target))
+        .ok_or(SqliteStoreError::CountNotRepresentable)
+}
+
+fn json_string_upper_bound(value_bytes: usize) -> Result<u64, SqliteStoreError> {
+    const JSON_STRING_DELIMITERS_BYTES: u64 = 2;
+    const MAX_JSON_BYTES_PER_INPUT_BYTE: u64 = 6;
+
+    let value_bytes =
+        u64::try_from(value_bytes).map_err(|_| SqliteStoreError::CountNotRepresentable)?;
+    value_bytes
+        .checked_mul(MAX_JSON_BYTES_PER_INPUT_BYTE)
+        .and_then(|value| value.checked_add(JSON_STRING_DELIMITERS_BYTES))
+        .ok_or(SqliteStoreError::CountNotRepresentable)
 }

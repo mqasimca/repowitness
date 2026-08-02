@@ -24,11 +24,11 @@ use repowitness_domain::{
 
 use super::{
     CheckpointOutcome, GenerationCoverage, GenerationId, GenerationRetentionPolicy,
-    PinnedWorkspaceView, PreparedRustGraphGeneration, PreparedScipOverlay, ProjectionRebuildLimits,
-    ProjectionRebuildOutcome, RetentionApplyOutcome, RetentionApplyRequest, RetentionPlan,
-    RetentionPlanDigest, RetentionPlanRequest, SourceSlotState, SqliteStoreError,
-    WorkspaceSourceSlot, WorkspaceViewId, WorkspaceViewMember, canonical_database_path,
-    database_file_identity,
+    PinnedWorkspaceView, PreparedRawSyntaxGeneration, PreparedRustGraphGeneration,
+    PreparedScipOverlay, ProjectionRebuildLimits, ProjectionRebuildOutcome, RetentionApplyOutcome,
+    RetentionApplyRequest, RetentionPlan, RetentionPlanDigest, RetentionPlanRequest,
+    SourceSlotState, SqliteStoreError, WorkspaceSourceSlot, WorkspaceViewId, WorkspaceViewMember,
+    canonical_database_path, database_file_identity,
     memory_projection::{
         LoadedMemoryJournal, LoadedRustCandidateSet, MemoryProjectionLoadLimits,
         MemoryProjectionPublication, MemoryProjectionSource, PreparedMemoryProjection,
@@ -44,6 +44,7 @@ use super::{
     },
 };
 use crate::{
+    PreparedRepositoryTopology,
     contained_source::FileIdentity,
     memory_format::{
         MemoryFormatControl, MemoryFormatError, canonical_memory_json, digest_canonical_bytes,
@@ -53,6 +54,8 @@ use crate::{
 type Reply<T> = SyncSender<Result<T, SqliteStoreError>>;
 
 include!("worker/commands.rs");
+include!("worker/syntax_site_commands.rs");
+include!("worker/repository_topology_commands.rs");
 include!("worker/task_commands.rs");
 include!("worker/scip_overlay_commands.rs");
 
