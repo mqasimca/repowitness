@@ -73,6 +73,14 @@ fn migration_checksums_are_stable_golden_vectors() {
         ]
     );
     assert_eq!(
+        migration_checksum(MIGRATION_12),
+        [
+            0xf9, 0xa2, 0x14, 0x3e, 0x31, 0x7b, 0x52, 0x08, 0x55, 0x46, 0x5c, 0xa7, 0x74,
+            0xea, 0x31, 0x6b, 0xc5, 0x5b, 0x45, 0x7a, 0xf2, 0x27, 0x34, 0x65, 0x32, 0x2e,
+            0x23, 0xd0, 0x9d, 0x0d, 0x00, 0xfa,
+        ]
+    );
+    assert_eq!(
         migrations(),
         [
             (1, MIGRATION_1_NAME, MIGRATION_1),
@@ -85,6 +93,7 @@ fn migration_checksums_are_stable_golden_vectors() {
             (9, MIGRATION_9_NAME, MIGRATION_9),
             (10, MIGRATION_10_NAME, MIGRATION_10),
             (11, MIGRATION_11_NAME, MIGRATION_11),
+            (12, MIGRATION_12_NAME, MIGRATION_12),
         ]
     );
     for transitional_statement in ["CREATE TEMP", "ALTER TABLE", "DROP TABLE"] {
@@ -93,7 +102,7 @@ fn migration_checksums_are_stable_golden_vectors() {
 }
 
 #[test]
-fn current_catalog_matches_the_version_eleven_golden() {
+fn current_catalog_matches_the_version_twelve_golden() {
     let directory = TempDirectory::new();
     let connection =
         open_index_writer(&directory.database(), 123).expect("baseline should succeed");
@@ -126,9 +135,9 @@ fn current_catalog_matches_the_version_eleven_golden() {
     assert_eq!(
         migration_checksum(&canonical_catalog),
         [
-            0x2e, 0x20, 0x5b, 0x60, 0x40, 0x42, 0x57, 0x78, 0x35, 0x59, 0x45, 0xb4, 0xaf, 0x5b,
-            0xb4, 0x4e, 0x18, 0x5e, 0xc0, 0x9e, 0x0d, 0x37, 0x03, 0x5b, 0x9c, 0xa8, 0x1e, 0x1c,
-            0x52, 0x61, 0xfe, 0x6e,
+            0x7c, 0xe9, 0x65, 0x11, 0x00, 0x9e, 0xfd, 0x7e, 0x88, 0x29, 0xf0, 0x0b, 0xaa, 0x84,
+            0x2c, 0x67, 0xcb, 0xc0, 0x18, 0xe5, 0x4b, 0x1c, 0xa6, 0x29, 0x5e, 0x7c, 0xc0, 0xb7,
+            0x15, 0x88, 0xd8, 0xc9,
         ]
     );
 }
@@ -503,6 +512,12 @@ fn fresh_database_has_exact_identity_ledger_and_required_schema() {
                 11,
                 MIGRATION_11_NAME.to_owned(),
                 migration_checksum(MIGRATION_11).to_vec(),
+                123
+            ),
+            (
+                12,
+                MIGRATION_12_NAME.to_owned(),
+                migration_checksum(MIGRATION_12).to_vec(),
                 123
             ),
         ]

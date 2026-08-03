@@ -96,6 +96,7 @@ passed, so maintainers accepted ADR-0018 and then ADR-0021.
 | [0050](0050-opt-in-codex-catalog-onboarding.md) | Admit the current Codex worktree into a private local MCP catalog | Proposed |
 | [0051](0051-explicit-codex-connected-workspace-catalog.md) | Compose explicitly declared Codex product stacks through connected source slots | Proposed |
 | [0052](0052-explicit-rust-scip-producer-import.md) | Produce and import one Rust SCIP overlay only through explicit local execution | Proposed |
+| [0053](0053-explicit-go-scip-producer-import.md) | Produce and import one Go SCIP overlay only through explicit local execution | Proposed |
 
 Use [0000-template.md](0000-template.md) for a new decision.
 

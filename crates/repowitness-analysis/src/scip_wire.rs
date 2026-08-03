@@ -19,7 +19,9 @@ use sha2::{Digest, Sha256};
 
 const MAX_INPUT_BYTES: u64 = crate::MAX_SCIP_OVERLAY_INPUT_BYTES as u64;
 const MAX_DOCUMENTS: u32 = 100_000;
-const MAX_DOCUMENT_BYTES: u32 = 1024 * 1024;
+/// Maximum bytes in one raw SCIP `Document` message.
+pub(crate) const MAX_SCIP_DOCUMENT_BYTES: u32 = 2 * 1024 * 1024;
+const MAX_DOCUMENT_BYTES: u32 = MAX_SCIP_DOCUMENT_BYTES;
 const MAX_METADATA_BYTES: u32 = 64 * 1024;
 const MAX_IGNORED_FIELD_BYTES: u32 = 1024 * 1024;
 const MAX_DOCUMENT_OCCURRENCES: u32 = 250_000;
@@ -365,6 +367,7 @@ pub(crate) struct ScipWireDocumentHeader<'a> {
 pub(crate) struct ScipWireMetadata {
     protocol_version: u32,
     text_encoding: ScipWireTextEncoding,
+    scip_go_producer: bool,
 }
 
 impl ScipWireMetadata {
@@ -377,6 +380,11 @@ impl ScipWireMetadata {
     pub(crate) const fn text_encoding(self) -> ScipWireTextEncoding {
         self.text_encoding
     }
+
+    /// Returns whether metadata identifies the known `scip-go` producer.
+    pub(crate) const fn scip_go_producer(self) -> bool {
+        self.scip_go_producer
+    }
 }
 
 impl<'a> ScipWireDocumentHeader<'a> {
@@ -385,9 +393,14 @@ impl<'a> ScipWireDocumentHeader<'a> {
         self.relative_path
     }
 
-    /// Returns the optional producer-declared and recognized range encoding.
+    /// Returns the explicit range encoding declared by the document.
     pub(crate) const fn position_encoding(self) -> Option<ScipWirePositionEncoding> {
         self.position_encoding
+    }
+
+    /// Returns whether this Go document omitted a position encoding.
+    pub(crate) fn is_go_document_with_omitted_position_encoding(self) -> bool {
+        self.position_encoding.is_none() && matches!(self.language, Some("go"))
     }
 
     /// Returns the bounded number of raw occurrence messages.
@@ -622,6 +635,8 @@ pub(crate) fn parse_scip_metadata(
     let protocol_version = SUPPORTED_PROTOCOL_VERSION;
     let mut protocol_version_explicit = false;
     let mut text_encoding = None;
+    let mut scip_go_producer = false;
+    let mut tool_info_present = false;
 
     while cursor < input.len() {
         control.check()?;
@@ -651,7 +666,15 @@ pub(crate) fn parse_scip_metadata(
                     return Err(ScipWireError::InvalidMetadata);
                 }
             }
-            (METADATA_PROTOCOL_VERSION_FIELD | METADATA_TEXT_ENCODING_FIELD, _) => {
+            (2, WIRE_LENGTH_DELIMITED) => {
+                if tool_info_present {
+                    return Err(ScipWireError::InvalidMetadata);
+                }
+                let raw = read_length_delimited(input, &mut cursor, MAX_METADATA_BYTES)?;
+                scip_go_producer = parse_scip_tool_info_is_scip_go(raw, control)?;
+                tool_info_present = true;
+            }
+            (METADATA_PROTOCOL_VERSION_FIELD | 2 | METADATA_TEXT_ENCODING_FIELD, _) => {
                 return Err(ScipWireError::InvalidMetadata);
             }
             (_, WIRE_VARINT) => {
@@ -669,7 +692,51 @@ pub(crate) fn parse_scip_metadata(
     Ok(ScipWireMetadata {
         protocol_version,
         text_encoding: text_encoding.ok_or(ScipWireError::InvalidMetadata)?,
+        scip_go_producer,
     })
+}
+
+/// Determines whether one bounded SCIP `ToolInfo` message identifies `scip-go`.
+fn parse_scip_tool_info_is_scip_go(
+    input: &[u8],
+    control: ScipWireControl<'_>,
+) -> Result<bool, ScipWireError> {
+    let mut cursor = 0_usize;
+    let mut name = None;
+
+    while cursor < input.len() {
+        control.check()?;
+        let tag = read_varint(input, &mut cursor)?;
+        let field = u32::try_from(tag >> 3).map_err(|_| ScipWireError::UnsupportedWireType)?;
+        let wire = u8::try_from(tag & 0x07).map_err(|_| ScipWireError::UnsupportedWireType)?;
+        if field == 0 {
+            return Err(ScipWireError::UnsupportedWireType);
+        }
+        match (field, wire) {
+            (1, WIRE_LENGTH_DELIMITED) => {
+                let value = read_length_delimited(input, &mut cursor, MAX_METADATA_BYTES)?;
+                let value = std::str::from_utf8(value).map_err(|_| ScipWireError::InvalidUtf8)?;
+                if name.replace(value).is_some() {
+                    return Err(ScipWireError::InvalidMetadata);
+                }
+            }
+            (2 | 3, WIRE_LENGTH_DELIMITED) => {
+                let _ = read_length_delimited(input, &mut cursor, MAX_METADATA_BYTES)?;
+            }
+            (1..=3, _) => return Err(ScipWireError::InvalidMetadata),
+            (_, WIRE_VARINT) => {
+                let _ = read_varint(input, &mut cursor)?;
+            }
+            (_, WIRE_FIXED64) => skip_exact(input, &mut cursor, 8)?,
+            (_, WIRE_LENGTH_DELIMITED) => {
+                let _ = read_length_delimited(input, &mut cursor, MAX_METADATA_BYTES)?;
+            }
+            (_, WIRE_FIXED32) => skip_exact(input, &mut cursor, 4)?,
+            _ => return Err(ScipWireError::UnsupportedWireType),
+        }
+    }
+
+    Ok(matches!(name, Some("scip-go")))
 }
 
 fn decode_text_encoding(value: u32) -> Result<ScipWireTextEncoding, ScipWireError> {
@@ -1120,12 +1187,10 @@ pub(crate) fn decode_scip_document(
     path_limits: RepositoryPathLimits,
     source_bytes: &[u8],
     control: ScipWireControl<'_>,
+    position_encoding: ScipWirePositionEncoding,
     mut on_occurrence: impl FnMut(ScipWireValidatedOccurrence<'_>) -> Result<(), ScipWireError>,
 ) -> Result<ScipWireDecodedDocument, ScipWireError> {
     let header = parse_scip_document_header(input, control)?;
-    let position_encoding = header
-        .position_encoding()
-        .ok_or(ScipWireError::UnsupportedPositionEncoding)?;
     let path = validate_scip_document_path(header, path_limits)?;
     let _ = validate_scip_document_source(header, manifest, path_limits, source_bytes)?;
 
@@ -1533,6 +1598,24 @@ mod tests {
     }
 
     #[test]
+    fn omitted_document_position_encoding_is_not_inferred_from_the_language() {
+        let cancelled = AtomicBool::new(false);
+        let mut go_document = field(1, WIRE_LENGTH_DELIMITED, b"main.go");
+        go_document.extend(field(4, WIRE_LENGTH_DELIMITED, b"go"));
+        let go_header =
+            parse_scip_document_header(&go_document, control(&cancelled)).expect("Go header");
+        assert_eq!(go_header.position_encoding(), None);
+        assert!(go_header.is_go_document_with_omitted_position_encoding());
+
+        let mut other_document = field(1, WIRE_LENGTH_DELIMITED, b"main.rs");
+        other_document.extend(field(4, WIRE_LENGTH_DELIMITED, b"rust"));
+        let other_header = parse_scip_document_header(&other_document, control(&cancelled))
+            .expect("other-language header");
+        assert_eq!(other_header.position_encoding(), None);
+        assert!(!other_header.is_go_document_with_omitted_position_encoding());
+    }
+
+    #[test]
     fn admits_only_the_pinned_protocol_and_text_encodings() {
         let cancelled = AtomicBool::new(false);
         let mut metadata = field(METADATA_PROTOCOL_VERSION_FIELD, WIRE_VARINT, &[0]);
@@ -1543,6 +1626,7 @@ mod tests {
             Ok(ScipWireMetadata {
                 protocol_version: SUPPORTED_PROTOCOL_VERSION,
                 text_encoding: ScipWireTextEncoding::Utf8,
+                scip_go_producer: false,
             })
         );
 
@@ -1552,7 +1636,17 @@ mod tests {
             Ok(ScipWireMetadata {
                 protocol_version: SUPPORTED_PROTOCOL_VERSION,
                 text_encoding: ScipWireTextEncoding::Utf8,
+                scip_go_producer: false,
             })
+        );
+
+        let tool_info = field(1, WIRE_LENGTH_DELIMITED, b"scip-go");
+        let mut scip_go_metadata = field(2, WIRE_LENGTH_DELIMITED, &tool_info);
+        scip_go_metadata.extend(field(METADATA_TEXT_ENCODING_FIELD, WIRE_VARINT, &[1]));
+        assert!(
+            parse_scip_metadata(&scip_go_metadata, control(&cancelled))
+                .expect("scip-go metadata")
+                .scip_go_producer()
         );
 
         let mut duplicate_protocol = field(METADATA_PROTOCOL_VERSION_FIELD, WIRE_VARINT, &[0]);
@@ -1902,6 +1996,7 @@ mod tests {
             RepositoryPathLimits::new(128, 8),
             source,
             control(&cancelled),
+            ScipWirePositionEncoding::Utf8,
             |occurrence| {
                 yielded.push((
                     occurrence.ordinal(),
@@ -1929,6 +2024,7 @@ mod tests {
                 RepositoryPathLimits::new(128, 8),
                 b"changed\n",
                 control(&cancelled),
+                ScipWirePositionEncoding::Utf8,
                 |_| Ok(())
             ),
             Err(ScipWireError::SourceDigestMismatch)
@@ -2023,6 +2119,44 @@ mod tests {
 
         assert_eq!(error, ScipWireError::FieldTooLarge);
         assert!(!yielded);
+    }
+
+    #[test]
+    fn default_document_limit_is_inclusive_at_two_mebibytes() {
+        let cancelled = AtomicBool::new(false);
+        let metadata = field(METADATA_FIELD, WIRE_LENGTH_DELIMITED, b"metadata");
+        let document = vec![0_u8; usize::try_from(MAX_SCIP_DOCUMENT_BYTES).expect("size")];
+        let mut admitted = metadata.clone();
+        admitted.extend(field(DOCUMENT_FIELD, WIRE_LENGTH_DELIMITED, &document));
+        let mut yielded = false;
+
+        scan_scip_wire(
+            &admitted,
+            ScipWireLimits::DEFAULT,
+            control(&cancelled),
+            |_| Ok(()),
+            |_| {
+                yielded = true;
+                Ok(())
+            },
+        )
+        .expect("document at the compiled limit");
+        assert!(yielded);
+
+        let mut one_over = document;
+        one_over.push(0);
+        let mut rejected = metadata;
+        rejected.extend(field(DOCUMENT_FIELD, WIRE_LENGTH_DELIMITED, &one_over));
+        assert_eq!(
+            scan_scip_wire(
+                &rejected,
+                ScipWireLimits::DEFAULT,
+                control(&cancelled),
+                |_| Ok(()),
+                |_| Ok(()),
+            ),
+            Err(ScipWireError::FieldTooLarge)
+        );
     }
 
     #[test]

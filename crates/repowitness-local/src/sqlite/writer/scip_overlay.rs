@@ -246,29 +246,31 @@ fn stage_overlay_documents(
     prepared: &PreparedScipOverlay,
     control: WriteControl<'_>,
 ) -> Result<(), SqliteStoreError> {
+    let mut insert = transaction
+        .prepare(
+            "INSERT INTO scip_overlay_documents(
+                overlay_digest, document_ordinal, repository_path, content_digest,
+                occurrence_count, relationship_count
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        )
+        .map_err(|_| SqliteStoreError::InvalidScipOverlay)?;
     for (document_ordinal, document) in prepared.documents().iter().enumerate() {
         if document_ordinal % WRITE_BATCH_ROWS == 0 {
             check_control(control)?;
         }
         let document_ordinal =
             i64::try_from(document_ordinal).map_err(|_| SqliteStoreError::CountNotRepresentable)?;
-        transaction
-            .execute(
-                "INSERT INTO scip_overlay_documents(
-                    overlay_digest, document_ordinal, repository_path, content_digest,
-                    occurrence_count, relationship_count
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![
-                    prepared.digest().as_bytes().as_slice(),
-                    document_ordinal,
-                    document.path().as_bytes(),
-                    document.content().as_bytes().as_slice(),
-                    i64::try_from(document.occurrences().len())
-                        .map_err(|_| SqliteStoreError::CountNotRepresentable)?,
-                    i64::try_from(document.relationships().len())
-                        .map_err(|_| SqliteStoreError::CountNotRepresentable)?,
-                ],
-            )
+        insert
+            .execute(params![
+                prepared.digest().as_bytes().as_slice(),
+                document_ordinal,
+                document.path().as_bytes(),
+                document.content().as_bytes().as_slice(),
+                i64::try_from(document.occurrences().len())
+                    .map_err(|_| SqliteStoreError::CountNotRepresentable)?,
+                i64::try_from(document.relationships().len())
+                    .map_err(|_| SqliteStoreError::CountNotRepresentable)?,
+            ])
             .map_err(|_| SqliteStoreError::InvalidScipOverlay)?;
         stage_document_occurrences(transaction, prepared.digest(), document_ordinal, document, control)?;
         stage_document_relationships(transaction, prepared.digest(), document_ordinal, document, control)?;
@@ -283,6 +285,14 @@ fn stage_document_occurrences(
     document: &repowitness_analysis::ScipOverlayDocument,
     control: WriteControl<'_>,
 ) -> Result<(), SqliteStoreError> {
+    let mut insert = transaction
+        .prepare(
+            "INSERT INTO scip_overlay_occurrences(
+                overlay_digest, document_ordinal, occurrence_ordinal,
+                symbol, roles, start_byte, end_byte
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        )
+        .map_err(|_| SqliteStoreError::InvalidScipOverlay)?;
     for occurrence in document.occurrences() {
         if usize::try_from(occurrence.ordinal())
             .map_err(|_| SqliteStoreError::CountNotRepresentable)?
@@ -292,22 +302,16 @@ fn stage_document_occurrences(
             check_control(control)?;
         }
         let symbol = occurrence.symbol().map(|value| value.as_str().as_bytes());
-        transaction
-            .execute(
-                "INSERT INTO scip_overlay_occurrences(
-                    overlay_digest, document_ordinal, occurrence_ordinal,
-                    symbol, roles, start_byte, end_byte
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                params![
-                    digest.as_bytes().as_slice(),
-                    document_ordinal,
-                    i64::from(occurrence.ordinal()),
-                    symbol,
-                    i64::from(occurrence.roles().bits()),
-                    fixed_integer(occurrence.span().start().get())?,
-                    fixed_integer(occurrence.span().end().get())?,
-                ],
-            )
+        insert
+            .execute(params![
+                digest.as_bytes().as_slice(),
+                document_ordinal,
+                i64::from(occurrence.ordinal()),
+                symbol,
+                i64::from(occurrence.roles().bits()),
+                fixed_integer(occurrence.span().start().get())?,
+                fixed_integer(occurrence.span().end().get())?,
+            ])
             .map_err(|_| SqliteStoreError::InvalidScipOverlay)?;
     }
     Ok(())
@@ -320,25 +324,27 @@ fn stage_document_relationships(
     document: &repowitness_analysis::ScipOverlayDocument,
     control: WriteControl<'_>,
 ) -> Result<(), SqliteStoreError> {
+    let mut insert = transaction
+        .prepare(
+            "INSERT INTO scip_overlay_relationships(
+                overlay_digest, document_ordinal, relationship_ordinal,
+                source_symbol, target_symbol, kinds
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        )
+        .map_err(|_| SqliteStoreError::InvalidScipOverlay)?;
     for (ordinal, relationship) in document.relationships().iter().enumerate() {
         if ordinal % WRITE_BATCH_ROWS == 0 {
             check_control(control)?;
         }
-        transaction
-            .execute(
-                "INSERT INTO scip_overlay_relationships(
-                    overlay_digest, document_ordinal, relationship_ordinal,
-                    source_symbol, target_symbol, kinds
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![
-                    digest.as_bytes().as_slice(),
-                    document_ordinal,
-                    i64::try_from(ordinal).map_err(|_| SqliteStoreError::CountNotRepresentable)?,
-                    relationship.source().as_str().as_bytes(),
-                    relationship.target().as_str().as_bytes(),
-                    i64::from(relationship_kind_bits(relationship.kinds())),
-                ],
-            )
+        insert
+            .execute(params![
+                digest.as_bytes().as_slice(),
+                document_ordinal,
+                i64::try_from(ordinal).map_err(|_| SqliteStoreError::CountNotRepresentable)?,
+                relationship.source().as_str().as_bytes(),
+                relationship.target().as_str().as_bytes(),
+                i64::from(relationship_kind_bits(relationship.kinds())),
+            ])
             .map_err(|_| SqliteStoreError::InvalidScipOverlay)?;
     }
     Ok(())

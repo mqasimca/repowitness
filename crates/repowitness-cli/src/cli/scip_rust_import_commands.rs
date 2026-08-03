@@ -47,14 +47,17 @@ fn run_scip_rust_import(
             );
         }
     };
-    if run_rust_analyzer_scip(
-        &invocation.rust_analyzer,
-        &invocation.import.root,
-        temporary_output.path(),
-        invocation.producer_timeout,
-    )
-    .is_err()
-    {
+    let mut producer = std::process::Command::new(&invocation.rust_analyzer);
+    producer
+        .arg("scip")
+        .arg(".")
+        .arg("--output")
+        .arg(temporary_output.path())
+        .current_dir(&invocation.import.root)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    if run_scip_producer(producer, invocation.producer_timeout).is_err() {
         return emit_error(
             stderr,
             EXIT_SOFTWARE,
@@ -261,23 +264,11 @@ fn parse_scip_rust_duration(
     Ok(std::time::Duration::from_millis(milliseconds))
 }
 
-fn run_rust_analyzer_scip(
-    rust_analyzer: &Path,
-    root: &Path,
-    output: &Path,
+fn run_scip_producer(
+    mut command: std::process::Command,
     timeout: std::time::Duration,
 ) -> Result<(), ()> {
-    let mut child = std::process::Command::new(rust_analyzer)
-        .arg("scip")
-        .arg(".")
-        .arg("--output")
-        .arg(output)
-        .current_dir(root)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .map_err(|_| ())?;
+    let mut child = command.spawn().map_err(|_| ())?;
     let deadline = std::time::Instant::now().checked_add(timeout).ok_or(())?;
     loop {
         if let Some(status) = child.try_wait().map_err(|_| ())? {

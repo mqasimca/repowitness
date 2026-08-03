@@ -277,6 +277,17 @@ indexed Rust source. It retains no producer artifact and prints only aggregate
 success, unavailable, and stable path- and content-free failure-category
 counts; any rejected import makes that opt-in run fail. This is a compatibility
 smoke, not a claim that syntax-only graph coverage becomes compiler-complete.
+With an already installed `scip-go`, the additional `--go-scip` mode similarly
+runs the explicit bounded producer/import command for every sibling with indexed
+Go source and a root `go.mod`. Set `SCIP_GO` to an absolute executable path when
+it is not on `PATH`. It disables Go network and ambient build-driver behavior,
+therefore requires the selected project's dependencies to be available locally.
+It reports rootless or nested-module-only repositories as unavailable rather
+than claiming a partial repository overlay. As with Rust, it retains no producer
+artifact, prints only aggregate outcomes, and any eligible rejected import makes
+the opt-in run fail. `scip-go` dependency documents outside the selected root
+are excluded only under its declared producer metadata; each successful import
+receipt reports the excluded count separately from indexed source documents.
 Use `--include-project` only when the current RepoWitness worktree should join
 that otherwise external-only aggregate run.
 

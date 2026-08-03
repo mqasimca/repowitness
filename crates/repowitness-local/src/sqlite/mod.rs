@@ -64,7 +64,8 @@ use self::schema::{
     APPLICATION_ID, MIGRATION_1, MIGRATION_1_NAME, MIGRATION_2, MIGRATION_2_NAME, MIGRATION_3,
     MIGRATION_3_NAME, MIGRATION_4, MIGRATION_4_NAME, MIGRATION_5, MIGRATION_5_NAME, MIGRATION_6,
     MIGRATION_6_NAME, MIGRATION_7, MIGRATION_7_NAME, MIGRATION_9, MIGRATION_9_NAME, MIGRATION_10,
-    MIGRATION_10_NAME, MIGRATION_11, MIGRATION_11_NAME, SCHEMA_VERSION,
+    MIGRATION_10_NAME, MIGRATION_11, MIGRATION_11_NAME, MIGRATION_12, MIGRATION_12_NAME,
+    SCHEMA_VERSION,
 };
 pub use self::scip_overlay::{
     MAX_SCIP_OVERLAY_DOCUMENTS, PreparedScipOverlay, ScipEvidenceReadLimits,
@@ -485,6 +486,7 @@ fn migrate_or_validate(
         (1..=7).contains(&user_version)
             || user_version == 9
             || user_version == 10
+            || user_version == 11
             || user_version == SCHEMA_VERSION
     };
     if !valid_version {
@@ -615,7 +617,7 @@ fn validate_migration_ledger_through(
     Ok(())
 }
 
-const fn migrations() -> [(i64, &'static str, &'static str); 10] {
+const fn migrations() -> [(i64, &'static str, &'static str); 11] {
     [
         (1, MIGRATION_1_NAME, MIGRATION_1),
         (2, MIGRATION_2_NAME, MIGRATION_2),
@@ -627,6 +629,7 @@ const fn migrations() -> [(i64, &'static str, &'static str); 10] {
         (9, MIGRATION_9_NAME, MIGRATION_9),
         (10, MIGRATION_10_NAME, MIGRATION_10),
         (11, MIGRATION_11_NAME, MIGRATION_11),
+        (12, MIGRATION_12_NAME, MIGRATION_12),
     ]
 }
 

@@ -1,6 +1,6 @@
 //! Provider-neutral bounded SCIP overlay document decoding.
 
-use std::{error::Error, fmt, sync::atomic::AtomicBool, time::Instant};
+use std::{cell::Cell, error::Error, fmt, sync::atomic::AtomicBool, time::Instant};
 
 use repowitness_domain::{
     RepositoryPath, RepositoryPathLimits, ScipOccurrence, ScipRelationship, ScipRelationshipKinds,
@@ -8,7 +8,8 @@ use repowitness_domain::{
 };
 
 use crate::scip_wire::{
-    ScipWireControl, ScipWireError, ScipWireLimits, ScipWireTextEncoding, decode_scip_document,
+    MAX_SCIP_DOCUMENT_BYTES, ScipWireControl, ScipWireError, ScipWireLimits,
+    ScipWirePositionEncoding, ScipWireTextEncoding, decode_scip_document,
     parse_scip_document_header, parse_scip_metadata, parse_scip_symbol_information,
     read_length_delimited, read_varint, scan_scip_wire, validate_scip_document_path,
     validate_scip_document_source,
@@ -16,12 +17,11 @@ use crate::scip_wire::{
 
 const WIRE_LENGTH_DELIMITED: u8 = 2;
 const DOCUMENT_SYMBOLS_FIELD: u32 = 3;
-const MAX_DOCUMENT_BYTES: u32 = 1024 * 1024;
 const MAX_DOCUMENT_RELATIONSHIPS: usize = 250_000;
 const MAX_DOCUMENT_OWNED_SYMBOL_BYTES: u64 = 16 * 1024 * 1024;
 
 /// Fixed importer implementation contract used for immutable overlay identity.
-pub const SCIP_OVERLAY_IMPORTER_VERSION: u16 = 1;
+pub const SCIP_OVERLAY_IMPORTER_VERSION: u16 = 4;
 /// Exact upstream SCIP schema revision reviewed by this importer.
 pub const SCIP_SCHEMA_REVISION: &str = "44d39fcfc95486d066a796e2cec8c7ec5d429aae";
 /// SHA-256 of `scip.proto` at [`SCIP_SCHEMA_REVISION`].
@@ -61,6 +61,7 @@ pub enum ScipSourceTextEncoding {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ScipOverlayIndexSummary {
     documents: u32,
+    ignored_external_documents: u32,
     occurrences: u64,
     relationships: u64,
     source_text_encoding: ScipSourceTextEncoding,
@@ -71,6 +72,12 @@ impl ScipOverlayIndexSummary {
     #[must_use]
     pub const fn documents(self) -> u32 {
         self.documents
+    }
+
+    /// Returns the number of known-producer documents outside the selected source root.
+    #[must_use]
+    pub const fn ignored_external_documents(self) -> u32 {
+        self.ignored_external_documents
     }
 
     /// Returns the sum of bounded occurrence facts in all staged batches.
@@ -156,11 +163,13 @@ struct ScipIndexDecodeContext<'input> {
     source_lookup: &'input dyn ScipImmutableSourceLookup,
     cancelled: &'input AtomicBool,
     deadline: Instant,
+    scip_go_producer: &'input Cell<bool>,
 }
 
 struct ScipIndexStreamState<'sink> {
     consumer_error: Option<ScipOverlayDocumentError>,
     staged_documents: u32,
+    ignored_external_documents: u32,
     occurrences: u64,
     relationships: u64,
     on_document: &'sink mut dyn FnMut(ScipOverlayDocument) -> Result<(), ScipOverlayDocumentError>,
@@ -172,24 +181,43 @@ impl ScipIndexStreamState<'_> {
         raw_document: crate::scip_wire::ScipWireDocument<'_>,
         context: &ScipIndexDecodeContext<'_>,
     ) -> Result<(), ScipWireError> {
-        if raw_document.ordinal() != self.staged_documents {
+        let observed_documents = self
+            .staged_documents
+            .checked_add(self.ignored_external_documents)
+            .ok_or_else(|| self.reject(ScipOverlayDocumentError::ResourceLimit))?;
+        if raw_document.ordinal() != observed_documents {
             return Err(self.reject(ScipOverlayDocumentError::InvalidInput));
         }
         let header = parse_scip_document_header(
             raw_document.bytes(),
             ScipWireControl::new(context.cancelled, context.deadline),
         )?;
+        if context.scip_go_producer.get() && header.relative_path().starts_with("../") {
+            self.ignored_external_documents = self
+                .ignored_external_documents
+                .checked_add(1)
+                .ok_or_else(|| self.reject(ScipOverlayDocumentError::ResourceLimit))?;
+            return Ok(());
+        }
         let path = validate_scip_document_path(header, context.path_limits)?;
         let Some(source_bytes) = context.source_lookup.source_bytes(&path) else {
             return Err(ScipWireError::SourceNotInManifest);
         };
-        let document = decode_scip_overlay_document(
+        let position_encoding = header.position_encoding().or_else(|| {
+            (context.scip_go_producer.get()
+                && header.is_go_document_with_omitted_position_encoding())
+            .then_some(ScipWirePositionEncoding::Utf8)
+        });
+        let position_encoding =
+            position_encoding.ok_or(ScipWireError::UnsupportedPositionEncoding)?;
+        let document = decode_scip_overlay_document_with_position_encoding(
             raw_document.bytes(),
             context.manifest,
             context.path_limits,
             source_bytes,
             context.cancelled,
             context.deadline,
+            position_encoding,
         )
         .map_err(|error| self.reject(error))?;
         self.reserve_document(&document)?;
@@ -240,16 +268,19 @@ pub fn decode_scip_overlay_index(
 ) -> Result<ScipOverlayIndexSummary, ScipOverlayDocumentError> {
     let control = ScipWireControl::new(cancelled, deadline);
     let mut metadata = None;
+    let scip_go_producer = Cell::new(false);
     let context = ScipIndexDecodeContext {
         manifest,
         path_limits,
         source_lookup,
         cancelled,
         deadline,
+        scip_go_producer: &scip_go_producer,
     };
     let mut state = ScipIndexStreamState {
         consumer_error: None,
         staged_documents: 0,
+        ignored_external_documents: 0,
         occurrences: 0,
         relationships: 0,
         on_document: &mut on_document,
@@ -264,6 +295,7 @@ pub fn decode_scip_overlay_index(
             if parsed.text_encoding() != ScipWireTextEncoding::Utf8 {
                 return Err(ScipWireError::UnsupportedTextEncoding);
             }
+            scip_go_producer.set(parsed.scip_go_producer());
             metadata = Some(parsed);
             Ok(())
         },
@@ -275,14 +307,19 @@ pub fn decode_scip_overlay_index(
     }
     let summary = scan.map_err(map_wire_error)?;
     let metadata = metadata.ok_or(ScipOverlayDocumentError::InvalidInput)?;
-    if metadata.protocol_version() != 0 || summary.documents() != state.staged_documents {
+    let observed_documents = state
+        .staged_documents
+        .checked_add(state.ignored_external_documents)
+        .ok_or(ScipOverlayDocumentError::ResourceLimit)?;
+    if metadata.protocol_version() != 0 || summary.documents() != observed_documents {
         return Err(ScipOverlayDocumentError::InvalidInput);
     }
     debug_assert!(summary.metadata_present());
-    let documents = summary.documents();
+    let documents = state.staged_documents;
     let _ = summary.ignored_fields();
     Ok(ScipOverlayIndexSummary {
         documents,
+        ignored_external_documents: state.ignored_external_documents,
         occurrences: state.occurrences,
         relationships: state.relationships,
         source_text_encoding: map_text_encoding(metadata.text_encoding()),
@@ -304,6 +341,32 @@ pub fn decode_scip_overlay_document(
 ) -> Result<ScipOverlayDocument, ScipOverlayDocumentError> {
     let control = ScipWireControl::new(cancelled, deadline);
     let header = parse_scip_document_header(raw_document, control).map_err(map_wire_error)?;
+    let position_encoding = header
+        .position_encoding()
+        .ok_or(ScipWireError::UnsupportedPositionEncoding)
+        .map_err(map_wire_error)?;
+    decode_scip_overlay_document_with_position_encoding(
+        raw_document,
+        manifest,
+        path_limits,
+        source_bytes,
+        cancelled,
+        deadline,
+        position_encoding,
+    )
+}
+
+fn decode_scip_overlay_document_with_position_encoding(
+    raw_document: &[u8],
+    manifest: &SourceManifest<RepositoryPath, SourceFileKind, SourceContentDigest>,
+    path_limits: RepositoryPathLimits,
+    source_bytes: &[u8],
+    cancelled: &AtomicBool,
+    deadline: Instant,
+    position_encoding: ScipWirePositionEncoding,
+) -> Result<ScipOverlayDocument, ScipOverlayDocumentError> {
+    let control = ScipWireControl::new(cancelled, deadline);
+    let header = parse_scip_document_header(raw_document, control).map_err(map_wire_error)?;
     let path = validate_scip_document_path(header, path_limits).map_err(map_wire_error)?;
     let entry = validate_scip_document_source(header, manifest, path_limits, source_bytes)
         .map_err(map_wire_error)?;
@@ -319,6 +382,7 @@ pub fn decode_scip_overlay_document(
         path_limits,
         source_bytes,
         control,
+        position_encoding,
         |occurrence| {
             let symbol = occurrence
                 .symbol()
@@ -343,10 +407,7 @@ pub fn decode_scip_overlay_document(
     )
     .map_err(map_wire_error)?;
     debug_assert_eq!(decoded.path(), &path);
-    debug_assert_eq!(
-        decoded.position_encoding(),
-        header.position_encoding().expect("parsed header")
-    );
+    debug_assert_eq!(decoded.position_encoding(), position_encoding);
     debug_assert_eq!(decoded.occurrences(), header.occurrences());
     let relationships = decode_document_relationships(
         raw_document,
@@ -383,7 +444,7 @@ fn decode_document_relationships(
         }
         match (field, wire) {
             (DOCUMENT_SYMBOLS_FIELD, WIRE_LENGTH_DELIMITED) => {
-                let raw = read_length_delimited(raw_document, &mut cursor, MAX_DOCUMENT_BYTES)
+                let raw = read_length_delimited(raw_document, &mut cursor, MAX_SCIP_DOCUMENT_BYTES)
                     .map_err(map_wire_error)?;
                 let mut raw_relationships = Vec::new();
                 let information = parse_scip_symbol_information(raw, control, |relationship| {
@@ -430,7 +491,7 @@ fn decode_document_relationships(
                 cursor = end;
             }
             (_, WIRE_LENGTH_DELIMITED) => {
-                let _ = read_length_delimited(raw_document, &mut cursor, MAX_DOCUMENT_BYTES)
+                let _ = read_length_delimited(raw_document, &mut cursor, MAX_SCIP_DOCUMENT_BYTES)
                     .map_err(map_wire_error)?;
             }
             (_, 5) => {
@@ -628,6 +689,95 @@ mod tests {
     }
 
     #[test]
+    fn scip_go_metadata_admits_only_its_known_omitted_utf8_position_encoding() {
+        let source = b"abc\n";
+        let limits = RepositoryPathLimits::new(128, 8);
+        let path = RepositoryPath::try_from_bytes(b"src/lib.rs", limits).expect("path");
+        let lookup = OneSource {
+            path,
+            bytes: source,
+        };
+        let tool_info = field(1, WIRE_LENGTH_DELIMITED, b"scip-go");
+        let mut scip_go_metadata = field(2, WIRE_LENGTH_DELIMITED, &tool_info);
+        scip_go_metadata.extend(field(4, 0, &[1]));
+        let other_tool_info = field(1, WIRE_LENGTH_DELIMITED, b"other-producer");
+        let mut other_metadata = field(2, WIRE_LENGTH_DELIMITED, &other_tool_info);
+        other_metadata.extend(field(4, 0, &[1]));
+        let mut document = valid_document();
+        document.truncate(document.len() - 2);
+        document.extend(field(4, WIRE_LENGTH_DELIMITED, b"go"));
+        let mut scip_go_index = field(1, WIRE_LENGTH_DELIMITED, &scip_go_metadata);
+        scip_go_index.extend(field(2, WIRE_LENGTH_DELIMITED, &document));
+        let mut other_index = field(1, WIRE_LENGTH_DELIMITED, &other_metadata);
+        other_index.extend(field(2, WIRE_LENGTH_DELIMITED, &document));
+        let cancelled = AtomicBool::new(false);
+
+        assert!(
+            decode_scip_overlay_index(
+                &scip_go_index,
+                &manifest(source),
+                limits,
+                &lookup,
+                &cancelled,
+                Instant::now() + Duration::from_secs(1),
+                |_| Ok(()),
+            )
+            .is_ok()
+        );
+        assert_eq!(
+            decode_scip_overlay_index(
+                &other_index,
+                &manifest(source),
+                limits,
+                &lookup,
+                &cancelled,
+                Instant::now() + Duration::from_secs(1),
+                |_| Ok(()),
+            ),
+            Err(ScipOverlayDocumentError::InvalidInput)
+        );
+    }
+
+    #[test]
+    fn scip_go_metadata_discards_only_parent_relative_external_documents() {
+        let source = b"abc\n";
+        let limits = RepositoryPathLimits::new(128, 8);
+        let path = RepositoryPath::try_from_bytes(b"src/lib.rs", limits).expect("path");
+        let lookup = OneSource {
+            path,
+            bytes: source,
+        };
+        let tool_info = field(1, WIRE_LENGTH_DELIMITED, b"scip-go");
+        let mut metadata = field(2, WIRE_LENGTH_DELIMITED, &tool_info);
+        metadata.extend(field(4, 0, &[1]));
+        let mut external_document = field(1, WIRE_LENGTH_DELIMITED, b"../dependency/source.go");
+        external_document.extend(field(4, WIRE_LENGTH_DELIMITED, b"go"));
+        let mut index = field(1, WIRE_LENGTH_DELIMITED, &metadata);
+        index.extend(field(2, WIRE_LENGTH_DELIMITED, &external_document));
+        index.extend(field(2, WIRE_LENGTH_DELIMITED, &valid_document()));
+        let cancelled = AtomicBool::new(false);
+        let mut staged = 0_u32;
+
+        let summary = decode_scip_overlay_index(
+            &index,
+            &manifest(source),
+            limits,
+            &lookup,
+            &cancelled,
+            Instant::now() + Duration::from_secs(1),
+            |_| {
+                staged += 1;
+                Ok(())
+            },
+        )
+        .expect("scip-go index with external dependency document");
+
+        assert_eq!(summary.documents(), 1);
+        assert_eq!(summary.ignored_external_documents(), 1);
+        assert_eq!(staged, 1);
+    }
+
+    #[test]
     fn repeated_relationship_sources_cannot_expand_one_bounded_document_unboundedly() {
         let source = b"abc\n";
         let large_symbol = vec![b's'; 16 * 1024];
@@ -727,7 +877,7 @@ mod tests {
 
     #[test]
     fn importer_schema_identity_is_fixed_and_nonempty() {
-        assert_eq!(SCIP_OVERLAY_IMPORTER_VERSION, 1);
+        assert_eq!(SCIP_OVERLAY_IMPORTER_VERSION, 4);
         assert_eq!(SCIP_SCHEMA_REVISION.len(), 40);
         assert_eq!(
             SCIP_SCHEMA_SHA256,

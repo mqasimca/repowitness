@@ -112,6 +112,7 @@ pub struct LocalScipOverlayImportResult {
     connected_workspace: ConnectedWorkspaceId,
     workspace_view: i64,
     source_slot: SourceSlotId,
+    ignored_external_documents: u32,
     overlay: ScipOverlaySummary,
 }
 
@@ -132,6 +133,12 @@ impl LocalScipOverlayImportResult {
     #[must_use]
     pub const fn source_slot(self) -> SourceSlotId {
         self.source_slot
+    }
+
+    /// Returns the known-producer documents outside the selected source root.
+    #[must_use]
+    pub const fn ignored_external_documents(self) -> u32 {
+        self.ignored_external_documents
     }
 
     /// Returns the immutable active overlay receipt.
@@ -522,6 +529,7 @@ fn import_with_reader(
         connected_workspace: scope.connected_workspace(),
         workspace_view: scope.workspace_view().get(),
         source_slot: scope.source_slot(),
+        ignored_external_documents: decoded.ignored_external_documents(),
         overlay: ScipOverlaySummary::new(
             digest,
             scope.source_slot(),

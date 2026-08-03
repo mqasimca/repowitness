@@ -36,6 +36,28 @@ fn scip_import_parses_explicit_contained_scope_before_io() {
     assert_eq!(invocation.workspace_view, Some(7));
     assert_eq!(invocation.timeout, std::time::Duration::from_millis(8));
 
+    let default_timeout_arguments = [
+        "--database",
+        "../index.sqlite3",
+        "--root",
+        "../repository",
+        "--scip-file",
+        "../producer/output.scip",
+        "--connected-workspace-id",
+        CONNECTED_WORKSPACE_ID,
+        "--source-slot-id",
+        SOURCE_SLOT_ID,
+    ]
+    .into_iter()
+    .map(OsString::from)
+    .collect::<Vec<_>>();
+    let default_timeout =
+        parse_scip_import_arguments(&default_timeout_arguments).expect("default timeout");
+    assert_eq!(
+        default_timeout.timeout,
+        repowitness_local::DEFAULT_LOCAL_SCIP_IMPORT_DEADLINE
+    );
+
     let maximum_timeout_arguments = [
         "--database",
         "../index.sqlite3",

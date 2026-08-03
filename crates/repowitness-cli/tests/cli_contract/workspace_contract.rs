@@ -236,6 +236,7 @@ fn scip_import_admits_one_contained_file_and_publishes_an_exact_active_overlay()
     assert_eq!(receipt["source_slot"], serde_json::json!(SOURCE_SLOT_ID));
     assert!(receipt["workspace_view"].as_i64().is_some_and(|view| view > 0));
     assert_eq!(receipt["documents"], serde_json::json!(1));
+    assert_eq!(receipt["ignored_external_documents"], serde_json::json!(0));
     assert_eq!(receipt["occurrences"], serde_json::json!(1));
     assert_eq!(receipt["relationships"], serde_json::json!(1));
 
@@ -327,6 +328,7 @@ fn scip_rust_import_produces_then_imports_an_exact_active_overlay() {
     assert_eq!(receipt["connected_workspace"], CONNECTED_WORKSPACE_ID);
     assert_eq!(receipt["source_slot"], SOURCE_SLOT_ID);
     assert_eq!(receipt["documents"], 1);
+    assert_eq!(receipt["ignored_external_documents"], 0);
     assert_eq!(receipt["occurrences"], 1);
     assert_eq!(receipt["relationships"], 1);
 
@@ -403,6 +405,92 @@ fn scip_rust_import_derives_the_single_repository_source_slot() {
 }
 
 #[cfg(unix)]
+#[test]
+fn scip_go_import_produces_then_imports_an_exact_active_overlay_with_a_fenced_environment() {
+    let directory = TempDirectory::new();
+    let fixture = index_go_workspace_fixture(&directory);
+    let producer = directory.0.join("scip-go");
+    write_synthetic_scip_go(&producer, &valid_scip_go_index());
+
+    let imported = repowitness_os([
+        OsStr::new("scip-go-import"),
+        OsStr::new("--database"),
+        fixture.database.as_os_str(),
+        OsStr::new("--root"),
+        fixture.repository.as_os_str(),
+        OsStr::new("--connected-workspace-id"),
+        OsStr::new(CONNECTED_WORKSPACE_ID),
+        OsStr::new("--source-slot-id"),
+        OsStr::new(SOURCE_SLOT_ID),
+        OsStr::new("--scip-go"),
+        producer.as_os_str(),
+        OsStr::new("--producer-timeout-ms"),
+        OsStr::new("5000"),
+    ]);
+    assert!(
+        imported.status.success(),
+        "{}",
+        String::from_utf8_lossy(&imported.stderr)
+    );
+    assert!(imported.stderr.is_empty());
+    let receipt: serde_json::Value =
+        serde_json::from_slice(&imported.stdout).expect("SCIP import receipt JSON");
+    assert_eq!(receipt["connected_workspace"], CONNECTED_WORKSPACE_ID);
+    assert_eq!(receipt["source_slot"], SOURCE_SLOT_ID);
+    assert_eq!(receipt["documents"], 1);
+    assert_eq!(receipt["ignored_external_documents"], 0);
+    assert_eq!(receipt["occurrences"], 1);
+    assert_eq!(receipt["relationships"], 1);
+
+    let evidence = repowitness_os([
+        OsStr::new("scip-evidence"),
+        OsStr::new("--connected-workspace-id"),
+        OsStr::new(CONNECTED_WORKSPACE_ID),
+        OsStr::new("--source-slot-id"),
+        OsStr::new(SOURCE_SLOT_ID),
+        OsStr::new("--database"),
+        fixture.database.as_os_str(),
+        OsStr::new("--symbol"),
+        OsStr::new("scip-go pkg 0/Widget#"),
+    ]);
+    assert!(
+        evidence.status.success(),
+        "{}",
+        String::from_utf8_lossy(&evidence.stderr)
+    );
+    let evidence: serde_json::Value =
+        serde_json::from_slice(&evidence.stdout).expect("SCIP evidence JSON");
+    assert_eq!(evidence["resolution"], "found");
+    assert_eq!(evidence["relationships"].as_array().map(Vec::len), Some(1));
+}
+
+#[cfg(unix)]
+#[test]
+fn scip_go_import_requires_a_regular_root_go_module_before_starting_a_producer() {
+    let directory = TempDirectory::new();
+    let fixture = index_workspace_fixture(&directory);
+
+    let output = repowitness_os([
+        OsStr::new("scip-go-import"),
+        OsStr::new("--database"),
+        fixture.database.as_os_str(),
+        OsStr::new("--root"),
+        fixture.repository.as_os_str(),
+        OsStr::new("--connected-workspace-id"),
+        OsStr::new(CONNECTED_WORKSPACE_ID),
+        OsStr::new("--source-slot-id"),
+        OsStr::new(SOURCE_SLOT_ID),
+    ]);
+
+    assert_eq!(output.status.code(), Some(64));
+    assert_eq!(
+        output.stderr,
+        b"error: scip-go-import requires a regular go.mod at --root\n"
+    );
+    assert!(output.stdout.is_empty());
+}
+
+#[cfg(unix)]
 fn write_synthetic_rust_analyzer(path: &Path, index: &[u8]) {
     use std::os::unix::fs::PermissionsExt as _;
 
@@ -415,6 +503,21 @@ fn write_synthetic_rust_analyzer(path: &Path, index: &[u8]) {
     .expect("synthetic rust-analyzer should be written");
     fs::set_permissions(path, fs::Permissions::from_mode(0o700))
         .expect("synthetic rust-analyzer should be executable");
+}
+
+#[cfg(unix)]
+fn write_synthetic_scip_go(path: &Path, index: &[u8]) {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    fs::write(path.with_extension("scip"), index)
+        .expect("synthetic SCIP fixture should be written");
+    fs::write(
+        path,
+        "#!/bin/sh\nset -eu\ntest \"$GOENV\" = off\ntest \"$GOPACKAGESDRIVER\" = off\ntest \"$GOPROXY\" = off\ntest \"$GOSUMDB\" = off\ntest \"$GOTOOLCHAIN\" = local\ntest \"$GOWORK\" = off\ntest \"$GOFLAGS\" = -mod=readonly\ntest \"$1\" = index\nshift\noutput=\nskip_implementations=false\nskip_tests=false\nwhile [ $# -gt 0 ]; do\n  if [ \"$1\" = --output ]; then output=$2; shift 2; elif [ \"$1\" = --skip-implementations ]; then skip_implementations=true; shift; elif [ \"$1\" = --skip-tests ]; then skip_tests=true; shift; else shift; fi\ndone\ntest \"$skip_implementations\" = true\ntest \"$skip_tests\" = true\ntest -n \"$output\"\ncp \"$0.scip\" \"$output\"\n",
+    )
+    .expect("synthetic scip-go should be written");
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+        .expect("synthetic scip-go should be executable");
 }
 
 fn valid_scip_index() -> Vec<u8> {
@@ -433,6 +536,30 @@ fn valid_scip_index() -> Vec<u8> {
     document.extend(scip_field(3, 2, &symbol_information));
     document.extend(scip_field(6, 0, &[1]));
     let mut metadata = scip_field(1, 0, &[0]);
+    metadata.extend(scip_field(4, 0, &[1]));
+    let mut index = scip_field(1, 2, &metadata);
+    index.extend(scip_field(2, 2, &document));
+    index
+}
+
+fn valid_scip_go_index() -> Vec<u8> {
+    let symbol = b"scip-go pkg 0/Widget#";
+    let relationship_target = b"scip-go pkg 0/Base#";
+    let range = [0_u8, 8, 15];
+    let mut occurrence = scip_field(1, 2, &range);
+    occurrence.extend(scip_field(2, 2, symbol));
+    occurrence.extend(scip_field(3, 0, &[1]));
+    let mut relationship = scip_field(1, 2, relationship_target);
+    relationship.extend(scip_field(3, 0, &[1]));
+    let mut symbol_information = scip_field(1, 2, symbol);
+    symbol_information.extend(scip_field(4, 2, &relationship));
+    let mut document = scip_field(1, 2, b"src/widget.go");
+    document.extend(scip_field(2, 2, &occurrence));
+    document.extend(scip_field(3, 2, &symbol_information));
+    document.extend(scip_field(4, 2, b"go"));
+    let tool_info = scip_field(1, 2, b"scip-go");
+    let mut metadata = scip_field(1, 0, &[0]);
+    metadata.extend(scip_field(2, 2, &tool_info));
     metadata.extend(scip_field(4, 0, &[1]));
     let mut index = scip_field(1, 2, &metadata);
     index.extend(scip_field(2, 2, &document));
@@ -736,7 +863,31 @@ fn assert_multi_source_graph_mcp(
 }
 
 fn index_workspace_fixture(directory: &TempDirectory) -> WorkspaceGraphFixture {
+    index_workspace_fixture_with_go_module(directory, false)
+}
+
+fn index_go_workspace_fixture(directory: &TempDirectory) -> WorkspaceGraphFixture {
+    index_workspace_fixture_with_go_module(directory, true)
+}
+
+fn index_workspace_fixture_with_go_module(
+    directory: &TempDirectory,
+    include_go_module: bool,
+) -> WorkspaceGraphFixture {
     let repository = fixture_repository(directory);
+    if include_go_module {
+        fs::write(
+            repository.join("go.mod"),
+            "module example.invalid/fixture\n\ngo 1.25.0\n",
+        )
+        .expect("Go module fixture should be written");
+        let status = Command::new("git")
+            .current_dir(&repository)
+            .args(["add", "--", "go.mod"])
+            .status()
+            .expect("Git should stage the Go module fixture");
+        assert!(status.success());
+    }
     let status = Command::new("git")
         .current_dir(&repository)
         .args([

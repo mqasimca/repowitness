@@ -141,6 +141,7 @@ const MAX_SCIP_EVIDENCE_ARGUMENTS: usize = 16;
 const MAX_SCIP_RELATIONSHIP_TRACE_ARGUMENTS: usize = 20;
 const MAX_SCIP_SYMBOL_RESOLVE_ARGUMENTS: usize = 26;
 const MAX_SCIP_RUST_IMPORT_ARGUMENTS: usize = 16;
+const MAX_SCIP_GO_IMPORT_ARGUMENTS: usize = 16;
 const MAX_DIAGNOSTICS_ARGUMENTS: usize = 4 + CONFIGURATION_LAYER_ARGUMENTS;
 const MAX_INDEX_ARGUMENTS: usize = 7 + CONFIGURATION_LAYER_ARGUMENTS;
 const MAX_WORKSPACE_INDEX_ARGUMENTS: usize = 5 + CONFIGURATION_LAYER_ARGUMENTS;
@@ -209,6 +210,7 @@ const HELP: &str = concat!(
     "  repowitness repository-topology --repository-id <id> --database <path> [--max-paths <1-1000>]\n",
     "  repowitness graph <status|search|evidence|architecture|trace|impact> <options>\n",
     "  repowitness scip-rust-import <explicit Rust producer and import options>\n",
+    "  repowitness scip-go-import <explicit Go producer and import options>\n",
     "  repowitness search --repository-id <id> --database <path> --query <text> [configuration layer options]\n",
     "  repowitness locate-relevant-paths --repository-id <id> --database <path> --query <text> [--limit <1-50>] [configuration layer options]\n",
     "  repowitness symbol-search --repository-id <id> --database <path> --name <symbol> [typed filters]\n",
@@ -248,6 +250,7 @@ const HELP: &str = concat!(
     "  repository-topology  Inventory tracked path categories without reading their contents.\n",
     "  graph          Read the native immutable Rust syntax graph with exact evidence.\n",
     "  scip-rust-import  Explicitly produce and import a Rust SCIP precision overlay.\n",
+    "  scip-go-import  Explicitly produce and import a Go SCIP precision overlay.\n",
     "  search         Search active Rust, Go, TypeScript, TSX, and Python symbols.\n",
     "  locate-relevant-paths  Group direct lexical declaration matches into source paths.\n",
     "  symbol-search  Find exact/prefix direct declarations with typed filters.\n",
@@ -608,6 +611,23 @@ const SCIP_RUST_IMPORT_HELP: &str = concat!(
     "or from MCP. rust-analyzer, cargo, and rustc must already be available to the requested\n",
     "producer process. Failed production or import leaves the previous overlay readable.\n",
 );
+const SCIP_GO_IMPORT_HELP: &str = concat!(
+    "Produce and import one Go SCIP overlay with an explicitly invoked scip-go.\n\n",
+    "Usage:\n",
+    "  repowitness scip-go-import --database <path> --root <repository-root>\n",
+    "      (--repository-id <rwi1:h:text>|--connected-workspace-id <cwi1:h:text>\n",
+    "       --source-slot-id <ssi1:h:text>)\n",
+    "      [--workspace-view <positive-id>] [--scip-go <path>]\n",
+    "      [--producer-timeout-ms <1-300000>] [--import-timeout-ms <1-300000>]\n\n",
+    "This explicit CLI-only command runs `scip-go index --output <private-temporary-file>`\n",
+    "with the repository as its working directory, then imports that file through the same\n",
+    "exact source-slot and immutable-view checks as scip-import. It does not run during index\n",
+    "or from MCP. scip-go and Go must already be available to the requested producer process.\n",
+    "It disables Go network, checksum, ambient Go configuration, workspace, custom package-driver,\n",
+    "and automatic-toolchain behavior; dependencies therefore must already be available locally.\n",
+    "The supplied root must be a standard single-module Go project with its go.mod at that root.\n",
+    "Failed production or import leaves the previous overlay readable.\n",
+);
 
 include!("cli/adapters.rs");
 include!("cli/architecture_map_commands.rs");
@@ -631,6 +651,7 @@ include!("cli/scip_relationship_trace_commands.rs");
 include!("cli/scip_symbol_resolve_commands.rs");
 include!("cli/scip_import_commands.rs");
 include!("cli/scip_rust_import_commands.rs");
+include!("cli/scip_go_import_commands.rs");
 include!("cli/identity_commands.rs");
 include!("cli/identity_output.rs");
 include!("cli/onboard_commands.rs");

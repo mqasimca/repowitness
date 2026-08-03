@@ -121,18 +121,20 @@ The CLI provides memory revalidation and recall, a bounded multi-language source
 architecture map, source-only architecture overview, and path-only repository
 topology inventory, Phase 0 and separately versioned Phase 2 context compilation,
 repository diagnostics, pinned Rust graph reads, contained `scip-import`, and
-explicit `scip-rust-import` production/import, package-scoped `scip-evidence`
+explicit `scip-rust-import` and `scip-go-import` production/import, package-scoped `scip-evidence`
 reads, exact-receipt `scip-symbol-resolve` navigation, and bounded
 producer-declared `scip-relationship-trace` traversal. `scip-import` accepts
 one explicit local artifact for one connected-workspace source slot, validates
 it against the current exact source view, and leaves the preceding overlay
 readable if any admission, source fence, or publication step fails.
-`scip-rust-import` is a separate direct CLI command: it explicitly invokes an
-already installed `rust-analyzer` to produce a private temporary SCIP artifact,
-then uses that same import fence. For an ordinary indexed repository it accepts
-the familiar `--repository-id`; connected workspaces use their explicit source
-slot selectors. It never runs during source indexing or from the read-only MCP
-server. A failed direct or Rust-produced SCIP import reports one stable,
+`scip-rust-import` and `scip-go-import` are separate direct CLI commands: they
+explicitly invoke an already installed producer to produce a private temporary
+SCIP artifact, then use that same import fence. For an ordinary indexed repository
+they accept the familiar `--repository-id`; connected workspaces use their explicit
+source-slot selectors. The Go command requires a standard single-module root with
+`go.mod`, disables Go network and ambient build drivers, and relies only on already
+available local dependencies. Neither command runs during source indexing or from
+the read-only MCP server. A failed direct or producer-imported SCIP operation reports one stable,
 path- and content-free failure category and leaves the preceding overlay
 readable. SCIP artifact admission is capped at 64 MiB, matching the bounded
 outer-wire decoder limit. The local stdio MCP server

@@ -161,7 +161,10 @@ fn parse_scip_import_arguments(
         }
         return Err("error: unsupported scip-import option; use scip-import --help\n");
     }
-    let timeout_ms = timeout_ms.unwrap_or(30_000);
+    let timeout_ms = timeout_ms.unwrap_or_else(|| {
+        u64::try_from(repowitness_local::DEFAULT_LOCAL_SCIP_IMPORT_DEADLINE.as_millis())
+            .expect("the local SCIP import default deadline fits in u64 milliseconds")
+    });
     Ok(ScipImportInvocation {
         database: database.ok_or("error: scip-import requires --database\n")?,
         root: root.ok_or("error: scip-import requires --root\n")?,
@@ -186,6 +189,7 @@ fn emit_scip_import_output(
         "source_slot": SourceSlotIdTextV1::encode(result.source_slot()).into_string(),
         "overlay_sha256": hex(overlay.digest().as_bytes()),
         "documents": overlay.documents(),
+        "ignored_external_documents": result.ignored_external_documents(),
         "occurrences": overlay.occurrences(),
         "relationships": overlay.relationships(),
     });
