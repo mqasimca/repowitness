@@ -271,6 +271,15 @@ deletes all temporary artifacts, and prints aggregate counts only. `--skip-build
 an existing debug CLI when iterating locally. It is intentionally opt-in and
 does not replace synthetic fixtures or the pinned public benchmark.
 
+With an already installed `rust-analyzer`, the additional `--rust-scip` mode
+also runs the explicit bounded producer/import command for every sibling with
+indexed Rust source. It retains no producer artifact and prints only aggregate
+success, unavailable, and stable path- and content-free failure-category
+counts; any rejected import makes that opt-in run fail. This is a compatibility
+smoke, not a claim that syntax-only graph coverage becomes compiler-complete.
+Use `--include-project` only when the current RepoWitness worktree should join
+that otherwise external-only aggregate run.
+
 The ignored real-repository path probe resolves relative inputs from the
 workspace root and exercises the same production-shaped local adapter as the
 diagnostic CLI. The adapter invokes Git without a shell, bounds its deadline,

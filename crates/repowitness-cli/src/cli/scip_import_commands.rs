@@ -10,7 +10,7 @@ struct ScipImportInvocation {
 
 enum ScipImportOverlayError {
     InvalidWorkspaceView,
-    Import,
+    Import(repowitness_local::LocalScipOverlayImportError),
 }
 
 fn run_scip_import(
@@ -40,9 +40,7 @@ fn run_scip_import(
             EXIT_USAGE,
             "error: scip-import workspace view is invalid\n",
         ),
-        Err(ScipImportOverlayError::Import) => {
-            emit_error(stderr, EXIT_SOFTWARE, "error: SCIP import failed\n")
-        }
+        Err(ScipImportOverlayError::Import(error)) => emit_scip_import_failure(stderr, &error),
     }
 }
 
@@ -66,7 +64,21 @@ fn import_scip_overlay(
         };
     }
     repowitness_local::import_local_scip_overlay(request, Arc::new(AtomicBool::new(false)))
-        .map_err(|_| ScipImportOverlayError::Import)
+        .map_err(ScipImportOverlayError::Import)
+}
+
+fn emit_scip_import_failure(
+    stderr: &mut impl Write,
+    error: &repowitness_local::LocalScipOverlayImportError,
+) -> u8 {
+    emit_error(
+        stderr,
+        EXIT_SOFTWARE,
+        &format!(
+            "error: SCIP import failed (category={})\n",
+            error.category().as_str()
+        ),
+    )
 }
 
 fn parse_scip_import_arguments(
@@ -138,8 +150,12 @@ fn parse_scip_import_arguments(
         }
         if option == OsStr::new("--timeout-ms") {
             let value = parse_graph_u64(value)?;
-            if !(1..=30_000).contains(&value) || timeout_ms.replace(value).is_some() {
-                return Err("error: scip-import timeout must be 1 through 30000 milliseconds\n");
+            let maximum = u64::try_from(
+                repowitness_local::MAX_LOCAL_SCIP_IMPORT_DEADLINE.as_millis(),
+            )
+            .map_err(|_| "error: scip-import timeout bound is unavailable\n")?;
+            if !(1..=maximum).contains(&value) || timeout_ms.replace(value).is_some() {
+                return Err("error: scip-import timeout must be 1 through 300000 milliseconds\n");
             }
             continue;
         }
@@ -181,5 +197,22 @@ fn emit_scip_import_output(
         EXIT_SUCCESS
     } else {
         EXIT_IO
+    }
+}
+
+#[cfg(test)]
+mod scip_import_command_tests {
+    use super::*;
+
+    #[test]
+    fn import_failure_emits_one_redacted_category() {
+        let error = repowitness_local::LocalScipOverlayImportError::InvalidSelection;
+        let mut stderr = Vec::new();
+
+        assert_eq!(emit_scip_import_failure(&mut stderr, &error), EXIT_SOFTWARE);
+        assert_eq!(
+            String::from_utf8(stderr).expect("diagnostic should be UTF-8"),
+            "error: SCIP import failed (category=invalid_selection)\n"
+        );
     }
 }

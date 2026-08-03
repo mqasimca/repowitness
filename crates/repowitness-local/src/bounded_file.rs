@@ -15,6 +15,11 @@ use sha2::{Digest, Sha256};
 
 /// Hard byte ceiling for repository-authored control files.
 pub const MAX_BOUNDED_CONTROL_FILE_BYTES: usize = 16 * 1024 * 1024;
+/// Hard byte ceiling for one explicitly admitted regular file.
+///
+/// Individual callers choose a lower limit whenever their input contract is
+/// narrower, including all repository-authored control files.
+pub const MAX_BOUNDED_FILE_BYTES: usize = 64 * 1024 * 1024;
 /// Hard component ceiling for one explicitly supplied control-file path.
 pub const MAX_BOUNDED_CONTROL_FILE_COMPONENTS: usize = 256;
 /// Hard encoded-byte ceiling for one explicitly supplied control-file path.
@@ -22,7 +27,7 @@ pub const MAX_BOUNDED_CONTROL_FILE_PATH_BYTES: usize = 32 * 1024;
 
 const READ_CHUNK_BYTES: usize = 64 * 1024;
 
-/// Immutable result of one bounded, no-follow control-file admission.
+/// Immutable result of one bounded, no-follow regular-file admission.
 #[derive(Clone, Eq, PartialEq)]
 pub struct BoundedFileContents {
     bytes: Box<[u8]>,
@@ -129,7 +134,7 @@ impl fmt::Debug for BoundedFileContents {
     }
 }
 
-/// Path-free failure from bounded control-file admission.
+/// Path-free failure from bounded regular-file admission.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BoundedFileReadError {
     /// The supplied path or byte limit is outside the bounded contract.
@@ -245,7 +250,7 @@ fn read_bounded_regular_file_with_hook(
 }
 
 fn validate_maximum(maximum_bytes: usize) -> Result<(), BoundedFileReadError> {
-    if maximum_bytes > MAX_BOUNDED_CONTROL_FILE_BYTES {
+    if maximum_bytes > MAX_BOUNDED_FILE_BYTES {
         return Err(BoundedFileReadError::InvalidRequest);
     }
     Ok(())

@@ -59,10 +59,16 @@ fn one_byte_over_limit_and_unbounded_requests_fail_closed() {
         BoundedFileReadError::TooLarge
     );
     assert_eq!(
-        read_bounded_regular_file(&path, MAX_BOUNDED_CONTROL_FILE_BYTES + 1)
+        read_bounded_regular_file(&path, MAX_BOUNDED_FILE_BYTES + 1)
             .expect_err("reject unbounded request"),
         BoundedFileReadError::InvalidRequest
     );
+}
+
+#[test]
+fn generic_file_admission_allows_the_scip_size_ceiling() {
+    assert!(validate_maximum(MAX_BOUNDED_FILE_BYTES).is_ok());
+    assert!(validate_maximum(MAX_BOUNDED_CONTROL_FILE_BYTES + 1).is_ok());
 }
 
 #[test]

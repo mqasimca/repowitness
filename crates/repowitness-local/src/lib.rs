@@ -53,7 +53,7 @@ mod watch_reconciliation;
 pub use bounded_file::{
     AdmittedFileParent, BoundedFileContents, BoundedFileReadError, MAX_BOUNDED_CONTROL_FILE_BYTES,
     MAX_BOUNDED_CONTROL_FILE_COMPONENTS, MAX_BOUNDED_CONTROL_FILE_PATH_BYTES,
-    read_bounded_regular_file, read_bounded_regular_file_with_parent,
+    MAX_BOUNDED_FILE_BYTES, read_bounded_regular_file, read_bounded_regular_file_with_parent,
 };
 pub use configuration::{
     ConfigurationFileError, ConfigurationFileLayer, MAX_CONFIGURATION_FILE_BYTES,
@@ -158,8 +158,10 @@ pub use local_scip_evidence_read::{
     LocalScipEvidenceWorkspace, read_local_scip_evidence,
 };
 pub use local_scip_overlay_import::{
-    DEFAULT_LOCAL_SCIP_IMPORT_DEADLINE, LocalScipOverlayImportError, LocalScipOverlayImportRequest,
-    LocalScipOverlayImportResult, MAX_LOCAL_SCIP_IMPORT_INPUT_BYTES, import_local_scip_overlay,
+    DEFAULT_LOCAL_SCIP_IMPORT_DEADLINE, LocalScipOverlayImportError,
+    LocalScipOverlayImportFailureCategory, LocalScipOverlayImportRequest,
+    LocalScipOverlayImportResult, MAX_LOCAL_SCIP_IMPORT_DEADLINE,
+    MAX_LOCAL_SCIP_IMPORT_INPUT_BYTES, import_local_scip_overlay,
 };
 pub use local_scip_relationship_trace::{
     DEFAULT_LOCAL_SCIP_RELATIONSHIP_TRACE_DEADLINE, LocalScipRelationshipTraceError,

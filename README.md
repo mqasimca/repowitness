@@ -132,7 +132,10 @@ already installed `rust-analyzer` to produce a private temporary SCIP artifact,
 then uses that same import fence. For an ordinary indexed repository it accepts
 the familiar `--repository-id`; connected workspaces use their explicit source
 slot selectors. It never runs during source indexing or from the read-only MCP
-server. The local stdio MCP server
+server. A failed direct or Rust-produced SCIP import reports one stable,
+path- and content-free failure category and leaves the preceding overlay
+readable. SCIP artifact admission is capped at 64 MiB, matching the bounded
+outer-wire decoder limit. The local stdio MCP server
 has twenty-four read-only tools:
 `architecture_map`, `architecture_overview`, `code_graph_query`, `code_search`, `context_build`, `phase2_context_build`, `diagnostics`,
 `graph_architecture`, `graph_evidence`, `graph_search`, `graph_status`,
@@ -322,7 +325,7 @@ target/debug/repowitness index \
 The ID is an opaque logical repository identity, not a secret and not a digest
 of the path, remote, or commit. Reuse the same ID intentionally across clones
 or linked worktrees that represent the same logical repository. The command
-rejects a database inside the indexed worktree, uses a fixed 120-second
+rejects a database inside the indexed worktree, uses a fixed 180-second
 end-to-end policy, prints only aggregate results, and leaves the previous active
 generation readable if preparation, staging, activation, cancellation, or
 staleness fails. Index writers coordinate through a persistent sibling

@@ -9,7 +9,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-use repowitness_analysis::ScipImmutableSourceLookup;
+use repowitness_analysis::{
+    MAX_SCIP_OVERLAY_INPUT_BYTES, ScipImmutableSourceLookup, ScipOverlayDocumentError,
+};
 use repowitness_application::{
     ConnectedWorkspaceIdTextV1, ScipOverlayIdentityInput, ScipOverlayImportError,
     ScipOverlayImportRequest, SourceSlotIdTextV1, bounded_scip_importer_digest, hash_scip_input,
@@ -19,9 +21,9 @@ use repowitness_domain::{RepositoryPath, RepositoryPathLimits};
 
 use crate::{
     BoundedFileReadError, ConnectedWorkspaceId, LocalRustIndexLimits,
-    LocalSourceSnapshotFenceError, MAX_BOUNDED_CONTROL_FILE_BYTES, OwnedSqliteIndex,
-    OwnedSqliteReader, PreparedScipOverlay, ScipOverlayPreparationError, ScipOverlaySummary,
-    SourceSlotId, SqliteStoreError, read_bounded_regular_file_with_parent,
+    LocalSourceSnapshotFenceError, OwnedSqliteIndex, OwnedSqliteReader, PreparedScipOverlay,
+    ScipOverlayPreparationError, ScipOverlaySummary, SourceSlotId, SqliteStoreError,
+    read_bounded_regular_file_with_parent,
     rust_index::{
         LocalSourceSnapshotFenceRequest, SourceLanguageSelection,
         capture_confirmed_local_source_snapshot, confirm_local_source_snapshot,
@@ -30,9 +32,11 @@ use crate::{
 };
 
 /// Maximum admitted bytes in one hostile local SCIP input file.
-pub const MAX_LOCAL_SCIP_IMPORT_INPUT_BYTES: usize = MAX_BOUNDED_CONTROL_FILE_BYTES;
+pub const MAX_LOCAL_SCIP_IMPORT_INPUT_BYTES: usize = MAX_SCIP_OVERLAY_INPUT_BYTES;
 /// Default end-to-end deadline for one contained local SCIP import.
-pub const DEFAULT_LOCAL_SCIP_IMPORT_DEADLINE: Duration = Duration::from_secs(30);
+pub const DEFAULT_LOCAL_SCIP_IMPORT_DEADLINE: Duration = Duration::from_secs(120);
+/// Hard ceiling for one contained local SCIP import.
+pub const MAX_LOCAL_SCIP_IMPORT_DEADLINE: Duration = Duration::from_secs(300);
 
 const PERSISTED_PATH_LIMITS: RepositoryPathLimits = RepositoryPathLimits::new(1_048_576, 1_048_576);
 
@@ -137,6 +141,80 @@ impl LocalScipOverlayImportResult {
     }
 }
 
+/// Stable content- and path-redacted local import failure category.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LocalScipOverlayImportFailureCategory {
+    /// A workspace or source-slot identity was malformed or non-canonical.
+    InvalidIdentity,
+    /// An exact requested view was non-positive.
+    InvalidSelection,
+    /// The complete operation deadline could not be represented.
+    DeadlineNotRepresentable,
+    /// The input file could not be admitted through the no-follow boundary.
+    InputAdmission,
+    /// The read-only database owner failed.
+    DatabaseRead,
+    /// The selected source member or view was unavailable.
+    SourceScopeUnavailable,
+    /// The database identity could not be recovered.
+    DatabaseIdentity,
+    /// Exact source capture or confirmation failed.
+    SourceFence,
+    /// The captured source manifest differed from the selected immutable member.
+    SourceManifestMismatch,
+    /// The producer input was malformed or semantically unsupported.
+    InvalidInput,
+    /// The producer input did not match one current source file.
+    SourceMismatch,
+    /// The producer used a source encoding the importer does not support.
+    UnsupportedSourceEncoding,
+    /// Cancellation occurred before a complete import result existed.
+    Cancelled,
+    /// The import deadline elapsed before a complete result existed.
+    DeadlineExceeded,
+    /// A bounded producer field or collection exceeded its allowance.
+    ResourceLimit,
+    /// Decoded accounting could not match retained staging facts.
+    InconsistentSummary,
+    /// Complete decoded documents could not be prepared for publication.
+    Preparation,
+    /// The input file changed before publication.
+    InputChanged,
+    /// The writer could not atomically activate the complete overlay.
+    Publication,
+    /// The writer did not stop cleanly after the outcome was known.
+    Shutdown,
+}
+
+impl LocalScipOverlayImportFailureCategory {
+    /// Returns the stable, path- and content-free wire spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::InvalidIdentity => "invalid_identity",
+            Self::InvalidSelection => "invalid_selection",
+            Self::DeadlineNotRepresentable => "deadline_not_representable",
+            Self::InputAdmission => "input_admission",
+            Self::DatabaseRead => "database_read",
+            Self::SourceScopeUnavailable => "source_scope_unavailable",
+            Self::DatabaseIdentity => "database_identity",
+            Self::SourceFence => "source_fence",
+            Self::SourceManifestMismatch => "source_manifest_mismatch",
+            Self::InvalidInput => "invalid_input",
+            Self::SourceMismatch => "source_mismatch",
+            Self::UnsupportedSourceEncoding => "unsupported_source_encoding",
+            Self::Cancelled => "cancelled",
+            Self::DeadlineExceeded => "deadline_exceeded",
+            Self::ResourceLimit => "resource_limit",
+            Self::InconsistentSummary => "inconsistent_summary",
+            Self::Preparation => "preparation",
+            Self::InputChanged => "input_changed",
+            Self::Publication => "publication",
+            Self::Shutdown => "shutdown",
+        }
+    }
+}
+
 /// Stable content- and path-redacted local import failure.
 #[derive(Debug)]
 pub enum LocalScipOverlayImportError {
@@ -168,6 +246,67 @@ pub enum LocalScipOverlayImportError {
     Writer(SqliteStoreError),
     /// The writer did not stop cleanly after the import outcome was known.
     Shutdown(SqliteStoreError),
+}
+
+impl LocalScipOverlayImportError {
+    /// Returns the stable category without exposing input, source, or path details.
+    #[must_use]
+    pub const fn category(&self) -> LocalScipOverlayImportFailureCategory {
+        match self {
+            Self::InvalidIdentity => LocalScipOverlayImportFailureCategory::InvalidIdentity,
+            Self::InvalidSelection => LocalScipOverlayImportFailureCategory::InvalidSelection,
+            Self::DeadlineNotRepresentable => {
+                LocalScipOverlayImportFailureCategory::DeadlineNotRepresentable
+            }
+            Self::Input(_) => LocalScipOverlayImportFailureCategory::InputAdmission,
+            Self::Reader(_) => LocalScipOverlayImportFailureCategory::DatabaseRead,
+            Self::SourceScopeUnavailable => {
+                LocalScipOverlayImportFailureCategory::SourceScopeUnavailable
+            }
+            Self::DatabaseIdentity(_) => LocalScipOverlayImportFailureCategory::DatabaseIdentity,
+            Self::SourceFence(_) => LocalScipOverlayImportFailureCategory::SourceFence,
+            Self::SourceManifestMismatch => {
+                LocalScipOverlayImportFailureCategory::SourceManifestMismatch
+            }
+            Self::Import(ScipOverlayImportError::Cancelled) => {
+                LocalScipOverlayImportFailureCategory::Cancelled
+            }
+            Self::Import(ScipOverlayImportError::DeadlineExceeded) => {
+                LocalScipOverlayImportFailureCategory::DeadlineExceeded
+            }
+            Self::Import(ScipOverlayImportError::Decode(
+                ScipOverlayDocumentError::InvalidInput,
+            )) => LocalScipOverlayImportFailureCategory::InvalidInput,
+            Self::Import(ScipOverlayImportError::Decode(
+                ScipOverlayDocumentError::SourceMismatch,
+            )) => LocalScipOverlayImportFailureCategory::SourceMismatch,
+            Self::Import(ScipOverlayImportError::Decode(
+                ScipOverlayDocumentError::UnsupportedSourceEncoding,
+            )) => LocalScipOverlayImportFailureCategory::UnsupportedSourceEncoding,
+            Self::Import(ScipOverlayImportError::Decode(ScipOverlayDocumentError::Cancelled)) => {
+                LocalScipOverlayImportFailureCategory::Cancelled
+            }
+            Self::Import(ScipOverlayImportError::Decode(
+                ScipOverlayDocumentError::DeadlineExceeded,
+            )) => LocalScipOverlayImportFailureCategory::DeadlineExceeded,
+            Self::Import(ScipOverlayImportError::Decode(
+                ScipOverlayDocumentError::ResourceLimit,
+            )) => LocalScipOverlayImportFailureCategory::ResourceLimit,
+            Self::Writer(SqliteStoreError::Cancelled) => {
+                LocalScipOverlayImportFailureCategory::Cancelled
+            }
+            Self::Writer(SqliteStoreError::DeadlineExceeded) => {
+                LocalScipOverlayImportFailureCategory::DeadlineExceeded
+            }
+            Self::Import(ScipOverlayImportError::InconsistentSummary) => {
+                LocalScipOverlayImportFailureCategory::InconsistentSummary
+            }
+            Self::Preparation(_) => LocalScipOverlayImportFailureCategory::Preparation,
+            Self::InputChanged(_) => LocalScipOverlayImportFailureCategory::InputChanged,
+            Self::Writer(_) => LocalScipOverlayImportFailureCategory::Publication,
+            Self::Shutdown(_) => LocalScipOverlayImportFailureCategory::Shutdown,
+        }
+    }
 }
 
 impl fmt::Display for LocalScipOverlayImportError {
@@ -391,4 +530,36 @@ fn import_with_reader(
             decoded.relationships(),
         ),
     })
+}
+
+#[cfg(test)]
+mod local_scip_overlay_import_tests {
+    use super::*;
+
+    #[test]
+    fn failure_categories_preserve_the_safe_import_cause() {
+        let source_mismatch = LocalScipOverlayImportError::Import(ScipOverlayImportError::Decode(
+            ScipOverlayDocumentError::SourceMismatch,
+        ));
+        let invalid_input = LocalScipOverlayImportError::Import(ScipOverlayImportError::Decode(
+            ScipOverlayDocumentError::InvalidInput,
+        ));
+        let preparation =
+            LocalScipOverlayImportError::Preparation(ScipOverlayPreparationError::InvalidDocuments);
+        let writer_deadline =
+            LocalScipOverlayImportError::Writer(SqliteStoreError::DeadlineExceeded);
+
+        assert_eq!(source_mismatch.category().as_str(), "source_mismatch");
+        assert_eq!(invalid_input.category().as_str(), "invalid_input");
+        assert_eq!(preparation.category().as_str(), "preparation");
+        assert_eq!(writer_deadline.category().as_str(), "deadline_exceeded");
+    }
+
+    #[test]
+    fn scip_input_admission_matches_the_decoder_ceiling() {
+        assert_eq!(
+            MAX_LOCAL_SCIP_IMPORT_INPUT_BYTES,
+            MAX_SCIP_OVERLAY_INPUT_BYTES
+        );
+    }
 }

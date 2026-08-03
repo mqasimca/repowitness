@@ -3,7 +3,9 @@ const DEFAULT_SCIP_RUST_PRODUCER_TIMEOUT: std::time::Duration =
 const MAX_SCIP_RUST_PRODUCER_TIMEOUT: std::time::Duration =
     std::time::Duration::from_secs(300);
 const DEFAULT_SCIP_RUST_IMPORT_TIMEOUT: std::time::Duration =
-    std::time::Duration::from_secs(30);
+    repowitness_local::DEFAULT_LOCAL_SCIP_IMPORT_DEADLINE;
+const MAX_SCIP_RUST_IMPORT_TIMEOUT: std::time::Duration =
+    repowitness_local::MAX_LOCAL_SCIP_IMPORT_DEADLINE;
 const PRODUCER_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(20);
 const TEMPORARY_DIRECTORY_ATTEMPTS: u8 = 16;
 
@@ -65,7 +67,10 @@ fn run_scip_rust_import(
     };
     match import_scip_overlay(&import) {
         Ok(result) => emit_scip_import_output(stdout, result),
-        Err(_) => emit_error(stderr, EXIT_SOFTWARE, "error: SCIP import failed\n"),
+        Err(ScipImportOverlayError::InvalidWorkspaceView) => {
+            emit_error(stderr, EXIT_USAGE, "error: SCIP import workspace view is invalid\n")
+        }
+        Err(ScipImportOverlayError::Import(error)) => emit_scip_import_failure(stderr, &error),
     }
 }
 
@@ -131,7 +136,7 @@ fn parse_scip_rust_import_arguments(
             continue;
         }
         if option == OsStr::new("--import-timeout-ms") {
-            let value = parse_scip_rust_duration(value, DEFAULT_SCIP_RUST_IMPORT_TIMEOUT)?;
+            let value = parse_scip_rust_duration(value, MAX_SCIP_RUST_IMPORT_TIMEOUT)?;
             if import_timeout.replace(value).is_some() {
                 return Err("error: scip-rust-import accepts --import-timeout-ms only once\n");
             }
@@ -373,6 +378,23 @@ mod scip_rust_import_tests {
         assert_eq!(
             invocation.import.source_slot,
             format!("ssi1:h:{}", "AA".repeat(32))
+        );
+
+        let maximum_timeout_arguments = [
+            OsString::from("--database"),
+            OsString::from("database.sqlite3"),
+            OsString::from("--root"),
+            OsString::from("repository"),
+            OsString::from("--repository-id"),
+            OsString::from(REPOSITORY_ID),
+            OsString::from("--import-timeout-ms"),
+            OsString::from("300000"),
+        ];
+        let maximum_timeout = parse_scip_rust_import_arguments(&maximum_timeout_arguments)
+            .expect("maximum import timeout");
+        assert_eq!(
+            maximum_timeout.import.timeout,
+            std::time::Duration::from_millis(300000)
         );
     }
 }

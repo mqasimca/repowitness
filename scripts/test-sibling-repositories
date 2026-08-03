@@ -3,7 +3,10 @@
 # typed-symbol-discovery, lexical path-navigation (direct and finite-MCP-envelope),
 # exact raw syntax-target search (direct and finite-MCP-envelope), no-overlay
 # SCIP-evidence, SCIP-symbol-resolution, and SCIP-relationship-trace smoke,
-# repository-scoped test-marker, and exact outbound-site
+# repository-scoped test-marker, and exact outbound-site loop. The opt-in
+# --rust-scip mode additionally invokes the installed rust-analyzer producer
+# for every sibling with indexed Rust source, imports the resulting private
+# temporary artifact, and reports only aggregate categorical outcomes.
 # loop against every direct Git worktree beside this workspace. External
 # repositories are confidential smoke inputs: this script deliberately emits aggregate
 # outcomes only.
@@ -27,25 +30,33 @@ CLI=$TARGET_DIRECTORY/debug/repowitness
 umask 077
 
 usage() {
-    printf '%s\n' 'usage: ./scripts/test-sibling-repositories [--skip-build]' >&2
+    printf '%s\n' 'usage: ./scripts/test-sibling-repositories [--skip-build] [--rust-scip] [--include-project]' >&2
     exit 64
 }
 
 SKIP_BUILD=false
-case "$#" in
-    0)
-        ;;
-    1)
-        if [ "$1" = '--skip-build' ]; then
+RUST_SCIP=false
+INCLUDE_PROJECT=false
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --skip-build)
+            test "$SKIP_BUILD" = false || usage
             SKIP_BUILD=true
-        else
+            ;;
+        --rust-scip)
+            test "$RUST_SCIP" = false || usage
+            RUST_SCIP=true
+            ;;
+        --include-project)
+            test "$INCLUDE_PROJECT" = false || usage
+            INCLUDE_PROJECT=true
+            ;;
+        *)
             usage
-        fi
-        ;;
-    *)
-        usage
-        ;;
-esac
+            ;;
+    esac
+    shift
+done
 
 command -v git >/dev/null 2>&1 || {
     printf '%s\n' 'error: Git is required' >&2
@@ -59,6 +70,12 @@ command -v mktemp >/dev/null 2>&1 || {
     printf '%s\n' 'error: mktemp is required' >&2
     exit 69
 }
+if [ "$RUST_SCIP" = true ]; then
+    command -v rust-analyzer >/dev/null 2>&1 || {
+        printf '%s\n' 'error: rust-analyzer is required with --rust-scip' >&2
+        exit 69
+    }
+fi
 
 safe_git() (
     unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY
@@ -409,6 +426,28 @@ map_has_declarations() {
         exit 1 if $@ || ref($map) ne q{HASH};
         exit(($map->{total_declarations} // 0) > 0 ? 0 : 1);
     '
+}
+
+map_has_rust_files() {
+    perl -MJSON::PP -e '
+        use strict;
+        use warnings;
+
+        local $/;
+        my $map = eval { decode_json(<STDIN>) };
+        exit 1 if $@ || ref($map) ne q{HASH} || ref($map->{languages}) ne q{ARRAY};
+        for my $language (@{$map->{languages}}) {
+            next if ref($language) ne q{HASH};
+            exit 0 if ($language->{language} // q{}) eq q{rust}
+              && defined($language->{files}) && !ref($language->{files})
+              && $language->{files} =~ /\A[1-9][0-9]*\z/;
+        }
+        exit 1;
+    '
+}
+
+scip_import_failure_category() {
+    sed -n 's/^error: SCIP import failed (category=\([a-z_][a-z_]*\))$/\1/p' "$1"
 }
 
 symbol_search_has_match() {
@@ -1117,11 +1156,34 @@ scip_evidence_not_produced_passed=0
 scip_evidence_not_produced_failed=0
 scip_relationship_trace_not_produced_passed=0
 scip_relationship_trace_not_produced_failed=0
+rust_scip_rust_repositories=0
+rust_scip_no_cargo_manifest=0
+rust_scip_import_passed=0
+rust_scip_import_failed=0
+rust_scip_invalid_input=0
+rust_scip_source_mismatch=0
+rust_scip_unsupported_source_encoding=0
+rust_scip_deadline_exceeded=0
+rust_scip_resource_limit=0
+rust_scip_inconsistent_summary=0
+rust_scip_preparation=0
+rust_scip_other_failure=0
 
-for candidate in "$SIBLING_ROOT"/* "$SIBLING_ROOT"/.[!.]* "$SIBLING_ROOT"/..?*; do
+if [ "$INCLUDE_PROJECT" = true ]; then
+    set -- "$PROJECT_ROOT" "$SIBLING_ROOT"/* "$SIBLING_ROOT"/.[!.]* "$SIBLING_ROOT"/..?*
+else
+    set -- "$SIBLING_ROOT"/* "$SIBLING_ROOT"/.[!.]* "$SIBLING_ROOT"/..?*
+fi
+project_seen=false
+for candidate; do
     test -d "$candidate" || continue
     test ! -L "$candidate" || continue
-    test "$candidate" != "$PROJECT_ROOT" || continue
+    if [ "$candidate" = "$PROJECT_ROOT" ]; then
+        if [ "$INCLUDE_PROJECT" = false ] || [ "$project_seen" = true ]; then
+            continue
+        fi
+        project_seen=true
+    fi
     is_git_worktree "$candidate" || continue
 
     repositories=$((repositories + 1))
@@ -1374,6 +1436,48 @@ for candidate in "$SIBLING_ROOT"/* "$SIBLING_ROOT"/.[!.]* "$SIBLING_ROOT"/..?*; 
     fi
     relevant_paths_passed=$((relevant_paths_passed + 1))
     symbol_passed=$((symbol_passed + 1))
+
+    if [ "$RUST_SCIP" = true ] && map_has_rust_files <"$map_output"; then
+        rust_scip_rust_repositories=$((rust_scip_rust_repositories + 1))
+        if [ ! -f "$candidate/Cargo.toml" ]; then
+            rust_scip_no_cargo_manifest=$((rust_scip_no_cargo_manifest + 1))
+            continue
+        fi
+        rust_scip_stderr="$RUN_DIRECTORY/$repositories.scip-rust-import.stderr"
+        if "$CLI" scip-rust-import --repository-id "$identity" --database "$database" \
+            --root "$candidate" --producer-timeout-ms 300000 \
+            >/dev/null 2>"$rust_scip_stderr"; then
+            rust_scip_import_passed=$((rust_scip_import_passed + 1))
+            continue
+        fi
+        rust_scip_import_failed=$((rust_scip_import_failed + 1))
+        case "$(scip_import_failure_category "$rust_scip_stderr")" in
+            invalid_input)
+                rust_scip_invalid_input=$((rust_scip_invalid_input + 1))
+                ;;
+            source_mismatch)
+                rust_scip_source_mismatch=$((rust_scip_source_mismatch + 1))
+                ;;
+            unsupported_source_encoding)
+                rust_scip_unsupported_source_encoding=$((rust_scip_unsupported_source_encoding + 1))
+                ;;
+            deadline_exceeded)
+                rust_scip_deadline_exceeded=$((rust_scip_deadline_exceeded + 1))
+                ;;
+            resource_limit)
+                rust_scip_resource_limit=$((rust_scip_resource_limit + 1))
+                ;;
+            inconsistent_summary)
+                rust_scip_inconsistent_summary=$((rust_scip_inconsistent_summary + 1))
+                ;;
+            preparation)
+                rust_scip_preparation=$((rust_scip_preparation + 1))
+                ;;
+            *)
+                rust_scip_other_failure=$((rust_scip_other_failure + 1))
+                ;;
+        esac
+    fi
 done
 
 if [ "$repositories" -eq 0 ]; then
@@ -1384,6 +1488,11 @@ fi
 printf '%s\n' \
     "state=completed repositories=$repositories index_passed=$index_passed index_failed=$index_failed topology_passed=$topology_passed topology_failed=$topology_failed map_passed=$map_passed map_failed=$map_failed overview_passed=$overview_passed overview_failed=$overview_failed test_markers_passed=$test_markers_passed test_markers_failed=$test_markers_failed syntax_site_search_passed=$syntax_site_search_passed syntax_site_search_failed=$syntax_site_search_failed syntax_site_search_positive_passed=$syntax_site_search_positive_passed syntax_site_search_positive_unavailable=$syntax_site_search_positive_unavailable code_graph_syntax_site_search_passed=$code_graph_syntax_site_search_passed code_graph_syntax_site_search_failed=$code_graph_syntax_site_search_failed code_graph_syntax_site_search_positive_passed=$code_graph_syntax_site_search_positive_passed code_graph_syntax_site_search_positive_unavailable=$code_graph_syntax_site_search_positive_unavailable relevant_paths_passed=$relevant_paths_passed relevant_paths_failed=$relevant_paths_failed relevant_paths_positive_passed=$relevant_paths_positive_passed relevant_paths_positive_unavailable=$relevant_paths_positive_unavailable code_graph_relevant_paths_passed=$code_graph_relevant_paths_passed code_graph_relevant_paths_failed=$code_graph_relevant_paths_failed code_graph_relevant_paths_positive_passed=$code_graph_relevant_paths_positive_passed code_graph_relevant_paths_positive_unavailable=$code_graph_relevant_paths_positive_unavailable symbol_passed=$symbol_passed symbol_failed=$symbol_failed symbol_positive_passed=$symbol_positive_passed symbol_positive_unavailable=$symbol_positive_unavailable outbound_passed=$outbound_passed outbound_failed=$outbound_failed outbound_unavailable=$outbound_unavailable scip_symbol_resolve_not_produced_passed=$scip_symbol_resolve_not_produced_passed scip_symbol_resolve_not_produced_failed=$scip_symbol_resolve_not_produced_failed scip_symbol_resolve_not_attempted_no_declaration=$scip_symbol_resolve_not_attempted_no_declaration scip_symbol_resolve_not_attempted_no_candidate=$scip_symbol_resolve_not_attempted_no_candidate scip_evidence_not_produced_passed=$scip_evidence_not_produced_passed scip_evidence_not_produced_failed=$scip_evidence_not_produced_failed scip_relationship_trace_not_produced_passed=$scip_relationship_trace_not_produced_passed scip_relationship_trace_not_produced_failed=$scip_relationship_trace_not_produced_failed"
 
-if [ "$index_failed" -ne 0 ] || [ "$topology_failed" -ne 0 ] || [ "$map_failed" -ne 0 ] || [ "$overview_failed" -ne 0 ] || [ "$test_markers_failed" -ne 0 ] || [ "$syntax_site_search_failed" -ne 0 ] || [ "$code_graph_syntax_site_search_failed" -ne 0 ] || [ "$relevant_paths_failed" -ne 0 ] || [ "$code_graph_relevant_paths_failed" -ne 0 ] || [ "$symbol_failed" -ne 0 ] || [ "$outbound_failed" -ne 0 ] || [ "$scip_symbol_resolve_not_produced_failed" -ne 0 ] || [ "$scip_evidence_not_produced_failed" -ne 0 ] || [ "$scip_relationship_trace_not_produced_failed" -ne 0 ]; then
+if [ "$RUST_SCIP" = true ]; then
+    printf '%s\n' \
+        "rust_scip state=completed rust_repositories=$rust_scip_rust_repositories no_cargo_manifest=$rust_scip_no_cargo_manifest import_passed=$rust_scip_import_passed import_failed=$rust_scip_import_failed invalid_input=$rust_scip_invalid_input source_mismatch=$rust_scip_source_mismatch unsupported_source_encoding=$rust_scip_unsupported_source_encoding deadline_exceeded=$rust_scip_deadline_exceeded resource_limit=$rust_scip_resource_limit inconsistent_summary=$rust_scip_inconsistent_summary preparation=$rust_scip_preparation other_failure=$rust_scip_other_failure"
+fi
+
+if [ "$index_failed" -ne 0 ] || [ "$topology_failed" -ne 0 ] || [ "$map_failed" -ne 0 ] || [ "$overview_failed" -ne 0 ] || [ "$test_markers_failed" -ne 0 ] || [ "$syntax_site_search_failed" -ne 0 ] || [ "$code_graph_syntax_site_search_failed" -ne 0 ] || [ "$relevant_paths_failed" -ne 0 ] || [ "$code_graph_relevant_paths_failed" -ne 0 ] || [ "$symbol_failed" -ne 0 ] || [ "$outbound_failed" -ne 0 ] || [ "$scip_symbol_resolve_not_produced_failed" -ne 0 ] || [ "$scip_evidence_not_produced_failed" -ne 0 ] || [ "$scip_relationship_trace_not_produced_failed" -ne 0 ] || { [ "$RUST_SCIP" = true ] && [ "$rust_scip_import_failed" -ne 0 ]; }; then
     exit 1
 fi

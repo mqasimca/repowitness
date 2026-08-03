@@ -17,7 +17,7 @@ use repowitness_domain::{
 };
 use sha2::{Digest, Sha256};
 
-const MAX_INPUT_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_INPUT_BYTES: u64 = crate::MAX_SCIP_OVERLAY_INPUT_BYTES as u64;
 const MAX_DOCUMENTS: u32 = 100_000;
 const MAX_DOCUMENT_BYTES: u32 = 1024 * 1024;
 const MAX_METADATA_BYTES: u32 = 64 * 1024;
@@ -613,7 +613,14 @@ pub(crate) fn parse_scip_metadata(
 ) -> Result<ScipWireMetadata, ScipWireError> {
     control.check()?;
     let mut cursor = 0_usize;
-    let mut protocol_version = None;
+    // `UnspecifiedProtocolVersion` is currently the only supported SCIP
+    // protocol version and has the proto3 default value of zero. Canonical
+    // proto3 producers, including rust-analyzer, omit default-valued scalar
+    // fields, so absence means the accepted version rather than malformed
+    // metadata. Keep tracking explicit presence to reject ambiguous duplicate
+    // fields.
+    let protocol_version = SUPPORTED_PROTOCOL_VERSION;
+    let mut protocol_version_explicit = false;
     let mut text_encoding = None;
 
     while cursor < input.len() {
@@ -631,9 +638,10 @@ pub(crate) fn parse_scip_metadata(
                 if value != SUPPORTED_PROTOCOL_VERSION {
                     return Err(ScipWireError::UnsupportedProtocolVersion);
                 }
-                if protocol_version.replace(value).is_some() {
+                if protocol_version_explicit {
                     return Err(ScipWireError::InvalidMetadata);
                 }
+                protocol_version_explicit = true;
             }
             (METADATA_TEXT_ENCODING_FIELD, WIRE_VARINT) => {
                 let value = u32::try_from(read_varint(input, &mut cursor)?)
@@ -659,7 +667,7 @@ pub(crate) fn parse_scip_metadata(
     }
 
     Ok(ScipWireMetadata {
-        protocol_version: protocol_version.ok_or(ScipWireError::InvalidMetadata)?,
+        protocol_version,
         text_encoding: text_encoding.ok_or(ScipWireError::InvalidMetadata)?,
     })
 }
@@ -1536,6 +1544,23 @@ mod tests {
                 protocol_version: SUPPORTED_PROTOCOL_VERSION,
                 text_encoding: ScipWireTextEncoding::Utf8,
             })
+        );
+
+        let omitted_default_protocol = field(METADATA_TEXT_ENCODING_FIELD, WIRE_VARINT, &[1]);
+        assert_eq!(
+            parse_scip_metadata(&omitted_default_protocol, control(&cancelled)),
+            Ok(ScipWireMetadata {
+                protocol_version: SUPPORTED_PROTOCOL_VERSION,
+                text_encoding: ScipWireTextEncoding::Utf8,
+            })
+        );
+
+        let mut duplicate_protocol = field(METADATA_PROTOCOL_VERSION_FIELD, WIRE_VARINT, &[0]);
+        duplicate_protocol.extend(field(METADATA_PROTOCOL_VERSION_FIELD, WIRE_VARINT, &[0]));
+        duplicate_protocol.extend(field(METADATA_TEXT_ENCODING_FIELD, WIRE_VARINT, &[1]));
+        assert_eq!(
+            parse_scip_metadata(&duplicate_protocol, control(&cancelled)),
+            Err(ScipWireError::InvalidMetadata)
         );
 
         let unsupported_protocol = field(METADATA_PROTOCOL_VERSION_FIELD, WIRE_VARINT, &[1]);

@@ -50,7 +50,7 @@ fn self_index_limits() -> LocalRustIndexLimits {
 
 #[test]
 fn production_index_deadline_remains_fixed_and_explicit() {
-    assert_eq!(DEFAULT_LOCAL_RUST_INDEX_DEADLINE, Duration::from_secs(120));
+    assert_eq!(DEFAULT_LOCAL_RUST_INDEX_DEADLINE, Duration::from_secs(180));
     assert_eq!(
         LocalRustIndexLimits::default().deadline(),
         DEFAULT_LOCAL_RUST_INDEX_DEADLINE
