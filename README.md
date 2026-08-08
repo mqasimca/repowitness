@@ -20,6 +20,11 @@ Its defining promise is:
 
 ## Current status
 
+Phase 0 and Phase 1 are complete. The separately versioned Phase 2
+evidence-balanced context profile and optional SCIP precision overlay meet their
+exit gate. Phase 3 durable engineering-memory beta implementation is in
+progress; its public beta claim remains withheld pending longitudinal evidence.
+
 RepoWitness has a tested Phase 0 indexer for Rust, Go, TypeScript, TSX, and
 Python. It does the following:
 
@@ -39,7 +44,7 @@ Codex evaluation gives the correct result at both source revisions. It uses
 current memory, ignores stale memory, and marks the context packet as useful.
 
 The SQLite store has one immutable Phase 0 baseline and compatible migrations
-through version 10. They define the five-language artifact format, append-only
+through version 12. They define the five-language artifact format, append-only
 memory journal, memory-revalidation projection, reviewed correspondence,
 idempotent review events, raw syntax observations, and a separate path-only
 repository-topology receipt. Version 3 adds bounded source-slot membership,
@@ -47,7 +52,9 @@ atomic immutable workspace views, a Rust graph for one generation, and
 explicit plan/apply operations for bounded generation retention; version 9
 requires a complete topology publication before activating an ordinary local
 generation; version 10 adds an exact immutable raw-target SQLite index for
-bounded syntax-observation navigation.
+bounded syntax-observation navigation; version 11 adds directional SCIP
+relationship-trace indexes; and version 12 makes SCIP overlay completion
+validation linear while preserving its exact completeness invariant.
 
 The store saves the exact language and prepared facts for each artifact. Owned
 writer and reader connections control access. The store does the following:
@@ -207,7 +214,7 @@ inputs. This document does not record their IDs, paths, revisions, symbols,
 contents, or individual measurements. Public test evidence uses temporary
 mixed-language fixtures and public pinned benchmark corpora.
 
-Phase 0 is complete. The local product loop, pinned correctness scenario,
+The completed Phase 0 local product loop, pinned correctness scenario,
 rewritten-history, review, split/merge, canonical-file and SQLite
 publication-fault tests, and controlled public baseline comparison pass. A clean
 Ubuntu 24.04 run at the exact revision also passes the approved benchmark
@@ -727,6 +734,12 @@ receipt schema is version 2: database-backed approval, review, and history
 receipts report checkpoint, shutdown, and final database-path identity
 separately. They never report aggregate `complete` when a step is deferred or
 the final identity is changed or unconfirmed.
+
+Native MCP Tasks are disabled by default. Adding `--enable-native-tasks` at
+single-repository MCP startup enables optional task execution for
+`phase2_context_build`; durable task state survives a restart, while bounded
+process-local result payloads do not. Registry and catalog modes remain
+read-only and do not permit native tasks.
 
 When the database contains a connected workspace, add
 `--connected-workspace-id <cwi1:h:...>` and `--source-slot-id <ssi1:h:...>`

@@ -166,9 +166,6 @@ fn prepare_current_worktree_mcp_catalog(
         }
     };
 
-    if LocalRepositoryPathInspector.inspect(&current_root).is_err() {
-        return Err(());
-    }
     let prepared_database = PrivateOnboardStateDirectory.prepare_database(
         &current_root,
         Some(&state_root),
@@ -179,7 +176,7 @@ fn prepare_current_worktree_mcp_catalog(
     {
         return Err(());
     }
-    LocalRepositoryIndexer.index(
+    LocalRepositoryIndexer.reconcile(
         &IndexInvocation {
             repository_root: current_root.clone(),
             database: prepared_database.database.clone(),

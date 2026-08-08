@@ -333,6 +333,23 @@ pub fn index_local_repository(
     index_local_rust_repository(request, cancelled)
 }
 
+/// Reconciles one local source index without publishing a new generation when
+/// its complete source and semantics-affecting inputs are unchanged.
+///
+/// The current worktree is still captured and final-fenced before returning an
+/// existing generation. Changed or incomplete state follows the normal atomic
+/// publication path.
+pub fn reconcile_local_repository(
+    request: LocalIndexRequest<'_>,
+    cancelled: Arc<AtomicBool>,
+) -> Result<LocalIndexReport, LocalIndexError> {
+    match index_local_repository_with_mode(request, cancelled, true, || {}, || {})? {
+        LocalReconciliationOutcome::Published(report)
+        | LocalReconciliationOutcome::Resumed(report)
+        | LocalReconciliationOutcome::Unchanged(report) => Ok(report),
+    }
+}
+
 struct PreparedLocalIndexPublication {
     identity: RustSourceSnapshotIdentity,
     prepared: repowitness_application::PreparedRustIndex,

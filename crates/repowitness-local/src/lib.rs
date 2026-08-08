@@ -117,7 +117,7 @@ pub use local_identity::{
 };
 pub use local_index::{
     LocalIndexError, LocalIndexMutation, LocalIndexReport, LocalIndexRequest,
-    index_local_repository, index_local_rust_repository,
+    index_local_repository, index_local_rust_repository, reconcile_local_repository,
 };
 pub use local_known_at_history::{
     DEFAULT_LOCAL_KNOWN_AT_HISTORY_DEADLINE, LocalKnownAtHistoryError, LocalKnownAtHistoryRequest,

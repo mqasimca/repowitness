@@ -324,6 +324,10 @@ fn malformed_mcp_registry_fails_before_transport_startup_without_path_disclosure
 
 #[cfg(unix)]
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one installed-binary fixture keeps catalog admission and unchanged, configuration-changed, and source-changed publication checks together"
+)]
 fn mcp_catalog_onboards_the_current_worktree_and_defaults_to_it() {
     let directory = TempDirectory::new();
     use std::os::unix::fs::PermissionsExt;
@@ -374,6 +378,7 @@ fn mcp_catalog_onboards_the_current_worktree_and_defaults_to_it() {
     assert!(!response
         .to_string()
         .contains(directory.0.to_string_lossy().as_ref()));
+    let first_generation = mcp_diagnostics_generation(&mut input, &mut output, 233);
     stop_mcp(child, input, output);
 
     let catalog = state_directory.join("repowitness/mcp-catalog-v1.json");
@@ -406,6 +411,41 @@ fn mcp_catalog_onboards_the_current_worktree_and_defaults_to_it() {
             .map(Vec::len),
         Some(1)
     );
+    let second_generation = mcp_diagnostics_generation(&mut input, &mut output, 234);
+    assert_eq!(second_generation, first_generation);
+    stop_mcp(child, input, output);
+
+    let configuration = directory.0.join("catalog-user.toml");
+    fs::write(
+        &configuration,
+        "schema_version = 1\n[preferences]\nquery_results = 1\n",
+    )
+    .expect("catalog user configuration should be written");
+    let (child, mut input, mut output) =
+        start_mcp_with_catalog_and_user_config(&repository, &state_directory, &configuration);
+    initialize_mcp(&mut input, &mut output);
+    let configuration_generation = mcp_diagnostics_generation(&mut input, &mut output, 235);
+    assert!(configuration_generation > second_generation);
+    stop_mcp(child, input, output);
+
+    let (child, mut input, mut output) =
+        start_mcp_with_catalog_and_user_config(&repository, &state_directory, &configuration);
+    initialize_mcp(&mut input, &mut output);
+    let repeated_configuration_generation =
+        mcp_diagnostics_generation(&mut input, &mut output, 236);
+    assert_eq!(repeated_configuration_generation, configuration_generation);
+    stop_mcp(child, input, output);
+
+    fs::write(
+        repository.join("src/lib.rs"),
+        "pub struct Widget;\nimpl Widget { pub fn run() {} pub fn changed() {} }\n",
+    )
+    .expect("changed fixture source should be written");
+    let (child, mut input, mut output) =
+        start_mcp_with_catalog_and_user_config(&repository, &state_directory, &configuration);
+    initialize_mcp(&mut input, &mut output);
+    let changed_generation = mcp_diagnostics_generation(&mut input, &mut output, 237);
+    assert!(changed_generation > repeated_configuration_generation);
     stop_mcp(child, input, output);
 }
 
@@ -1090,6 +1130,28 @@ fn start_mcp_with_catalog(
     (child, input, output)
 }
 
+#[cfg(unix)]
+fn start_mcp_with_catalog_and_user_config(
+    repository: &Path,
+    state_directory: &Path,
+    user_configuration: &Path,
+) -> (std::process::Child, ChildStdin, BufReader<ChildStdout>) {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_repowitness"))
+        .current_dir(repository)
+        .args(["mcp-serve", "--catalog", "--catalog-state-dir"])
+        .arg(state_directory)
+        .args(["--user-config"])
+        .arg(user_configuration)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("catalog MCP server with user configuration must start");
+    let input = child.stdin.take().expect("piped stdin");
+    let output = BufReader::new(child.stdout.take().expect("piped stdout"));
+    (child, input, output)
+}
+
 fn start_mcp_with_graph_workspace(
     repository: &Path,
     database: &Path,
@@ -1167,6 +1229,28 @@ fn initialize_mcp(input: &mut ChildStdin, output: &mut BufReader<ChildStdout>) {
             "method": "notifications/initialized"
         }),
     );
+}
+
+fn mcp_diagnostics_generation(
+    input: &mut ChildStdin,
+    output: &mut BufReader<ChildStdout>,
+    request_id: usize,
+) -> i64 {
+    let response = mcp_request(
+        input,
+        output,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": "tools/call",
+            "params": {"name": "diagnostics", "arguments": {}}
+        }),
+    );
+    assert_eq!(response["result"]["isError"], serde_json::json!(false));
+    response["result"]["structuredContent"]["generation"]
+        .as_i64()
+        .filter(|generation| *generation > 0)
+        .expect("diagnostics generation")
 }
 
 include!("mcp_contract/read_tools.rs");

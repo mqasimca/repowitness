@@ -73,10 +73,11 @@ use repowitness_local::{
     read_bounded_regular_file_with_parent, read_local_code_graph_query,
     read_local_known_at_history, read_local_personal_memory, read_local_repository_topology,
     read_local_rust_graph, read_local_scip_evidence, read_local_test_markers, recall_local_memory,
-    resolve_configuration, resolve_local_scip_symbol, revalidate_local_memory,
-    review_local_memory_correspondence, search_local_index, search_local_symbols,
-    search_local_syntax_sites, sync_local_team_memory, trace_local_scip_relationships,
-    validate_local_memory_actor, watch_local_repository, write_local_memory,
+    reconcile_local_repository, resolve_configuration, resolve_local_scip_symbol,
+    revalidate_local_memory, review_local_memory_correspondence, search_local_index,
+    search_local_symbols, search_local_syntax_sites, sync_local_team_memory,
+    trace_local_scip_relationships, validate_local_memory_actor, watch_local_repository,
+    write_local_memory,
 };
 use repowitness_mcp::{
     ARCHITECTURE_OVERVIEW_LIMITATIONS, ArchitectureMapOutput, ArchitectureMapServiceRequest,
