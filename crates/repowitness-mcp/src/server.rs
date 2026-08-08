@@ -32,7 +32,8 @@ use crate::{
     ARCHITECTURE_MAP_TOOL_NAME, ARCHITECTURE_OVERVIEW_TOOL_NAME, ArchitectureMapInput,
     ArchitectureMapOutput, ArchitectureMapServiceRequest, ArchitectureOverviewInput,
     ArchitectureOverviewOutput, ArchitectureOverviewServiceRequest, BoundedLineReader,
-    CODE_GRAPH_QUERY_TOOL_NAME, CODE_SEARCH_TOOL_NAME, CONTEXT_BUILD_TOOL_NAME,
+    CHANGE_REVIEW_TOOL_NAME, CODE_GRAPH_QUERY_TOOL_NAME, CODE_SEARCH_TOOL_NAME,
+    CONTEXT_BUILD_TOOL_NAME, ChangeReviewInput, ChangeReviewOutput, ChangeReviewServiceRequest,
     CodeGraphQueryInput, CodeGraphQueryOutput, CodeGraphQueryServiceRequest, CodeSearchInput,
     CodeSearchOutput, CodeSearchServiceRequest, ContextBuildInput, ContextBuildOutput,
     ContextBuildServiceRequest, DIAGNOSTICS_TOOL_NAME, DiagnosticsInput, DiagnosticsOutput,
@@ -703,6 +704,21 @@ impl RepoWitnessMcpServer {
         operation_result(output, MAX_MCP_CONTEXT_OUTPUT_BYTES)
     }
 
+    async fn call_change_review(
+        &self,
+        request: ChangeReviewServiceRequest,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let service = Arc::clone(&self.service);
+        let timeout = request.timeout();
+        let output = self
+            .run_blocking(timeout, context, move |remaining, cancelled| {
+                service.change_review(request.with_timeout(remaining), cancelled)
+            })
+            .await?;
+        operation_result(output, MAX_MCP_CONTEXT_OUTPUT_BYTES)
+    }
+
     async fn call_phase2_context_build(
         &self,
         request: Phase2ContextBuildServiceRequest,
@@ -954,6 +970,13 @@ impl RepoWitnessMcpServer {
             return self.call_navigation_tool(request, context).await;
         }
         match request.name.as_ref() {
+            CHANGE_REVIEW_TOOL_NAME => {
+                let input = parse_arguments::<ChangeReviewInput>(request.arguments)?;
+                let request = input
+                    .validate()
+                    .map_err(|message| McpError::invalid_params(message, None))?;
+                self.call_change_review(request, context).await
+            }
             CONTEXT_BUILD_TOOL_NAME => {
                 let input = parse_arguments::<ContextBuildInput>(request.arguments)?;
                 let request = input
@@ -1126,6 +1149,7 @@ impl ServerHandler for RepoWitnessMcpServer {
                 | OUTBOUND_SITES_TOOL_NAME
                 | SYNTAX_SITE_SEARCH_TOOL_NAME
                 | CODE_GRAPH_QUERY_TOOL_NAME
+                | CHANGE_REVIEW_TOOL_NAME
                 | CONTEXT_BUILD_TOOL_NAME
                 | PHASE2_CONTEXT_BUILD_TOOL_NAME
                 | DIAGNOSTICS_TOOL_NAME
@@ -1698,6 +1722,14 @@ fn tools(
     .with_input_schema::<ContextBuildInput>()
     .with_output_schema::<ContextBuildOutput>()
     .annotate(annotations.clone());
+    let change_review = Tool::new(
+        CHANGE_REVIEW_TOOL_NAME,
+        "Build a bounded, read-only revision-pinned change-review receipt. It fences the current worktree and includes separately pinned indexed context only when its exact source remains current; otherwise it reports categorical absence without stale source. It never returns an approval, test-execution claim, or inferred index/worktree equivalence.",
+        JsonObject::new(),
+    )
+    .with_input_schema::<ChangeReviewInput>()
+    .with_output_schema::<ChangeReviewOutput>()
+    .annotate(annotations.clone());
     let phase2_context_build = Tool::new(
         PHASE2_CONTEXT_BUILD_TOOL_NAME,
         "Compile the separately versioned evidence-balanced Phase 2 context pack from pinned \
@@ -1756,6 +1788,7 @@ fn tools(
         outbound_sites,
         syntax_site_search,
         code_graph_query,
+        change_review,
         context_build,
         phase2_context_build,
         diagnostics,

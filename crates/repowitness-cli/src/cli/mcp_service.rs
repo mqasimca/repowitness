@@ -29,6 +29,31 @@ impl LocalMcpRepositoryService {
 }
 
 impl RepositoryService for LocalMcpRepositoryService {
+    fn change_review(
+        &self,
+        request: ChangeReviewServiceRequest,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<ChangeReviewOutput, RepositoryServiceError> {
+        let base = GitObjectId::try_from_hex(request.base())
+            .map_err(|_| RepositoryServiceError::ChangeReview)?;
+        build_local_change_review(
+            LocalChangeReviewRequest::new(
+                &self.root,
+                &self.database,
+                &self.repository_identity,
+                request.intent(),
+                base,
+            )
+            .with_configuration(&self.configuration)
+            .with_deadline(request.timeout()),
+            cancelled,
+        )
+        .map_err(|_| RepositoryServiceError::ChangeReview)
+        .and_then(|receipt| {
+            mcp_change_review_output(receipt).map_err(|_| RepositoryServiceError::ChangeReview)
+        })
+    }
+
     fn native_task_start(
         &self,
         objective: &str,
@@ -727,6 +752,69 @@ impl RepositoryService for LocalMcpRepositoryService {
                 mcp_symbol_output(result).map_err(|_| RepositoryServiceError::SymbolGet)
             })
     }
+}
+
+fn mcp_change_review_output(
+    receipt: LocalChangeReviewReceipt,
+) -> Result<ChangeReviewOutput, String> {
+    let mut changes = Vec::with_capacity(receipt.manifest().entries().len());
+    for entry in receipt.manifest().entries() {
+        changes.push(McpChangeReviewPath {
+            kind: entry.kind().as_str().to_owned(),
+            path: RepositoryPathTextV1::encode(entry.path(), PATH_TEXT_LIMIT)
+                .map_err(|error| error.to_string())?
+                .into_string(),
+        });
+    }
+    let (
+        indexed_context_availability,
+        indexed_context_reason,
+        indexed_snapshot_sha256,
+        indexed_generation,
+        indexed_context_items,
+        indexed_context_omissions,
+    ) = match receipt.indexed_context() {
+        IndexedContext::Available(context) => (
+            "available".to_owned(),
+            None,
+            Some(hex(context.snapshot().as_bytes())),
+            Some(
+                u64::try_from(context.generation().get())
+                    .map_err(|_| "indexed generation was negative".to_owned())?,
+            ),
+            Some(
+                u64::try_from(context.items().len())
+                    .map_err(|_| "context item count overflowed".to_owned())?,
+            ),
+            Some(
+                u64::try_from(context.omissions().len())
+                    .map_err(|_| "context omission count overflowed".to_owned())?,
+            ),
+        ),
+        IndexedContext::Unavailable { reason } => (
+            "unavailable".to_owned(),
+            Some(reason.as_str().to_owned()),
+            None,
+            None,
+            None,
+            None,
+        ),
+    };
+    Ok(ChangeReviewOutput {
+        schema_version: CHANGE_REVIEW_SCHEMA_VERSION,
+        change_manifest_profile: CHANGE_MANIFEST_PROFILE_VERSION,
+        base: receipt.manifest().base().to_hex(),
+        worktree_git_state_sha256: hex(receipt.worktree_git_state().as_bytes()),
+        changes,
+        indexed_context_availability,
+        indexed_context_reason,
+        indexed_snapshot_sha256,
+        indexed_generation,
+        indexed_context_items,
+        indexed_context_omissions,
+        index_worktree_alignment: "unverified".to_owned(),
+        verdict: "not_provided".to_owned(),
+    })
 }
 
 fn historical_memory_output(

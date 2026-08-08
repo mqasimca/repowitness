@@ -4,7 +4,8 @@
 # context compilation through the agent-oriented MCP aliases,
 # exact raw syntax-target search (direct and finite-MCP-envelope), no-overlay
 # SCIP-evidence, SCIP-symbol-resolution, and SCIP-relationship-trace smoke,
-# repository-scoped test-marker, and exact outbound-site loop. The opt-in
+# repository-scoped test-marker, revision-pinned change-receipt, and exact
+# outbound-site loop. The opt-in
 # --rust-scip and --go-scip modes additionally invoke the installed producer
 # for every eligible sibling with indexed Rust or Go source, import the resulting
 # private temporary artifact, and report only aggregate categorical outcomes.
@@ -31,7 +32,7 @@ CLI=$TARGET_DIRECTORY/debug/repowitness
 umask 077
 
 usage() {
-    printf '%s\n' 'usage: ./scripts/test-sibling-repositories [--skip-build] [--rust-scip] [--go-scip] [--include-project]' >&2
+    printf '%s\n' 'usage: ./scripts/test-sibling-repositories [--skip-build] [--rust-scip] [--go-scip] [--include-project] [--repository <path>]' >&2
     exit 64
 }
 
@@ -39,6 +40,7 @@ SKIP_BUILD=false
 RUST_SCIP=false
 GO_SCIP=false
 INCLUDE_PROJECT=false
+TEST_REPOSITORY=
 SCIP_GO=${SCIP_GO:-scip-go}
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -57,6 +59,12 @@ while [ "$#" -gt 0 ]; do
         --include-project)
             test "$INCLUDE_PROJECT" = false || usage
             INCLUDE_PROJECT=true
+            ;;
+        --repository)
+            test "$TEST_REPOSITORY" = '' || usage
+            test "$#" -ge 2 || usage
+            TEST_REPOSITORY=$2
+            shift
             ;;
         *)
             usage
@@ -731,6 +739,84 @@ mcp_context_build() {
     ' "$CLI" "$identity" "$database" "$candidate" "$1"
 }
 
+mcp_change_review() {
+    perl -MIPC::Open3 -MJSON::PP -e '
+        use strict;
+        use warnings;
+
+        my ($cli, $identity, $database, $root, $base, $intent) = @ARGV;
+        exit 64 if !defined($base) || !defined($intent);
+        open my $stderr, q{>}, q{/dev/null} or exit 1;
+        my $pid = open3(
+            my $input,
+            my $output,
+            $stderr,
+            $cli,
+            q{mcp-serve},
+            q{--repository-id},
+            $identity,
+            q{--database},
+            $database,
+            q{--root},
+            $root,
+        );
+        select((select($input), $| = 1)[0]);
+        my $initialize = {
+            jsonrpc => q{2.0},
+            id => 1,
+            method => q{initialize},
+            params => {
+                protocolVersion => q{2025-11-25},
+                capabilities => {},
+                clientInfo => { name => q{repowitness-sibling-smoke}, version => q{1} },
+            },
+        };
+        print {$input} encode_json($initialize), qq{\n} or exit 1;
+        my $initialized;
+        while (my $line = <$output>) {
+            my $message = eval { decode_json($line) };
+            exit 1 if $@ || ref($message) ne q{HASH};
+            $initialized = $message if defined($message->{id}) && $message->{id} eq q{1};
+            last if defined($initialized);
+        }
+        exit 1 if !defined($initialized) || ref($initialized->{result}) ne q{HASH};
+
+        for my $message (
+            {
+                jsonrpc => q{2.0},
+                method => q{notifications/initialized},
+            },
+            {
+                jsonrpc => q{2.0},
+                id => 2,
+                method => q{tools/call},
+                params => {
+                    name => q{verify},
+                    arguments => { base => $base, intent => $intent },
+                },
+            },
+        ) {
+            print {$input} encode_json($message), qq{\n} or exit 1;
+        }
+        close($input) or exit 1;
+
+        my $response;
+        while (my $line = <$output>) {
+            my $message = eval { decode_json($line) };
+            exit 1 if $@ || ref($message) ne q{HASH};
+            $response = $message if defined($message->{id}) && $message->{id} eq q{2};
+        }
+        close($output);
+        waitpid($pid, 0);
+        close($stderr);
+        exit 1 if $? != 0;
+        exit 1 if !defined($response) || ref($response->{result}) ne q{HASH};
+        my $result = $response->{result};
+        exit 1 if ($result->{isError} // 1) || ref($result->{structuredContent}) ne q{HASH};
+        print encode_json($result->{structuredContent});
+    ' "$CLI" "$identity" "$database" "$candidate" "$1" "$2"
+}
+
 mcp_code_graph_syntax_site_search() {
     perl -MIPC::Open3 -MJSON::PP -e '
         use strict;
@@ -1227,6 +1313,105 @@ validate_test_markers() {
     '
 }
 
+validate_change_review() {
+    perl -e '
+        use strict;
+        use warnings;
+
+        my $expected_base = shift @ARGV;
+        exit 64 if !defined($expected_base)
+          || $expected_base !~ /\A(?:[0-9a-f]{40}|[0-9a-f]{64})\z/;
+        my %fields;
+        while (my $line = <STDIN>) {
+            chomp $line;
+            exit 1 if $line !~ /\A([a-z0-9_]+(?:\[[0-9]+\]\.(?:kind|path))?)=(.*)\z/;
+            exit 1 if exists $fields{$1};
+            $fields{$1} = $2;
+        }
+        for my $field (qw(operation change_manifest_profile base worktree_git_state_sha256 worktree_change_count indexed_context_availability indexed_context_reason indexed_snapshot_sha256 indexed_generation indexed_context_items indexed_context_omissions index_worktree_alignment verdict)) {
+            exit 1 if !exists $fields{$field};
+        }
+        exit 1 if ($fields{operation} // q{}) ne q{verify}
+          || ($fields{change_manifest_profile} // q{}) ne q{1}
+          || ($fields{base} // q{}) ne $expected_base
+          || ($fields{worktree_git_state_sha256} // q{}) !~ /\A[0-9a-f]{64}\z/
+          || ($fields{worktree_change_count} // q{}) !~ /\A[0-9]+\z/
+          || ($fields{index_worktree_alignment} // q{}) ne q{unverified}
+          || ($fields{verdict} // q{}) ne q{not_provided};
+        if (($fields{indexed_context_availability} // q{}) eq q{available}) {
+            exit 1 if ($fields{indexed_context_reason} // q{}) ne q{not_applicable}
+              || ($fields{indexed_snapshot_sha256} // q{}) !~ /\A[0-9a-f]{64}\z/
+              || ($fields{indexed_generation} // q{}) !~ /\A[1-9][0-9]*\z/
+              || ($fields{indexed_context_items} // q{}) !~ /\A[0-9]+\z/
+              || ($fields{indexed_context_omissions} // q{}) !~ /\A[0-9]+\z/;
+        } elsif (($fields{indexed_context_availability} // q{}) eq q{unavailable}) {
+            exit 1 if ($fields{indexed_context_reason} // q{}) ne q{stale_source}
+              || ($fields{indexed_snapshot_sha256} // q{}) ne q{not_provided}
+              || ($fields{indexed_generation} // q{}) ne q{not_provided}
+              || ($fields{indexed_context_items} // q{}) ne q{not_provided}
+              || ($fields{indexed_context_omissions} // q{}) ne q{not_provided};
+        } else {
+            exit 1;
+        }
+        my @changes;
+        for my $field (keys %fields) {
+            next if $field !~ /\Achange\[([0-9]+)\]\.(kind|path)\z/;
+            $changes[$1]{$2} = $fields{$field};
+        }
+        exit 1 if @changes != $fields{worktree_change_count};
+        for my $change (@changes) {
+            exit 1 if ref($change) ne q{HASH}
+              || !defined($change->{kind}) || !defined($change->{path})
+              || $change->{kind} !~ /\A(?:added|modified|deleted|type_changed|untracked)\z/
+              || $change->{path} !~ /\Arwp1:h:[0-9A-F]+\z/;
+        }
+    ' "$1"
+}
+
+validate_mcp_change_review() {
+    perl -MJSON::PP -e '
+        use strict;
+        use warnings;
+
+        my $expected_base = shift @ARGV;
+        exit 64 if !defined($expected_base)
+          || $expected_base !~ /\A(?:[0-9a-f]{40}|[0-9a-f]{64})\z/;
+        local $/;
+        my $receipt = eval { decode_json(<STDIN>) };
+        exit 1 if $@ || ref($receipt) ne q{HASH};
+        for my $field (qw(schema_version change_manifest_profile base worktree_git_state_sha256 changes indexed_context_availability index_worktree_alignment verdict)) {
+            exit 1 if !exists $receipt->{$field};
+        }
+        exit 1 if ($receipt->{schema_version} // q{}) != 1
+          || ($receipt->{change_manifest_profile} // q{}) != 1
+          || ($receipt->{base} // q{}) ne $expected_base
+          || ($receipt->{worktree_git_state_sha256} // q{}) !~ /\A[0-9a-f]{64}\z/
+          || ref($receipt->{changes}) ne q{ARRAY}
+          || ($receipt->{index_worktree_alignment} // q{}) ne q{unverified}
+          || ($receipt->{verdict} // q{}) ne q{not_provided};
+        if (($receipt->{indexed_context_availability} // q{}) eq q{available}) {
+            exit 1 if exists($receipt->{indexed_context_reason})
+              || ($receipt->{indexed_snapshot_sha256} // q{}) !~ /\A[0-9a-f]{64}\z/
+              || ($receipt->{indexed_generation} // q{}) !~ /\A[1-9][0-9]*\z/
+              || ($receipt->{indexed_context_items} // q{}) !~ /\A[0-9]+\z/
+              || ($receipt->{indexed_context_omissions} // q{}) !~ /\A[0-9]+\z/;
+        } elsif (($receipt->{indexed_context_availability} // q{}) eq q{unavailable}) {
+            exit 1 if ($receipt->{indexed_context_reason} // q{}) ne q{stale_source}
+              || exists($receipt->{indexed_snapshot_sha256})
+              || exists($receipt->{indexed_generation})
+              || exists($receipt->{indexed_context_items})
+              || exists($receipt->{indexed_context_omissions});
+        } else {
+            exit 1;
+        }
+        for my $change (@{$receipt->{changes}}) {
+            exit 1 if ref($change) ne q{HASH}
+              || ($change->{kind} // q{}) !~ /\A(?:added|modified|deleted|type_changed|untracked)\z/
+              || ($change->{path} // q{}) !~ /\Arwp1:h:[0-9A-F]+\z/;
+        }
+    ' "$1"
+}
+
 RUN_DIRECTORY=$(mktemp -d "${TMPDIR:-/tmp}/repowitness-sibling-repositories.XXXXXX")
 cleanup() {
     test -n "${RUN_DIRECTORY:-}" || return 0
@@ -1290,6 +1475,13 @@ code_graph_relevant_paths_positive_passed=0
 code_graph_relevant_paths_positive_unavailable=0
 context_build_passed=0
 context_build_failed=0
+change_review_passed=0
+change_review_failed=0
+change_review_unavailable=0
+change_review_command_failed=0
+change_review_validation_failed=0
+mcp_change_review_passed=0
+mcp_change_review_failed=0
 symbol_passed=0
 symbol_failed=0
 symbol_positive_passed=0
@@ -1341,7 +1533,9 @@ go_scip_publication=0
 go_scip_shutdown=0
 go_scip_other_failure=0
 
-if [ "$INCLUDE_PROJECT" = true ]; then
+if [ -n "$TEST_REPOSITORY" ]; then
+    set -- "$TEST_REPOSITORY"
+elif [ "$INCLUDE_PROJECT" = true ]; then
     set -- "$PROJECT_ROOT" "$SIBLING_ROOT"/* "$SIBLING_ROOT"/.[!.]* "$SIBLING_ROOT"/..?*
 else
     set -- "$SIBLING_ROOT"/* "$SIBLING_ROOT"/.[!.]* "$SIBLING_ROOT"/..?*
@@ -1368,6 +1562,31 @@ for candidate; do
         continue
     fi
     index_passed=$((index_passed + 1))
+
+    if ! base=$(safe_git -C "$candidate" rev-parse --verify --quiet --end-of-options 'HEAD^{commit}'); then
+        change_review_unavailable=$((change_review_unavailable + 1))
+    else
+        change_review_output="$RUN_DIRECTORY/$repositories.change-review"
+        if ! "$CLI" verify --repository-id "$identity" --database "$database" --root "$candidate" \
+            --base "$base" --intent repowitnesssmokemissing >"$change_review_output" 2>/dev/null; then
+            change_review_failed=$((change_review_failed + 1))
+            change_review_command_failed=$((change_review_command_failed + 1))
+            continue
+        fi
+        if ! validate_change_review "$base" <"$change_review_output"; then
+            change_review_failed=$((change_review_failed + 1))
+            change_review_validation_failed=$((change_review_validation_failed + 1))
+            continue
+        fi
+        change_review_passed=$((change_review_passed + 1))
+        mcp_change_review_output="$RUN_DIRECTORY/$repositories.mcp-change-review.json"
+        if ! mcp_change_review "$base" repowitnesssmokemissing >"$mcp_change_review_output" 2>/dev/null \
+            || ! validate_mcp_change_review "$base" <"$mcp_change_review_output"; then
+            mcp_change_review_failed=$((mcp_change_review_failed + 1))
+            continue
+        fi
+        mcp_change_review_passed=$((mcp_change_review_passed + 1))
+    fi
 
     context_build_output="$RUN_DIRECTORY/$repositories.context-build.json"
     if ! mcp_context_build repowitnesssmokemissing >"$context_build_output" 2>/dev/null \
@@ -1741,7 +1960,7 @@ if [ "$repositories" -eq 0 ]; then
 fi
 
 printf '%s\n' \
-    "state=completed repositories=$repositories index_passed=$index_passed index_failed=$index_failed context_build_passed=$context_build_passed context_build_failed=$context_build_failed topology_passed=$topology_passed topology_failed=$topology_failed map_passed=$map_passed map_failed=$map_failed overview_passed=$overview_passed overview_failed=$overview_failed test_markers_passed=$test_markers_passed test_markers_failed=$test_markers_failed syntax_site_search_passed=$syntax_site_search_passed syntax_site_search_failed=$syntax_site_search_failed syntax_site_search_positive_passed=$syntax_site_search_positive_passed syntax_site_search_positive_unavailable=$syntax_site_search_positive_unavailable code_graph_syntax_site_search_passed=$code_graph_syntax_site_search_passed code_graph_syntax_site_search_failed=$code_graph_syntax_site_search_failed code_graph_syntax_site_search_positive_passed=$code_graph_syntax_site_search_positive_passed code_graph_syntax_site_search_positive_unavailable=$code_graph_syntax_site_search_positive_unavailable relevant_paths_passed=$relevant_paths_passed relevant_paths_failed=$relevant_paths_failed relevant_paths_positive_passed=$relevant_paths_positive_passed relevant_paths_positive_unavailable=$relevant_paths_positive_unavailable code_graph_relevant_paths_passed=$code_graph_relevant_paths_passed code_graph_relevant_paths_failed=$code_graph_relevant_paths_failed code_graph_relevant_paths_positive_passed=$code_graph_relevant_paths_positive_passed code_graph_relevant_paths_positive_unavailable=$code_graph_relevant_paths_positive_unavailable symbol_passed=$symbol_passed symbol_failed=$symbol_failed symbol_positive_passed=$symbol_positive_passed symbol_positive_unavailable=$symbol_positive_unavailable outbound_passed=$outbound_passed outbound_failed=$outbound_failed outbound_unavailable=$outbound_unavailable scip_symbol_resolve_not_produced_passed=$scip_symbol_resolve_not_produced_passed scip_symbol_resolve_not_produced_failed=$scip_symbol_resolve_not_produced_failed scip_symbol_resolve_not_attempted_no_declaration=$scip_symbol_resolve_not_attempted_no_declaration scip_symbol_resolve_not_attempted_no_candidate=$scip_symbol_resolve_not_attempted_no_candidate scip_evidence_not_produced_passed=$scip_evidence_not_produced_passed scip_evidence_not_produced_failed=$scip_evidence_not_produced_failed scip_relationship_trace_not_produced_passed=$scip_relationship_trace_not_produced_passed scip_relationship_trace_not_produced_failed=$scip_relationship_trace_not_produced_failed"
+    "state=completed repositories=$repositories index_passed=$index_passed index_failed=$index_failed context_build_passed=$context_build_passed context_build_failed=$context_build_failed change_review_passed=$change_review_passed change_review_failed=$change_review_failed change_review_unavailable=$change_review_unavailable change_review_command_failed=$change_review_command_failed change_review_validation_failed=$change_review_validation_failed mcp_change_review_passed=$mcp_change_review_passed mcp_change_review_failed=$mcp_change_review_failed topology_passed=$topology_passed topology_failed=$topology_failed map_passed=$map_passed map_failed=$map_failed overview_passed=$overview_passed overview_failed=$overview_failed test_markers_passed=$test_markers_passed test_markers_failed=$test_markers_failed syntax_site_search_passed=$syntax_site_search_passed syntax_site_search_failed=$syntax_site_search_failed syntax_site_search_positive_passed=$syntax_site_search_positive_passed syntax_site_search_positive_unavailable=$syntax_site_search_positive_unavailable code_graph_syntax_site_search_passed=$code_graph_syntax_site_search_passed code_graph_syntax_site_search_failed=$code_graph_syntax_site_search_failed code_graph_syntax_site_search_positive_passed=$code_graph_syntax_site_search_positive_passed code_graph_syntax_site_search_positive_unavailable=$code_graph_syntax_site_search_positive_unavailable relevant_paths_passed=$relevant_paths_passed relevant_paths_failed=$relevant_paths_failed relevant_paths_positive_passed=$relevant_paths_positive_passed relevant_paths_positive_unavailable=$relevant_paths_positive_unavailable code_graph_relevant_paths_passed=$code_graph_relevant_paths_passed code_graph_relevant_paths_failed=$code_graph_relevant_paths_failed code_graph_relevant_paths_positive_passed=$code_graph_relevant_paths_positive_passed code_graph_relevant_paths_positive_unavailable=$code_graph_relevant_paths_positive_unavailable symbol_passed=$symbol_passed symbol_failed=$symbol_failed symbol_positive_passed=$symbol_positive_passed symbol_positive_unavailable=$symbol_positive_unavailable outbound_passed=$outbound_passed outbound_failed=$outbound_failed outbound_unavailable=$outbound_unavailable scip_symbol_resolve_not_produced_passed=$scip_symbol_resolve_not_produced_passed scip_symbol_resolve_not_produced_failed=$scip_symbol_resolve_not_produced_failed scip_symbol_resolve_not_attempted_no_declaration=$scip_symbol_resolve_not_attempted_no_declaration scip_symbol_resolve_not_attempted_no_candidate=$scip_symbol_resolve_not_attempted_no_candidate scip_evidence_not_produced_passed=$scip_evidence_not_produced_passed scip_evidence_not_produced_failed=$scip_evidence_not_produced_failed scip_relationship_trace_not_produced_passed=$scip_relationship_trace_not_produced_passed scip_relationship_trace_not_produced_failed=$scip_relationship_trace_not_produced_failed"
 
 if [ "$RUST_SCIP" = true ]; then
     printf '%s\n' \
@@ -1753,6 +1972,6 @@ if [ "$GO_SCIP" = true ]; then
         "go_scip state=completed go_repositories=$go_scip_go_repositories no_root_go_manifest=$go_scip_no_root_go_manifest import_passed=$go_scip_import_passed import_failed=$go_scip_import_failed producer_failed=$go_scip_producer_failed invalid_input=$go_scip_invalid_input source_mismatch=$go_scip_source_mismatch unsupported_source_encoding=$go_scip_unsupported_source_encoding deadline_exceeded=$go_scip_deadline_exceeded resource_limit=$go_scip_resource_limit inconsistent_summary=$go_scip_inconsistent_summary preparation=$go_scip_preparation input_admission=$go_scip_input_admission database_read=$go_scip_database_read source_scope_unavailable=$go_scip_source_scope_unavailable database_identity=$go_scip_database_identity source_fence=$go_scip_source_fence source_manifest_mismatch=$go_scip_source_manifest_mismatch cancelled=$go_scip_cancelled input_changed=$go_scip_input_changed publication=$go_scip_publication shutdown=$go_scip_shutdown other_failure=$go_scip_other_failure"
 fi
 
-if [ "$index_failed" -ne 0 ] || [ "$context_build_failed" -ne 0 ] || [ "$topology_failed" -ne 0 ] || [ "$map_failed" -ne 0 ] || [ "$overview_failed" -ne 0 ] || [ "$test_markers_failed" -ne 0 ] || [ "$syntax_site_search_failed" -ne 0 ] || [ "$code_graph_syntax_site_search_failed" -ne 0 ] || [ "$relevant_paths_failed" -ne 0 ] || [ "$code_graph_relevant_paths_failed" -ne 0 ] || [ "$symbol_failed" -ne 0 ] || [ "$outbound_failed" -ne 0 ] || [ "$scip_symbol_resolve_not_produced_failed" -ne 0 ] || [ "$scip_evidence_not_produced_failed" -ne 0 ] || [ "$scip_relationship_trace_not_produced_failed" -ne 0 ] || { [ "$RUST_SCIP" = true ] && [ "$rust_scip_import_failed" -ne 0 ]; } || { [ "$GO_SCIP" = true ] && [ "$go_scip_import_failed" -ne 0 ]; }; then
+if [ "$index_failed" -ne 0 ] || [ "$context_build_failed" -ne 0 ] || [ "$change_review_failed" -ne 0 ] || [ "$mcp_change_review_failed" -ne 0 ] || [ "$topology_failed" -ne 0 ] || [ "$map_failed" -ne 0 ] || [ "$overview_failed" -ne 0 ] || [ "$test_markers_failed" -ne 0 ] || [ "$syntax_site_search_failed" -ne 0 ] || [ "$code_graph_syntax_site_search_failed" -ne 0 ] || [ "$relevant_paths_failed" -ne 0 ] || [ "$code_graph_relevant_paths_failed" -ne 0 ] || [ "$symbol_failed" -ne 0 ] || [ "$outbound_failed" -ne 0 ] || [ "$scip_symbol_resolve_not_produced_failed" -ne 0 ] || [ "$scip_evidence_not_produced_failed" -ne 0 ] || [ "$scip_relationship_trace_not_produced_failed" -ne 0 ] || { [ "$RUST_SCIP" = true ] && [ "$rust_scip_import_failed" -ne 0 ]; } || { [ "$GO_SCIP" = true ] && [ "$go_scip_import_failed" -ne 0 ]; }; then
     exit 1
 fi

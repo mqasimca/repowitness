@@ -111,6 +111,9 @@ fn run_with_adapters(
             configuration_loader,
         );
     }
+    if command == OsStr::new("verify") {
+        return run_change_review(args, &mut stdout, &mut stderr);
+    }
     if command == OsStr::new("phase2-context-build") {
         return run_phase2_context_build(args, &mut stdout, &mut stderr);
     }

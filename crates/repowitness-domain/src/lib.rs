@@ -8,6 +8,7 @@ mod artifact;
 mod coverage;
 mod digest;
 mod evidence;
+mod git;
 mod memory;
 mod memory_revalidation;
 mod path;
@@ -35,6 +36,7 @@ pub use evidence::{
     ByteLength, ByteOffset, ByteSpan, ByteSpanError, EvidenceIdentity, EvidenceLocation,
     EvidenceRecord, EvidenceRelation, EvidenceTier, ProducerIdentity,
 };
+pub use git::{GitObjectId, GitObjectIdError, GitObjectIdFormat};
 pub use memory::{
     MAX_MEMORY_COMMITS, MAX_MEMORY_EVIDENCE, MAX_MEMORY_INTEROPERABLE_INTEGER, MAX_MEMORY_PARENTS,
     MAX_MEMORY_RELATIONSHIPS, MAX_MEMORY_SOURCE_BYTES, MEMORY_RECORD_SCHEMA_VERSION, MemoryActorId,

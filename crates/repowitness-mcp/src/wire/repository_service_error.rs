@@ -25,6 +25,8 @@ pub enum RepositoryServiceError {
     CodeGraphQuery,
     /// Context compilation failed without a usable result.
     ContextBuild,
+    /// Source-fenced revision-pinned change review failed without a receipt.
+    ChangeReview,
     /// Phase 2 context compilation failed without a usable result.
     Phase2ContextBuild,
     /// A durable engineering-task projection could not be read or updated.
@@ -90,6 +92,7 @@ impl fmt::Display for RepositoryServiceError {
             Self::SyntaxSiteSearch => "syntax-site search failed",
             Self::CodeGraphQuery => "code-graph-query failed",
             Self::ContextBuild => "context build failed",
+            Self::ChangeReview => "change review failed",
             Self::Phase2ContextBuild => "Phase 2 context build failed",
             Self::NativeTask => "durable native task operation failed",
             Self::Diagnostics => "repository diagnostics failed",

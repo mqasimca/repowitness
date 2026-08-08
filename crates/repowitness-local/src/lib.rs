@@ -4,6 +4,7 @@
 //! Concrete I/O is kept outside the domain, analysis, and application rules.
 
 mod bounded_file;
+mod change_manifest;
 mod configuration;
 mod connected_workspace_manifest;
 mod contained_source;
@@ -11,6 +12,7 @@ mod git_memory;
 mod git_paths;
 mod local_architecture_map;
 mod local_architecture_overview;
+mod local_change_review;
 mod local_code_graph_query;
 mod local_connected_workspace;
 mod local_context_build;
@@ -55,6 +57,11 @@ pub use bounded_file::{
     MAX_BOUNDED_CONTROL_FILE_COMPONENTS, MAX_BOUNDED_CONTROL_FILE_PATH_BYTES,
     MAX_BOUNDED_FILE_BYTES, read_bounded_regular_file, read_bounded_regular_file_with_parent,
 };
+pub use change_manifest::{
+    DEFAULT_LOCAL_CHANGE_MANIFEST_DEADLINE, LocalChangeManifest, LocalChangeManifestError,
+    LocalChangeManifestLimits, capture_local_change_manifest,
+    capture_local_change_manifest_with_cancel,
+};
 pub use configuration::{
     ConfigurationFileError, ConfigurationFileLayer, MAX_CONFIGURATION_FILE_BYTES,
     MAX_CONFIGURATION_TEXT_BYTES, parse_configuration_file,
@@ -78,6 +85,10 @@ pub use local_architecture_map::{
 pub use local_architecture_overview::{
     DEFAULT_LOCAL_ARCHITECTURE_OVERVIEW_DEADLINE, LocalArchitectureOverviewError,
     LocalArchitectureOverviewRequest, LocalArchitectureOverviewResult, overview_local_architecture,
+};
+pub use local_change_review::{
+    DEFAULT_LOCAL_CHANGE_REVIEW_DEADLINE, LocalChangeReviewError, LocalChangeReviewReceipt,
+    LocalChangeReviewRequest, build_local_change_review,
 };
 pub use local_code_graph_query::{
     DEFAULT_LOCAL_CODE_GRAPH_QUERY_DEADLINE, LocalCodeGraphQueryError, LocalCodeGraphQueryRequest,
@@ -235,14 +246,15 @@ pub use repowitness_application::ScipRelationshipTraceDirection;
 pub use repowitness_application::{
     ARCHITECTURE_MAP_PROFILE_VERSION, ARCHITECTURE_OVERVIEW_PROFILE_VERSION, ArchitectureMapFile,
     ArchitectureOverviewEntryPointCandidate, ArchitectureOverviewSourceRoot,
-    CODE_SEARCH_PROFILE_VERSION, CONFIGURATION_DIGEST_VERSION, CONFIGURATION_RESOLVER_VERSION,
-    CONFIGURATION_SCHEMA_VERSION, CONNECTED_WORKSPACE_ID_TEXT_BYTES, CONTEXT_BUILD_RRF_K,
-    CodeSearchNotice, CodeSearchProducer, ConfigurationField, ConfigurationLayer,
-    ConfigurationLayerKind, ConfigurationPolicyOverrides, ConfigurationPreferenceOverrides,
-    ConfigurationProfile, ConfigurationResolutionError, ConfigurationValidationError,
-    ConnectedWorkspaceIdTextV1, ContextItem, ContextOmission, ContextProvider,
-    DEFAULT_ARCHITECTURE_MAP_FILES, DEFAULT_ARCHITECTURE_OVERVIEW_ENTRY_POINT_CANDIDATES,
-    DEFAULT_ARCHITECTURE_OVERVIEW_FILES, DEFAULT_ARCHITECTURE_OVERVIEW_ROOTS,
+    CHANGE_MANIFEST_PROFILE_VERSION, CODE_SEARCH_PROFILE_VERSION, CONFIGURATION_DIGEST_VERSION,
+    CONFIGURATION_RESOLVER_VERSION, CONFIGURATION_SCHEMA_VERSION,
+    CONNECTED_WORKSPACE_ID_TEXT_BYTES, CONTEXT_BUILD_RRF_K, CodeSearchNotice, CodeSearchProducer,
+    ConfigurationField, ConfigurationLayer, ConfigurationLayerKind, ConfigurationPolicyOverrides,
+    ConfigurationPreferenceOverrides, ConfigurationProfile, ConfigurationResolutionError,
+    ConfigurationValidationError, ConnectedWorkspaceIdTextV1, ContextItem, ContextOmission,
+    ContextProvider, DEFAULT_ARCHITECTURE_MAP_FILES,
+    DEFAULT_ARCHITECTURE_OVERVIEW_ENTRY_POINT_CANDIDATES, DEFAULT_ARCHITECTURE_OVERVIEW_FILES,
+    DEFAULT_ARCHITECTURE_OVERVIEW_ROOTS,
     DEFAULT_CONFIGURATION_RETAINED_GENERATIONS_PER_SOURCE_SLOT,
     DEFAULT_CONFIGURATION_RETENTION_BYTES, DEFAULT_CONFIGURATION_RETENTION_GENERATION_CANDIDATES,
     DEFAULT_CONFIGURATION_RETENTION_ROWS, DEFAULT_CONTEXT_BUILD_BUDGET_UNITS,
@@ -280,18 +292,20 @@ pub use repowitness_application::{
     SymbolSearchQuery, TestMarkersLimits, TestMarkersQuery,
 };
 pub use repowitness_application::{
+    IndexedContext, IndexedContextUnavailableReason, Phase2ContextCandidate, Phase2ContextTier,
+};
+pub use repowitness_application::{
     OUTBOUND_SITES_PROFILE_VERSION, OutboundSitesAvailability, OutboundSyntaxSite,
     SYNTAX_SITE_SEARCH_PROFILE_VERSION, SyntaxSiteSearchLimits, SyntaxSiteSearchQuery,
 };
-pub use repowitness_application::{Phase2ContextCandidate, Phase2ContextTier};
 pub use repowitness_application::{TEST_MARKERS_PROFILE_VERSION, TestMarkersAvailability};
 pub use repowitness_domain::{
-    ConfigurationDigest, ConnectedWorkspaceId, EvidenceLocation, MemoryAssurance, MemoryCommitId,
-    MemoryCorrespondenceReviewOperation, MemoryKind, MemoryLifecycle, MemoryObjectFormat,
-    MemoryObservationSource, MemoryRevalidationTarget, PersonalMemoryId, PersonalMemoryKind,
-    PersonalMemoryProfileId, PersonalMemoryRecord, PersonalMemoryRevision,
-    Phase2ContextProviderAvailability, ResolutionStatus, SourceSlotId, SourceSnapshotDigest,
-    TaskId, TaskState, TaskStatus,
+    ConfigurationDigest, ConnectedWorkspaceId, EvidenceLocation, GitObjectId, GitObjectIdError,
+    GitObjectIdFormat, MemoryAssurance, MemoryCommitId, MemoryCorrespondenceReviewOperation,
+    MemoryKind, MemoryLifecycle, MemoryObjectFormat, MemoryObservationSource,
+    MemoryRevalidationTarget, PersonalMemoryId, PersonalMemoryKind, PersonalMemoryProfileId,
+    PersonalMemoryRecord, PersonalMemoryRevision, Phase2ContextProviderAvailability,
+    ResolutionStatus, SourceSlotId, SourceSnapshotDigest, TaskId, TaskState, TaskStatus,
 };
 pub use rust_index::{
     DEFAULT_LOCAL_RUST_INDEX_DEADLINE, LocalRustIndexError, LocalRustIndexLimits,

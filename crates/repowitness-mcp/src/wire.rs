@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 
 mod architecture_map;
 mod architecture_overview;
+mod change_review;
 mod code_graph_query;
 mod compatibility;
 mod context_build;
@@ -43,6 +44,10 @@ pub use architecture_overview::{
     ARCHITECTURE_OVERVIEW_LIMITATIONS, ARCHITECTURE_OVERVIEW_TOOL_NAME, ArchitectureOverviewInput,
     ArchitectureOverviewOutput, ArchitectureOverviewServiceRequest, McpArchitectureOverviewKind,
     McpArchitectureOverviewRoot,
+};
+pub use change_review::{
+    CHANGE_REVIEW_SCHEMA_VERSION, CHANGE_REVIEW_TOOL_NAME, ChangeReviewInput, ChangeReviewOutput,
+    ChangeReviewServiceRequest, McpChangeReviewPath,
 };
 pub use code_graph_query::{
     CODE_GRAPH_QUERY_PROFILE_VERSION, CODE_GRAPH_QUERY_SCHEMA_VERSION, CODE_GRAPH_QUERY_TOOL_NAME,
@@ -626,6 +631,15 @@ pub trait RepositoryService: Send + Sync + 'static {
         request: ContextBuildServiceRequest,
         cancelled: Arc<AtomicBool>,
     ) -> Result<ContextBuildOutput, RepositoryServiceError>;
+
+    /// Builds one bounded, source-fenced revision-pinned review receipt.
+    fn change_review(
+        &self,
+        _request: ChangeReviewServiceRequest,
+        _cancelled: Arc<AtomicBool>,
+    ) -> Result<ChangeReviewOutput, RepositoryServiceError> {
+        Err(RepositoryServiceError::ChangeReview)
+    }
 
     /// Compiles one bounded evidence-balanced Phase 2 context pack.
     fn phase2_context_build(

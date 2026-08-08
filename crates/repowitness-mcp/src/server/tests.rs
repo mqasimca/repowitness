@@ -641,7 +641,7 @@ async fn registry_mode_requires_an_explicit_selector_and_routes_only_to_its_serv
         ),
     ]))
     .expect("non-empty bounded registry");
-    assert_eq!(server.tools.len(), 24);
+    assert_eq!(server.tools.len(), 25);
     assert!(
         server
             .tools

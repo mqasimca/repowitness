@@ -6,6 +6,7 @@
 mod architecture_map;
 mod architecture_overview;
 mod canonical_digest;
+mod change_receipt;
 mod code_graph_query;
 mod code_search;
 mod configuration;
@@ -69,6 +70,10 @@ pub use canonical_digest::{
     ANALYSIS_ARTIFACT_PAYLOAD_VERSION, CanonicalAnalysisArtifactKey, CanonicalSourceManifest,
     hash_analysis_artifact_key, hash_analysis_artifact_payload, hash_source_content,
     hash_source_manifest,
+};
+pub use change_receipt::{
+    CHANGE_MANIFEST_PROFILE_VERSION, ChangeKind, ChangeManifest, ChangeManifestEntry,
+    ChangeManifestError, ChangeReviewReceipt, IndexedContext, IndexedContextUnavailableReason,
 };
 pub use code_graph_query::{
     CODE_GRAPH_QUERY_PROFILE_VERSION, CodeGraphQueryError, CodeGraphQueryOperation,

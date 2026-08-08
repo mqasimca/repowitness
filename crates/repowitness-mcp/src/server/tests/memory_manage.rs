@@ -44,6 +44,7 @@ fn memory_manage_tool_is_default_deny_and_conservatively_annotated() {
             SYMBOL_GET_TOOL_NAME,
             SYMBOL_SEARCH_TOOL_NAME,
             SYNTAX_SITE_SEARCH_TOOL_NAME,
+            CHANGE_REVIEW_TOOL_NAME,
         ]
     );
     let tool = enabled

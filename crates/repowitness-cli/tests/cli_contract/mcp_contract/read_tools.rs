@@ -39,7 +39,8 @@ fn assert_mcp_tools(input: &mut ChildStdin, output: &mut BufReader<ChildStdout>)
             "scip_symbol_resolve",
             "symbol_get",
             "symbol_search",
-            "syntax_site_search"
+            "syntax_site_search",
+            "verify"
         ]
     );
     let diagnostics = tools
@@ -51,6 +52,12 @@ fn assert_mcp_tools(input: &mut ChildStdin, output: &mut BufReader<ChildStdout>)
         .expect("diagnostics output properties");
     assert!(output_properties.contains_key("syntax_error_nodes"));
     assert!(output_properties.contains_key("known_parser_limitation_nodes"));
+    let verify = tools
+        .iter()
+        .find(|tool| tool["name"] == "verify")
+        .expect("verify tool");
+    assert!(verify["inputSchema"]["properties"].get("base").is_some());
+    assert!(verify["outputSchema"]["properties"].get("verdict").is_some());
 }
 
 fn assert_mcp_repository_topology(input: &mut ChildStdin, output: &mut BufReader<ChildStdout>) {

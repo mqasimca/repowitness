@@ -700,6 +700,27 @@ use labeled display-safe `utf8` or exact `lowercase_hex` representations; the
 CLI puts their data in one JSON-escaped field so source text cannot forge
 report lines.
 
+Build a read-only revision-pinned change-review receipt before requesting a
+human or agent review:
+
+```text
+target/debug/repowitness verify \
+  --repository-id rwi1:h:0000000000000000000000000000000000000000000000000000000000000001 \
+  --database /path/outside/the/worktree/repowitness.sqlite3 \
+  --root ../repository \
+  --base 0123456789abcdef0123456789abcdef01234567 \
+  --intent Widget
+```
+
+`verify` accepts only full canonical SHA-1 or SHA-256 base object IDs, derives
+the current worktree change manifest locally, and fences the worktree before
+and after receipt assembly. It includes separately pinned indexed context only
+when exact source expansion remains current; otherwise it reports
+`indexed_context_availability=unavailable` and `indexed_context_reason=stale_source`
+instead of returning stale source. It labels index/worktree alignment
+`unverified`; it never claims tests ran, returns an approval/rejection verdict,
+persists a receipt, or writes to a forge.
+
 The separately versioned Phase 2 profile preserves that Phase 0 contract. Its
 initial local providers are exact syntax, unique pinned native-graph structural
 or reference targets, current memory, and the Git observations of locally

@@ -2,7 +2,7 @@
   "schema_version": 1,
   "profile": "incumbent-compatible",
   "surface": "native-v1-plus-incumbent-subset-v1",
-  "surface_tool_count": 31,
+  "surface_tool_count": 32,
   "aliases": [
     {
       "name": "get_architecture",

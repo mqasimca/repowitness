@@ -147,11 +147,11 @@ implemented. Its local memory-management base is also implemented:
   architecture, trace, and conservative impact application use cases;
 - `index`, `onboard`, `architecture-map`, `architecture-overview`, `repository-topology`, `search`, `locate-relevant-paths`, `symbol-search`, `outbound-sites`, `syntax-site-search`, `test-markers`,
   `symbol-get`, `scip-import`, proposed `scip-rust-import`, proposed `scip-go-import`, `scip-symbol-resolve`, `scip-relationship-trace`, `graph`, `memory-manage`, `memory-revalidate`, `memory-recall`,
-  `context-build`, `diagnostics`, `mcp-serve`, `codex`, and `inspect-paths` CLI commands,
+  `context-build`, `verify`, `diagnostics`, `mcp-serve`, `codex`, and `inspect-paths` CLI commands,
   plus path-free `config explain` and read-only `doctor`; explicit bounded
   user/workspace/repository configuration is
   resolved once and enforced by indexing, retrieval, graph reads, context,
-  diagnostics, and MCP startup, with twenty-four read-only retrieval, graph,
+  diagnostics, and MCP startup, with twenty-five read-only retrieval, graph,
   context, and diagnostic tools exposed by default over local stdio MCP and an
   explicitly enabled, fixed-actor `memory_manage` mutation tool;
 - a proposed local multi-repository MCP registry mode that routes each

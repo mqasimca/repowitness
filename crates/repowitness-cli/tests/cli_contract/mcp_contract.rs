@@ -22,6 +22,81 @@ const MEMORY_YAML: &str = include_str!(
 #[cfg(windows)]
 use repowitness_local::{LocalMemoryWriteRequest, write_local_memory};
 
+#[test]
+fn mcp_verify_returns_a_fenced_receipt_and_never_substitutes_stale_source() {
+    let directory = TempDirectory::new();
+    let repository = fixture_repository(&directory);
+    let committed = Command::new("git")
+        .current_dir(&repository)
+        .args([
+            "-c",
+            "user.name=RepoWitness Test",
+            "-c",
+            "user.email=repowitness@example.invalid",
+            "commit",
+            "--quiet",
+            "-m",
+            "base",
+        ])
+        .status()
+        .expect("Git should commit fixture base");
+    assert!(committed.success());
+    let base = Command::new("git")
+        .current_dir(&repository)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .expect("Git should resolve fixture base");
+    assert!(base.status.success());
+    let base = String::from_utf8(base.stdout)
+        .expect("fixture base should be UTF-8")
+        .trim()
+        .to_owned();
+    let database = directory.database();
+    assert!(index(&repository, &database, REPOSITORY_ID).status.success());
+    fs::write(
+        repository.join("src/lib.rs"),
+        "pub struct Widget;\nimpl Widget { pub fn changed() {} }\n",
+    )
+    .expect("fixture change should be written");
+
+    let (child, mut input, mut output) = start_mcp(&repository, &database);
+    initialize_mcp(&mut input, &mut output);
+    let receipt = mcp_request(
+        &mut input,
+        &mut output,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 299,
+            "method": "tools/call",
+            "params": {
+                "name": "verify",
+                "arguments": {"base": base, "intent": "Widget"}
+            }
+        }),
+    );
+    assert_eq!(
+        receipt["result"]["isError"],
+        serde_json::json!(false),
+        "verify response: {receipt}"
+    );
+    let receipt = &receipt["result"]["structuredContent"];
+    assert_eq!(receipt["schema_version"], serde_json::json!(1));
+    assert_eq!(receipt["base"], serde_json::json!(base));
+    assert_eq!(receipt["changes"][0]["kind"], serde_json::json!("modified"));
+    assert_eq!(
+        receipt["indexed_context_availability"],
+        serde_json::json!("unavailable")
+    );
+    assert_eq!(
+        receipt["indexed_context_reason"],
+        serde_json::json!("stale_source")
+    );
+    assert!(receipt.get("indexed_snapshot_sha256").is_none());
+    assert_eq!(receipt["index_worktree_alignment"], serde_json::json!("unverified"));
+    assert_eq!(receipt["verdict"], serde_json::json!("not_provided"));
+    stop_mcp(child, input, output);
+}
+
 fn memory_write_state(repository: &Path) -> (bool, bool, bool, bool, bool) {
     let memory = repository.join(".code-memory");
     let records = memory.join("records");
@@ -247,7 +322,7 @@ fn mcp_registry_routes_two_independent_indexes_without_default_or_path_disclosur
         }),
     );
     let tools = listed["result"]["tools"].as_array().expect("tool list");
-    assert_eq!(tools.len(), 24);
+    assert_eq!(tools.len(), 25);
     assert!(tools.iter().all(|tool| tool["name"] != "memory_manage"));
     let code_search = tools
         .iter()
