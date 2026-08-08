@@ -1,7 +1,7 @@
 # Roadmap
 
 - Status: Proposed
-- Last reviewed: 2026-08-02
+- Last reviewed: 2026-08-08
 
 ## Sequencing rule
 
@@ -185,6 +185,136 @@ beta exit claim remains withheld until independently reviewed longitudinal
 evidence is collected.
 
 Exit when longitudinal tests show fewer repeated failures and less stale-memory use than source-only and naive text-memory baselines, with no cross-scope leakage. This is the first recommended public beta.
+
+## Proposed evidence applications — demand-gated developer workflows
+
+These applications make the evidence-and-memory loop useful in distinct
+developer workflows. They are not a commitment to broaden RepoWitness into a
+general review platform, security scanner, incident-management system, or
+documentation CMS. Each starts only with a named design-partner workflow,
+explicit source of authority, a bounded local contract, and a benchmark that
+measures a decision or review outcome against a source-only baseline.
+
+### Agent preflight and change receipts
+
+Before a coding agent edits source or a developer requests review, compile a
+bounded, revision-pinned change receipt. It states the declared intent, exact
+supporting declarations and configuration, affected source surface, eligible
+current decisions or failures, candidate test markers, and explicit
+uncertainty. A receipt never claims that a test ran, a behavior holds at
+runtime, or a proposed change is correct without corresponding evidence.
+
+- Begin with a read-only `verify` CLI/MCP use case over an explicit task and
+  worktree diff.
+- Preserve the exact base/head source receipts and every provider's evidence,
+  coverage, omissions, and limits.
+- Evaluate whether the receipt prevents a wrong-path change or reduces
+  human-review iterations versus the same agent using ordinary source search.
+- Defer merge blocking, automatic policy enforcement, and verdicts such as
+  `approved` until a separately reviewed policy and false-positive budget
+  justify them.
+
+### Documentation and runbook validity
+
+Detect documentation, ADR, runbook, and agent-instruction claims whose cited
+source, configuration, or approved memory no longer supports them. Results
+must distinguish an exact contradicted or stale citation from absent,
+ambiguous, unsupported, or unparseable evidence; they must not infer that a
+document is wholly correct or incorrect.
+
+- Begin only with explicit, versioned citation forms and bounded tracked-file
+  scope.
+- Reuse source-change and correspondence receipts to identify candidate stale
+  claims; require review before changing Git-tracked documents or memory.
+- Evaluate precision and reviewer usefulness against manually curated
+  stale-document fixtures before adding broad natural-language claim parsing.
+
+### Agent safety and repository execution guardrails
+
+Provide a local policy gate for agent-proposed commands, file mutations,
+network access, dependency installation, and untrusted instruction sources.
+The gate reports the applicable policy, evidence, requested authority, and
+categorical decision without exposing secrets or allowing repository content to
+weaken operator policy.
+
+- Start with plan-time, advisory-only evaluation of explicit proposed actions;
+  do not intercept shells or execute commands.
+- Require an operator-owned policy layer that is monotonic with repository
+  configuration, explicit per-capability authority, bounded parsing, and
+  auditable decisions.
+- Treat dependency and instruction provenance as separate evidence providers;
+  do not claim malware detection, sandboxing, or complete supply-chain
+  coverage without dedicated evidence and evaluation.
+
+### Evidence-backed PR review packets
+
+Produce a review-oriented projection of a change receipt: claimed behavior,
+affected declarations, evidence-backed prior decisions, candidate tests,
+unresolved risks, and a stable receipt for later audit. This complements
+generic model review rather than attempting to replace it with an opaque
+correctness score.
+
+- Reuse the preflight receipt contract; do not create a second inconsistent
+  fact model.
+- Support local CLI/MCP consumption before a hosted pull-request integration.
+- Evaluate human reviewer time, accepted findings, false-positive burden, and
+  missed material constraints on pinned and design-partner tasks.
+
+### Incident memory and verified recovery records
+
+Extend durable memory with bounded, redacted incident hypotheses, diagnostics,
+verification outcomes, remediation procedures, and expiry conditions. Recall
+must return these only with their source, environment scope, recorded time,
+project-validity state, and review status; raw terminal sessions, logs, and
+conversations remain untrusted inputs rather than durable truth.
+
+- Build on Phase 3 scopes, lifecycle policies, task checkpoints, and approval
+  boundaries.
+- Begin with manual structured capture and redaction review; defer automatic
+  log ingestion, production telemetry, and incident-system synchronization.
+- Evaluate whether a recalled record changes an investigation decision or
+  avoids a repeated failed attempt without cross-scope leakage.
+
+### Migration impact and contract evidence
+
+For an explicit API, configuration, dependency, or framework migration,
+produce a bounded evidence pack of exact affected declarations, available
+precision relationships, candidate tests, and unresolved dynamic or
+cross-language behavior. The result is a navigation and verification aid, not
+a claim of complete compatibility or an automatic refactor.
+
+- Start with one named migration class and its supported-language coverage.
+- Use syntax and SCIP evidence only at their declared precision; retain
+  explicit abstention for dynamic dispatch, reflection, generated code, and
+  unavailable producers.
+- Evaluate changed-surface recall and validation coverage against an ordinary
+  lexical-search baseline before adding transformations or CI gates.
+
+### Bounded repository orientation packs
+
+Generate an evidence-backed orientation pack for one explicit developer task
+or service: relevant paths, declarations, repository topology, current
+decisions, candidate tests, and declared coverage. It is intentionally a
+task-scoped navigation aid, not an inferred ownership map or a free-form
+architecture narrative.
+
+- Build on the existing topology, architecture, declaration, context, and
+  memory read contracts.
+- Require source citations and explicit omissions for every included section.
+- Evaluate time-to-first-correct-change and irrelevant context volume against
+  existing source-only orientation workflows.
+
+### Shared entry gate
+
+Before promoting any application beyond a design-partner experiment, require:
+
+- an ADR for any new authority, persistence, policy, external-system, or
+  security boundary;
+- a versioned schema and deterministic, bounded CLI/MCP contract;
+- synthetic hostile-input, privacy, cancellation, and stale-evidence coverage;
+- a predeclared evaluation showing a better developer decision, lower review
+  burden, or fewer repeated failed attempts than the relevant baseline; and
+- explicit evidence and uncertainty at every material result.
 
 ## Proposed local multi-repository MCP registry
 
