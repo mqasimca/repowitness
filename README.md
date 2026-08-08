@@ -18,6 +18,76 @@ Its defining promise is:
 - SQLite-first local operation, with a demand-gated PostgreSQL server mode later;
 - a Rust core designed for deterministic, bounded, crash-safe indexing.
 
+## Start here
+
+### Recommended: use the Codex catalog on Unix
+
+The catalog is the lowest-friction setup for local Codex. One installation lets
+each new Codex session index or incrementally refresh only its current Git
+worktree; it does not scan sibling, parent, or home directories.
+
+Before installing, make sure that:
+
+- you are on Linux or macOS; catalog and private onboarding intentionally fail
+  closed on Windows until an equivalent private-state ACL boundary exists;
+- the repository you open in Codex is a Git worktree; and
+- the `repowitness` executable is on the `PATH` seen by the Codex process.
+
+Download the archive for your platform from the
+[GitHub Releases page](https://github.com/mqasimca/repowitness/releases),
+verify it against the matching `SHA256SUMS` entry, extract the executable, and
+place it on your `PATH`. Release archives are available for Linux x86_64, macOS
+arm64, and Windows x86_64.
+
+To build from source instead, install `rustup` and Git, clone this repository,
+then run the checked-in Rust 1.97.1 toolchain through Cargo:
+
+```text
+cargo build --release --locked -p repowitness-cli --bin repowitness
+mkdir -p "$HOME/.local/bin"
+install -m 0755 target/release/repowitness "$HOME/.local/bin/repowitness"
+export PATH="$HOME/.local/bin:$PATH"
+repowitness --version
+```
+
+Persist the `PATH` change in your shell profile if needed. On Windows, use
+`target\release\repowitness.exe` and the explicit single-repository or registry
+MCP setup in the [CLI section](#cli) instead of the catalog.
+
+Install the catalog integration once:
+
+```text
+repowitness codex install
+```
+
+Restart Codex, review and trust the installed `SessionStart` hook with
+`/hooks`, then open Codex in a Git worktree. Use `/mcp` to confirm that
+RepoWitness is connected. `repowitness doctor` validates the local
+configuration; `codex mcp list` confirms the registered command before you
+restart the client.
+
+The first session for a worktree, or a session after source or
+semantics-affecting configuration changes, performs a foreground refresh and
+may take longer than Codex's default MCP startup budget. If Codex reports a
+startup timeout, add this field under the existing
+`[mcp_servers.repowitness]` table in its `config.toml`, then restart Codex:
+
+```toml
+startup_timeout_sec = 120
+```
+
+An unchanged later session reuses the active generation and starts quickly. If
+the timeout persists, run `repowitness doctor`, confirm `repowitness --version`
+works from the same environment that starts Codex, and inspect `/mcp` after the
+restart.
+
+### Other supported setups
+
+Use `repowitness onboard --root <repository>` for one explicit private local
+index without Codex, or configure `mcp-serve` directly for a fixed repository
+or trusted registry. The complete commands, configuration rules, and advanced
+connected-workspace setup are in the [CLI section](#cli).
+
 ## Current status
 
 Phase 0 and Phase 1 are complete. The separately versioned Phase 2

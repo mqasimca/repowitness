@@ -422,6 +422,7 @@ fn mcp_serve_help_uses_only_the_diagnostic_stream() {
     let help = String::from_utf8(stderr).expect("help is UTF-8");
     assert!(help.contains("Stdout is reserved exclusively"));
     assert!(help.contains("memory_manage is available only when both mutation options"));
+    assert!(help.contains("--enable-native-tasks"));
 }
 
 #[test]
