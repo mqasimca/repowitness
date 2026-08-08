@@ -1,6 +1,7 @@
 #!/bin/sh
 # Run the production index, path-only topology, architecture-map, architecture-overview,
 # typed-symbol-discovery, lexical path-navigation (direct and finite-MCP-envelope),
+# context compilation through the agent-oriented MCP aliases,
 # exact raw syntax-target search (direct and finite-MCP-envelope), no-overlay
 # SCIP-evidence, SCIP-symbol-resolution, and SCIP-relationship-trace smoke,
 # repository-scoped test-marker, and exact outbound-site loop. The opt-in
@@ -540,6 +541,32 @@ relevant_paths_has_match() {
     '
 }
 
+validate_context_build() {
+    perl -MJSON::PP -e '
+        use strict;
+        use warnings;
+
+        local $/;
+        my $result = eval { decode_json(<STDIN>) };
+        exit 1 if $@ || ref($result) ne q{HASH};
+        exit 1 if ($result->{schema_version} // q{}) != 2
+          || ($result->{context_profile} // q{}) != 1
+          || ($result->{reciprocal_rank_k} // q{}) != 60
+          || ($result->{budget_estimator} // q{}) ne q{utf8_bytes_upper_bound_v1}
+          || ($result->{budget_units} // q{}) != 4096;
+        exit 1 if !defined($result->{used_units}) || ref($result->{used_units})
+          || $result->{used_units} !~ /\A[0-9]+\z/
+          || $result->{used_units} > $result->{budget_units};
+        exit 1 if ($result->{query_sha256} // q{}) !~ /\A[0-9a-f]{64}\z/
+          || ($result->{snapshot_sha256} // q{}) !~ /\A[0-9a-f]{64}\z/
+          || !defined($result->{generation}) || ref($result->{generation})
+          || $result->{generation} !~ /\A[1-9][0-9]*\z/;
+        exit 1 if ref($result->{coverage}) ne q{HASH}
+          || ref($result->{omissions}) ne q{ARRAY}
+          || ref($result->{items}) ne q{ARRAY};
+    '
+}
+
 mcp_code_graph_relevant_paths() {
     perl -MIPC::Open3 -MJSON::PP -e '
         use strict;
@@ -597,6 +624,88 @@ mcp_code_graph_relevant_paths() {
                         operation => q{relevant_paths},
                         query => $query,
                         max_paths => 1,
+                    },
+                },
+            },
+        ) {
+            print {$input} encode_json($message), qq{\n} or exit 1;
+        }
+        close($input) or exit 1;
+
+        my $response;
+        while (my $line = <$output>) {
+            my $message = eval { decode_json($line) };
+            exit 1 if $@ || ref($message) ne q{HASH};
+            $response = $message if defined($message->{id}) && $message->{id} eq q{2};
+        }
+        close($output);
+        waitpid($pid, 0);
+        close($stderr);
+        exit 1 if $? != 0;
+        exit 1 if !defined($response) || ref($response->{result}) ne q{HASH};
+        my $result = $response->{result};
+        exit 1 if ($result->{isError} // 1) || ref($result->{structuredContent}) ne q{HASH};
+        print encode_json($result->{structuredContent});
+    ' "$CLI" "$identity" "$database" "$candidate" "$1"
+}
+
+mcp_context_build() {
+    perl -MIPC::Open3 -MJSON::PP -e '
+        use strict;
+        use warnings;
+
+        my ($cli, $identity, $database, $root, $query) = @ARGV;
+        exit 64 if !defined($query);
+        open my $stderr, q{>}, q{/dev/null} or exit 1;
+        my $pid = open3(
+            my $input,
+            my $output,
+            $stderr,
+            $cli,
+            q{mcp-serve},
+            q{--repository-id},
+            $identity,
+            q{--database},
+            $database,
+            q{--root},
+            $root,
+        );
+        select((select($input), $| = 1)[0]);
+        my $initialize = {
+            jsonrpc => q{2.0},
+            id => 1,
+            method => q{initialize},
+            params => {
+                protocolVersion => q{2025-11-25},
+                capabilities => {},
+                clientInfo => { name => q{repowitness-sibling-smoke}, version => q{1} },
+            },
+        };
+        print {$input} encode_json($initialize), qq{\n} or exit 1;
+        my $initialized;
+        while (my $line = <$output>) {
+            my $message = eval { decode_json($line) };
+            exit 1 if $@ || ref($message) ne q{HASH};
+            $initialized = $message if defined($message->{id}) && $message->{id} eq q{1};
+            last if defined($initialized);
+        }
+        exit 1 if !defined($initialized) || ref($initialized->{result}) ne q{HASH};
+
+        for my $message (
+            {
+                jsonrpc => q{2.0},
+                method => q{notifications/initialized},
+            },
+            {
+                jsonrpc => q{2.0},
+                id => 2,
+                method => q{tools/call},
+                params => {
+                    name => q{context_build},
+                    arguments => {
+                        query => $query,
+                        max_chars => 4096,
+                        max_provider_results => 1,
                     },
                 },
             },
@@ -1179,6 +1288,8 @@ code_graph_relevant_paths_passed=0
 code_graph_relevant_paths_failed=0
 code_graph_relevant_paths_positive_passed=0
 code_graph_relevant_paths_positive_unavailable=0
+context_build_passed=0
+context_build_failed=0
 symbol_passed=0
 symbol_failed=0
 symbol_positive_passed=0
@@ -1257,6 +1368,14 @@ for candidate; do
         continue
     fi
     index_passed=$((index_passed + 1))
+
+    context_build_output="$RUN_DIRECTORY/$repositories.context-build.json"
+    if ! mcp_context_build repowitnesssmokemissing >"$context_build_output" 2>/dev/null \
+        || ! validate_context_build <"$context_build_output"; then
+        context_build_failed=$((context_build_failed + 1))
+        continue
+    fi
+    context_build_passed=$((context_build_passed + 1))
 
     scip_evidence_output="$RUN_DIRECTORY/$repositories.scip-evidence.json"
     if ! "$CLI" scip-evidence --repository-id "$identity" --database "$database" \
@@ -1622,7 +1741,7 @@ if [ "$repositories" -eq 0 ]; then
 fi
 
 printf '%s\n' \
-    "state=completed repositories=$repositories index_passed=$index_passed index_failed=$index_failed topology_passed=$topology_passed topology_failed=$topology_failed map_passed=$map_passed map_failed=$map_failed overview_passed=$overview_passed overview_failed=$overview_failed test_markers_passed=$test_markers_passed test_markers_failed=$test_markers_failed syntax_site_search_passed=$syntax_site_search_passed syntax_site_search_failed=$syntax_site_search_failed syntax_site_search_positive_passed=$syntax_site_search_positive_passed syntax_site_search_positive_unavailable=$syntax_site_search_positive_unavailable code_graph_syntax_site_search_passed=$code_graph_syntax_site_search_passed code_graph_syntax_site_search_failed=$code_graph_syntax_site_search_failed code_graph_syntax_site_search_positive_passed=$code_graph_syntax_site_search_positive_passed code_graph_syntax_site_search_positive_unavailable=$code_graph_syntax_site_search_positive_unavailable relevant_paths_passed=$relevant_paths_passed relevant_paths_failed=$relevant_paths_failed relevant_paths_positive_passed=$relevant_paths_positive_passed relevant_paths_positive_unavailable=$relevant_paths_positive_unavailable code_graph_relevant_paths_passed=$code_graph_relevant_paths_passed code_graph_relevant_paths_failed=$code_graph_relevant_paths_failed code_graph_relevant_paths_positive_passed=$code_graph_relevant_paths_positive_passed code_graph_relevant_paths_positive_unavailable=$code_graph_relevant_paths_positive_unavailable symbol_passed=$symbol_passed symbol_failed=$symbol_failed symbol_positive_passed=$symbol_positive_passed symbol_positive_unavailable=$symbol_positive_unavailable outbound_passed=$outbound_passed outbound_failed=$outbound_failed outbound_unavailable=$outbound_unavailable scip_symbol_resolve_not_produced_passed=$scip_symbol_resolve_not_produced_passed scip_symbol_resolve_not_produced_failed=$scip_symbol_resolve_not_produced_failed scip_symbol_resolve_not_attempted_no_declaration=$scip_symbol_resolve_not_attempted_no_declaration scip_symbol_resolve_not_attempted_no_candidate=$scip_symbol_resolve_not_attempted_no_candidate scip_evidence_not_produced_passed=$scip_evidence_not_produced_passed scip_evidence_not_produced_failed=$scip_evidence_not_produced_failed scip_relationship_trace_not_produced_passed=$scip_relationship_trace_not_produced_passed scip_relationship_trace_not_produced_failed=$scip_relationship_trace_not_produced_failed"
+    "state=completed repositories=$repositories index_passed=$index_passed index_failed=$index_failed context_build_passed=$context_build_passed context_build_failed=$context_build_failed topology_passed=$topology_passed topology_failed=$topology_failed map_passed=$map_passed map_failed=$map_failed overview_passed=$overview_passed overview_failed=$overview_failed test_markers_passed=$test_markers_passed test_markers_failed=$test_markers_failed syntax_site_search_passed=$syntax_site_search_passed syntax_site_search_failed=$syntax_site_search_failed syntax_site_search_positive_passed=$syntax_site_search_positive_passed syntax_site_search_positive_unavailable=$syntax_site_search_positive_unavailable code_graph_syntax_site_search_passed=$code_graph_syntax_site_search_passed code_graph_syntax_site_search_failed=$code_graph_syntax_site_search_failed code_graph_syntax_site_search_positive_passed=$code_graph_syntax_site_search_positive_passed code_graph_syntax_site_search_positive_unavailable=$code_graph_syntax_site_search_positive_unavailable relevant_paths_passed=$relevant_paths_passed relevant_paths_failed=$relevant_paths_failed relevant_paths_positive_passed=$relevant_paths_positive_passed relevant_paths_positive_unavailable=$relevant_paths_positive_unavailable code_graph_relevant_paths_passed=$code_graph_relevant_paths_passed code_graph_relevant_paths_failed=$code_graph_relevant_paths_failed code_graph_relevant_paths_positive_passed=$code_graph_relevant_paths_positive_passed code_graph_relevant_paths_positive_unavailable=$code_graph_relevant_paths_positive_unavailable symbol_passed=$symbol_passed symbol_failed=$symbol_failed symbol_positive_passed=$symbol_positive_passed symbol_positive_unavailable=$symbol_positive_unavailable outbound_passed=$outbound_passed outbound_failed=$outbound_failed outbound_unavailable=$outbound_unavailable scip_symbol_resolve_not_produced_passed=$scip_symbol_resolve_not_produced_passed scip_symbol_resolve_not_produced_failed=$scip_symbol_resolve_not_produced_failed scip_symbol_resolve_not_attempted_no_declaration=$scip_symbol_resolve_not_attempted_no_declaration scip_symbol_resolve_not_attempted_no_candidate=$scip_symbol_resolve_not_attempted_no_candidate scip_evidence_not_produced_passed=$scip_evidence_not_produced_passed scip_evidence_not_produced_failed=$scip_evidence_not_produced_failed scip_relationship_trace_not_produced_passed=$scip_relationship_trace_not_produced_passed scip_relationship_trace_not_produced_failed=$scip_relationship_trace_not_produced_failed"
 
 if [ "$RUST_SCIP" = true ]; then
     printf '%s\n' \
@@ -1634,6 +1753,6 @@ if [ "$GO_SCIP" = true ]; then
         "go_scip state=completed go_repositories=$go_scip_go_repositories no_root_go_manifest=$go_scip_no_root_go_manifest import_passed=$go_scip_import_passed import_failed=$go_scip_import_failed producer_failed=$go_scip_producer_failed invalid_input=$go_scip_invalid_input source_mismatch=$go_scip_source_mismatch unsupported_source_encoding=$go_scip_unsupported_source_encoding deadline_exceeded=$go_scip_deadline_exceeded resource_limit=$go_scip_resource_limit inconsistent_summary=$go_scip_inconsistent_summary preparation=$go_scip_preparation input_admission=$go_scip_input_admission database_read=$go_scip_database_read source_scope_unavailable=$go_scip_source_scope_unavailable database_identity=$go_scip_database_identity source_fence=$go_scip_source_fence source_manifest_mismatch=$go_scip_source_manifest_mismatch cancelled=$go_scip_cancelled input_changed=$go_scip_input_changed publication=$go_scip_publication shutdown=$go_scip_shutdown other_failure=$go_scip_other_failure"
 fi
 
-if [ "$index_failed" -ne 0 ] || [ "$topology_failed" -ne 0 ] || [ "$map_failed" -ne 0 ] || [ "$overview_failed" -ne 0 ] || [ "$test_markers_failed" -ne 0 ] || [ "$syntax_site_search_failed" -ne 0 ] || [ "$code_graph_syntax_site_search_failed" -ne 0 ] || [ "$relevant_paths_failed" -ne 0 ] || [ "$code_graph_relevant_paths_failed" -ne 0 ] || [ "$symbol_failed" -ne 0 ] || [ "$outbound_failed" -ne 0 ] || [ "$scip_symbol_resolve_not_produced_failed" -ne 0 ] || [ "$scip_evidence_not_produced_failed" -ne 0 ] || [ "$scip_relationship_trace_not_produced_failed" -ne 0 ] || { [ "$RUST_SCIP" = true ] && [ "$rust_scip_import_failed" -ne 0 ]; } || { [ "$GO_SCIP" = true ] && [ "$go_scip_import_failed" -ne 0 ]; }; then
+if [ "$index_failed" -ne 0 ] || [ "$context_build_failed" -ne 0 ] || [ "$topology_failed" -ne 0 ] || [ "$map_failed" -ne 0 ] || [ "$overview_failed" -ne 0 ] || [ "$test_markers_failed" -ne 0 ] || [ "$syntax_site_search_failed" -ne 0 ] || [ "$code_graph_syntax_site_search_failed" -ne 0 ] || [ "$relevant_paths_failed" -ne 0 ] || [ "$code_graph_relevant_paths_failed" -ne 0 ] || [ "$symbol_failed" -ne 0 ] || [ "$outbound_failed" -ne 0 ] || [ "$scip_symbol_resolve_not_produced_failed" -ne 0 ] || [ "$scip_evidence_not_produced_failed" -ne 0 ] || [ "$scip_relationship_trace_not_produced_failed" -ne 0 ] || { [ "$RUST_SCIP" = true ] && [ "$rust_scip_import_failed" -ne 0 ]; } || { [ "$GO_SCIP" = true ] && [ "$go_scip_import_failed" -ne 0 ]; }; then
     exit 1
 fi

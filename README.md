@@ -953,6 +953,13 @@ symbol and use its immutable view context unchanged. Call `scip_relationship_tra
 producer-declared overlay rows; it is not a source-call, runtime, or completeness query. Enable mutation only in a trusted local configuration whose
 operator intends to grant that capability.
 
+For `context_build`, use `intent` and `budget_units` as the canonical MCP
+fields. The agent-oriented spellings `query` and `max_chars` are also accepted
+for compatibility; `max_chars` uses the same conservative UTF-8 byte-budget
+semantics as `budget_units`, so it is not an exact Unicode-character limit.
+`context_build` compiles a bounded source-and-memory pack; use `graph_search`
+and `graph_trace` when the task requires a caller or path traversal.
+
 To inspect only aggregate repository-path discovery facts without indexing:
 
 ```text

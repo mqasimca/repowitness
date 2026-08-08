@@ -13,8 +13,17 @@ use super::{
 #[serde(deny_unknown_fields)]
 pub struct ContextBuildInput {
     /// Bounded literal engineering intent used by source and memory providers.
+    ///
+    /// Prefer `intent`; the agent-oriented `query` spelling is accepted as a
+    /// compatibility alias.
+    #[serde(alias = "query")]
     pub intent: String,
     /// Conservative `utf8_bytes_upper_bound_v1` content budget.
+    ///
+    /// Prefer `budget_units`; `max_chars` is accepted as a compatibility alias
+    /// and has the same conservative byte-budget semantics, not an exact
+    /// Unicode-character limit.
+    #[serde(alias = "max_chars")]
     pub budget_units: Option<u64>,
     /// Maximum independently returned candidates from each implemented provider.
     pub max_provider_results: Option<u16>,
@@ -281,6 +290,32 @@ mod tests {
         assert_eq!(request.intent(), "Publish Atomic");
         assert_eq!(request.budget_units(), 4096);
         assert_eq!(request.max_provider_results(), 7);
+    }
+
+    #[test]
+    fn agent_oriented_aliases_map_to_the_canonical_context_request() {
+        let input: ContextBuildInput = serde_json::from_value(serde_json::json!({
+            "query": "  Trace Dispatcher  ",
+            "max_chars": 12_000,
+            "max_provider_results": 7,
+        }))
+        .expect("compatibility aliases deserialize");
+
+        let request = input.validate().expect("request");
+        assert_eq!(request.intent(), "Trace Dispatcher");
+        assert_eq!(request.budget_units(), 12_000);
+        assert_eq!(request.max_provider_results(), 7);
+    }
+
+    #[test]
+    fn aliases_do_not_allow_ambiguous_or_unknown_context_fields() {
+        for input in [
+            serde_json::json!({"intent": "run", "query": "different"}),
+            serde_json::json!({"budget_units": 4096, "max_chars": 8192, "intent": "run"}),
+            serde_json::json!({"intent": "run", "unknown": true}),
+        ] {
+            assert!(serde_json::from_value::<ContextBuildInput>(input).is_err());
+        }
     }
 
     #[test]

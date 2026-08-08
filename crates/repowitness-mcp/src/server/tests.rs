@@ -1131,8 +1131,8 @@ async fn initialized_client_lists_and_calls_all_tools() {
         .call_tool(
             CallToolRequestParams::new(CONTEXT_BUILD_TOOL_NAME).with_arguments(json_object(
                 serde_json::json!({
-                    "intent": "  run  ",
-                    "budget_units": 4096,
+                    "query": "  run  ",
+                    "max_chars": 4096,
                     "max_provider_results": 7
                 }),
             )),
