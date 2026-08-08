@@ -33,7 +33,7 @@ use crate::{
     },
     rust_index::{
         LocalSourceIndexReuseRequest, LocalSourceSnapshotFenceError, SourceLanguageSelection,
-        prepare_local_source_index_excluding_identity_with_full_reuse,
+        prepare_local_source_index_with_full_reuse_deferred_to_publication,
     },
     sqlite::SqliteMutationLease,
 };
@@ -45,7 +45,6 @@ pub(crate) mod polling_runner;
 mod post_commit;
 
 const INITIAL_SOURCE_EPOCH: u64 = 0;
-const LOCAL_PRODUCER_DOMAIN: &[u8] = b"RepoWitness\0phase0-local-source-producer\0";
 const LOCAL_SNAPSHOT_PRODUCER_DOMAIN: &[u8] =
     b"RepoWitness\0phase0-local-supported-languages-snapshot-producer\0";
 const LOCAL_SNAPSHOT_CONFIGURATION_DOMAIN: &[u8] =
@@ -56,7 +55,13 @@ const CONNECTED_SCOPE_CONFIGURATION_DOMAIN: &[u8] =
 const CONNECTED_SCOPE_ARTIFACT_CONFIGURATION_DOMAIN: &[u8] =
     b"RepoWitness\0phase1-connected-scope-artifact-configuration\0";
 const CONNECTED_SCOPE_CONFIGURATION_VERSION: u32 = 1;
-const LOCAL_PRODUCER_VERSION: u32 = 4;
+/// Version of the local source-acquisition and snapshot-publication profile.
+///
+/// This intentionally does not participate in content-local analysis artifact
+/// identities. A change to snapshot fencing must force a fresh publication,
+/// while unchanged parser artifacts remain safe to reuse after their content
+/// and analysis identity have been verified.
+const LOCAL_SNAPSHOT_PRODUCER_VERSION: u32 = 5;
 
 include!("local_index/model.rs");
 

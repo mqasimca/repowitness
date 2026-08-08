@@ -153,14 +153,26 @@ fn validated_final_source_identity(
             source: SourceStateError::ConcurrentSourceChange,
         });
     }
-    let git_state = source_state_after.git_state();
+    Ok(source_identity_from_state(
+        source_state_after,
+        selection,
+        manifest,
+    ))
+}
+
+fn source_identity_from_state(
+    source_state: &crate::CapturedSourceState,
+    selection: SelectionPolicy,
+    manifest: repowitness_domain::SourceManifestDigest,
+) -> (GitStateDigest, WorktreeStateDigest) {
+    let git_state = source_state.git_state();
     let worktree_state = match selection {
-        SelectionPolicy::RustOnly => source_state_after.worktree_state(manifest),
+        SelectionPolicy::RustOnly => source_state.worktree_state(manifest),
         SelectionPolicy::SupportedLanguages(_) => {
-            source_state_after.source_worktree_state(manifest)
+            source_state.source_worktree_state(manifest)
         }
     };
-    Ok((git_state, worktree_state))
+    (git_state, worktree_state)
 }
 
 /// Compact allow-list for source languages selected by resolved policy.

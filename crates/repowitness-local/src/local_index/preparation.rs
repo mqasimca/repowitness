@@ -55,7 +55,7 @@ fn prepare_with_artifact_reuse(
             database_identity,
         ),
     };
-    let preparation = prepare_local_source_index_excluding_identity_with_full_reuse(
+    let preparation = prepare_local_source_index_with_full_reuse_deferred_to_publication(
         reuse_request,
         |language, requested, load_deadline| match &reuse_reader {
             Some(reader) => reader.load_reusable_artifacts_for_language(
@@ -483,23 +483,10 @@ pub(crate) fn database_alias_identity(
 }
 
 fn phase0_local_source_artifact_identities() -> SourceArtifactIdentities {
-    let base = phase0_source_artifact_identities();
-    SourceArtifactIdentities::new(
-        extend_local_artifact_identity(
-            SourceLanguage::Rust,
-            base.for_language(SourceLanguage::Rust),
-        ),
-        extend_local_artifact_identity(SourceLanguage::Go, base.for_language(SourceLanguage::Go)),
-        extend_local_artifact_identity(
-            SourceLanguage::TypeScript,
-            base.for_language(SourceLanguage::TypeScript),
-        ),
-        extend_local_artifact_identity(SourceLanguage::Tsx, base.for_language(SourceLanguage::Tsx)),
-        extend_local_artifact_identity(
-            SourceLanguage::Python,
-            base.for_language(SourceLanguage::Python),
-        ),
-    )
+    // Source facts are content-local parser artifacts. Their identities must
+    // contain only parser semantics, grammar, schema, and configuration inputs
+    // so a snapshot-fencing change does not discard otherwise exact artifacts.
+    phase0_source_artifact_identities()
 }
 
 #[cfg(test)]
@@ -507,27 +494,7 @@ fn phase0_local_rust_artifact_identity() -> RustArtifactIdentity {
     phase0_local_source_artifact_identities().for_language(SourceLanguage::Rust)
 }
 
-fn extend_local_artifact_identity(
-    language: SourceLanguage,
-    base: RustArtifactIdentity,
-) -> RustArtifactIdentity {
-    let mut hasher = Sha256::new();
-    hasher.update(LOCAL_PRODUCER_DOMAIN);
-    hasher.update(LOCAL_PRODUCER_VERSION.to_be_bytes());
-    update_length_prefixed(&mut hasher, language.as_str().as_bytes());
-    hasher.update(base.producer_manifest().as_bytes());
-    for input in local_producer_implementation_fingerprint_inputs() {
-        update_length_prefixed(&mut hasher, input);
-    }
-    RustArtifactIdentity::new(
-        ProducerManifestDigest::new(hasher.finalize().into()),
-        base.configuration(),
-        base.schema(),
-        base.canonicalization_version(),
-    )
-}
-
-pub(super) fn local_producer_implementation_fingerprint_inputs() -> [&'static [u8]; 12] {
+pub(super) fn local_snapshot_implementation_fingerprint_inputs() -> [&'static [u8]; 13] {
     [
         include_bytes!("../contained_source.rs"),
         include_bytes!("../contained_source/exact_session.rs"),
@@ -536,6 +503,7 @@ pub(super) fn local_producer_implementation_fingerprint_inputs() -> [&'static [u
         include_bytes!("../git_paths/process.rs"),
         include_bytes!("../rust_index.rs"),
         include_bytes!("../rust_index/source_io.rs"),
+        include_bytes!("../rust_index/source_snapshot_fence.rs"),
         include_bytes!("../source_state.rs"),
         include_bytes!("../source_state/parsing.rs"),
         include_bytes!("../local_index.rs"),
@@ -559,8 +527,11 @@ fn phase0_local_source_snapshot_profile(
     let base = phase0_source_snapshot_profile();
     let mut hasher = Sha256::new();
     hasher.update(LOCAL_SNAPSHOT_PRODUCER_DOMAIN);
-    hasher.update(LOCAL_PRODUCER_VERSION.to_be_bytes());
+    hasher.update(LOCAL_SNAPSHOT_PRODUCER_VERSION.to_be_bytes());
     hasher.update(base.producer_manifest().as_bytes());
+    for input in local_snapshot_implementation_fingerprint_inputs() {
+        update_length_prefixed(&mut hasher, input);
+    }
     for language in [
         SourceLanguage::Rust,
         SourceLanguage::Go,

@@ -491,6 +491,16 @@ struct LocalPreparationCompletion<'a> {
     skipped_unsupported_paths: u64,
 }
 
+/// Controls whether preparation performs its own complete final source fence.
+///
+/// Publication callers may defer this work only when their operation performs
+/// the same authoritative fence after every possible staging path.
+#[derive(Clone, Copy)]
+pub(crate) enum PreparationSourceFence {
+    DuringPreparation,
+    DeferredToPublication,
+}
+
 fn prepare_selected_source_artifacts(
     context: LocalArtifactPreparationContext<'_>,
     load_reusable: &mut impl FnMut(
@@ -685,6 +695,7 @@ fn prepare_local_index_with_exclusion_reuse_and_hook(
         SqliteStoreError,
     >,
     mut before_revalidation: impl FnMut(),
+    source_fence: PreparationSourceFence,
 ) -> Result<LocalRustIndexPreparation, LocalRustIndexError> {
     let LocalPreparationContext {
         requested_root,
@@ -755,19 +766,26 @@ fn prepare_local_index_with_exclusion_reuse_and_hook(
         &mut load_reusable_raw_syntax,
     )?;
     let prepared = artifacts.source;
-    before_revalidation();
-    let (git_state, worktree_state) = revalidate_prepared_index(LocalFinalFenceContext {
-        worktree_root: &worktree_root,
-        source_state_before: &source_state_before,
-        discovered: &discovered,
-        package_scope,
-        root: &root,
-        prepared: &prepared,
-        selection,
-        limits,
-        cancelled,
-        deadline,
-    })?;
+    let (git_state, worktree_state) = match source_fence {
+        PreparationSourceFence::DuringPreparation => {
+            before_revalidation();
+            revalidate_prepared_index(LocalFinalFenceContext {
+                worktree_root: &worktree_root,
+                source_state_before: &source_state_before,
+                discovered: &discovered,
+                package_scope,
+                root: &root,
+                prepared: &prepared,
+                selection,
+                limits,
+                cancelled,
+                deadline,
+            })?
+        }
+        PreparationSourceFence::DeferredToPublication => {
+            source_identity_from_state(&source_state_before, selection, prepared.manifest_digest())
+        }
+    };
 
     complete_local_preparation(LocalPreparationCompletion {
         prepared,

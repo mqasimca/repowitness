@@ -28,6 +28,7 @@ pub fn prepare_local_source_index(
         |_, _| Ok(BTreeMap::new()),
         |_, _| Ok(BTreeMap::new()),
         || {},
+        PreparationSourceFence::DuringPreparation,
     )
 }
 
@@ -122,6 +123,7 @@ impl<'a> LocalSourceIndexReuseRequest<'a> {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn prepare_local_source_index_excluding_identity_with_full_reuse(
     request: LocalSourceIndexReuseRequest<'_>,
     load_reusable: impl FnMut(
@@ -153,6 +155,44 @@ pub(crate) fn prepare_local_source_index_excluding_identity_with_full_reuse(
         load_reusable_graph,
         load_reusable_raw_syntax,
         || {},
+        PreparationSourceFence::DuringPreparation,
+    )
+}
+
+/// Prepares source artifacts for a caller that performs the authoritative
+/// complete source fence before it exposes or publishes the result.
+pub(crate) fn prepare_local_source_index_with_full_reuse_deferred_to_publication(
+    request: LocalSourceIndexReuseRequest<'_>,
+    load_reusable: impl FnMut(
+        SourceLanguage,
+        &[AnalysisArtifactDigest],
+        Instant,
+    ) -> Result<
+        BTreeMap<AnalysisArtifactDigest, RustSourceAnalysis>,
+        SqliteStoreError,
+    >,
+    load_reusable_graph: impl FnMut(
+        &[AnalysisArtifactDigest],
+        Instant,
+    ) -> Result<
+        BTreeMap<AnalysisArtifactDigest, RustGraphSiteAnalysis>,
+        SqliteStoreError,
+    >,
+    load_reusable_raw_syntax: impl FnMut(
+        &[AnalysisArtifactDigest],
+        Instant,
+    ) -> Result<
+        BTreeMap<AnalysisArtifactDigest, RawSyntaxSiteAnalysis>,
+        SqliteStoreError,
+    >,
+) -> Result<LocalRustIndexPreparation, LocalRustIndexError> {
+    prepare_local_source_index_with_exclusion_reuse_and_hook(
+        request,
+        load_reusable,
+        load_reusable_graph,
+        load_reusable_raw_syntax,
+        || {},
+        PreparationSourceFence::DeferredToPublication,
     )
 }
 
@@ -225,6 +265,7 @@ fn prepare_local_rust_index_with_exclusion_reuse_and_hook(
         |_, _| Ok(BTreeMap::new()),
         |_, _| Ok(BTreeMap::new()),
         before_revalidation,
+        PreparationSourceFence::DuringPreparation,
     )
 }
 
@@ -253,6 +294,7 @@ fn prepare_local_source_index_with_exclusion_reuse_and_hook(
         SqliteStoreError,
     >,
     before_revalidation: impl FnMut(),
+    source_fence: PreparationSourceFence,
 ) -> Result<LocalRustIndexPreparation, LocalRustIndexError> {
     let LocalSourceIndexReuseRequest {
         requested_root,
@@ -280,5 +322,6 @@ fn prepare_local_source_index_with_exclusion_reuse_and_hook(
         load_reusable_graph,
         load_reusable_raw_syntax,
         before_revalidation,
+        source_fence,
     )
 }

@@ -11,6 +11,7 @@ use std::{
 
 use repowitness_application::{
     RepositoryIdentityTextV1, SourceLanguage, phase0_rust_artifact_identity,
+    phase0_source_artifact_identities, phase0_source_snapshot_profile,
 };
 use rusqlite::Connection;
 
@@ -24,9 +25,9 @@ use super::polling_runner::reconcile_local_repository;
 use super::{
     LocalIndexError, LocalIndexMutation, LocalIndexRequest, LocalReconciliationOutcome,
     index_local_rust_repository, index_local_rust_repository_with_hook,
-    index_local_rust_repository_with_hooks, local_producer_implementation_fingerprint_inputs,
+    index_local_rust_repository_with_hooks, local_snapshot_implementation_fingerprint_inputs,
     map_index_mutation_error, phase0_local_rust_artifact_identity,
-    phase0_local_source_artifact_identities,
+    phase0_local_source_artifact_identities, phase0_local_source_snapshot_profile,
 };
 
 const REPOSITORY_ID: &str = concat!(
@@ -70,25 +71,33 @@ fn deadline() -> Instant {
 }
 
 #[test]
-fn local_producer_identity_is_stable_and_extends_the_analysis_profile() {
+fn local_snapshot_identity_is_stable_while_source_artifacts_use_the_analysis_profile() {
     let base = phase0_rust_artifact_identity();
     let first = phase0_local_rust_artifact_identity();
     let second = phase0_local_rust_artifact_identity();
+    let artifacts = phase0_local_source_artifact_identities();
+    let snapshot = phase0_local_source_snapshot_profile(artifacts, base.configuration());
+    let base_snapshot = phase0_source_snapshot_profile();
 
     assert_eq!(first, second);
-    assert_ne!(first.producer_manifest(), base.producer_manifest());
+    assert_eq!(first.producer_manifest(), base.producer_manifest());
     assert_eq!(first.configuration(), base.configuration());
     assert_eq!(first.schema(), base.schema());
     assert_eq!(
         first.canonicalization_version(),
         base.canonicalization_version()
     );
+    assert_eq!(artifacts, phase0_source_artifact_identities());
+    assert_ne!(
+        snapshot.producer_manifest,
+        base_snapshot.producer_manifest()
+    );
 }
 
 #[test]
-fn local_producer_fingerprint_covers_exact_read_session_implementation() {
+fn local_snapshot_fingerprint_covers_exact_read_session_implementation() {
     let exact_session = include_bytes!("../contained_source/exact_session.rs").as_slice();
-    let inputs = local_producer_implementation_fingerprint_inputs();
+    let inputs = local_snapshot_implementation_fingerprint_inputs();
 
     assert!(inputs.iter().all(|input| !input.is_empty()));
     assert!(inputs.contains(&exact_session));
