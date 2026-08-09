@@ -243,7 +243,7 @@ mod tests {
     #[test]
     #[allow(
         clippy::too_many_lines,
-        reason = "the semantic identity vector changes each independently committed Phase 2 field in one auditable fixture"
+        reason = "the semantic identity vector changes each independently committed evidence-balanced field in one auditable fixture"
     )]
     fn overlay_identity_is_stable_and_every_semantic_component_changes_it() {
         let baseline = hash_scip_overlay_identity(input());

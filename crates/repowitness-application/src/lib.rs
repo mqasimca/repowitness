@@ -203,12 +203,13 @@ pub use repository_topology::{
     repository_topology,
 };
 pub use repowitness_analysis::{
-    MAX_PHASE2_CONTEXT_BUDGET_UNITS, MAX_PHASE2_CONTEXT_CANDIDATES,
-    PHASE2_EVIDENCE_BALANCED_PROFILE_ID, PHASE2_EVIDENCE_BALANCED_PROFILE_VERSION,
-    Phase2ContextBudget, Phase2ContextCandidate, Phase2ContextCandidateId, Phase2ContextError,
-    Phase2ContextInput, Phase2ContextOmission, Phase2ContextProfile,
-    Phase2ContextProviderAttribution, Phase2ContextProviderId, Phase2ContextResult,
-    Phase2ContextScope, Phase2ContextScopeError, Phase2ContextTier, compile_phase2_context,
+    DEFAULT_EVIDENCE_CONTEXT_BUDGET_UNITS, EVIDENCE_BALANCED_PROFILE_ID,
+    EVIDENCE_BALANCED_PROFILE_VERSION, EvidenceContextBudget, EvidenceContextCandidate,
+    EvidenceContextCandidateId, EvidenceContextError, EvidenceContextInput,
+    EvidenceContextOmission, EvidenceContextProfile, EvidenceContextProviderAttribution,
+    EvidenceContextProviderId, EvidenceContextResult, EvidenceContextScope,
+    EvidenceContextScopeError, EvidenceContextTier, MAX_EVIDENCE_CONTEXT_BUDGET_UNITS,
+    MAX_EVIDENCE_CONTEXT_CANDIDATES, compile_evidence_context,
 };
 pub use rust_graph_profile::{
     PHASE1_RUST_GRAPH_ANALYSIS_SCHEMA_VERSION, PHASE1_RUST_GRAPH_CANONICALIZATION_VERSION,

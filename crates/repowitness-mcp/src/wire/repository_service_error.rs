@@ -27,8 +27,6 @@ pub enum RepositoryServiceError {
     ContextBuild,
     /// Source-fenced revision-pinned change review failed without a receipt.
     ChangeReview,
-    /// Phase 2 context compilation failed without a usable result.
-    Phase2ContextBuild,
     /// A durable engineering-task projection could not be read or updated.
     NativeTask,
     /// Repository diagnostics failed without a usable result.
@@ -93,7 +91,6 @@ impl fmt::Display for RepositoryServiceError {
             Self::CodeGraphQuery => "code-graph-query failed",
             Self::ContextBuild => "context build failed",
             Self::ChangeReview => "change review failed",
-            Self::Phase2ContextBuild => "Phase 2 context build failed",
             Self::NativeTask => "durable native task operation failed",
             Self::Diagnostics => "repository diagnostics failed",
             Self::GraphRead => "Rust graph read failed",

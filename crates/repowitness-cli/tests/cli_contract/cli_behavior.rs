@@ -614,7 +614,8 @@ fn cli_indexes_searches_retrieves_and_reuses_python_and_stub_files() {
     assert!(context.status.success());
     assert!(context.stderr.is_empty());
     let context = String::from_utf8(context.stdout).expect("context report must be UTF-8");
-    assert!(context.contains("context_item_0_language=python\n"));
+    assert!(context.contains("context_item_0_tier=syntax\n"));
+    assert!(context.contains("context_item_0_kind=syntax\n"));
     assert!(context.contains("context_item_0_declaration_encoding=utf8\n"));
     assert!(context.contains(
         "context_item_0_declaration_data_json=\"def send(self): pass\"\n"

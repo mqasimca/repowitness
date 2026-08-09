@@ -16,8 +16,8 @@ mod architecture_overview;
 mod change_review;
 mod code_graph_query;
 mod compatibility;
-mod context_build;
 mod diagnostics;
+mod evidence_context;
 mod graph;
 mod historical_memory;
 mod memory_manage;
@@ -25,7 +25,6 @@ mod memory_mutation;
 mod memory_recall;
 mod outbound_sites;
 mod personal_memory;
-mod phase2_context;
 mod relevant_paths;
 mod repository_service_error;
 mod repository_topology;
@@ -65,14 +64,14 @@ pub use compatibility::{
     TracePathInput,
 };
 pub(crate) use compatibility::{CompatibilityAlias, compatibility_output, graph_schema_output};
-pub use context_build::{
-    ContextBuildInput, ContextBuildOutput, ContextBuildServiceRequest, McpContextCoverage,
-    McpContextItem, McpContextMemoryItem, McpContextMemoryProjection, McpContextOmission,
-    McpContextSourceItem,
-};
 pub use diagnostics::{
     DiagnosticsInput, DiagnosticsOutput, DiagnosticsServiceRequest, McpConfigurationIdentity,
     McpDiagnosticsMemoryProjection,
+};
+pub use evidence_context::{
+    EvidenceContextBuildInput, EvidenceContextBuildOutput, EvidenceContextBuildServiceRequest,
+    McpEvidenceContextAttribution, McpEvidenceContextItem, McpEvidenceContextOmission,
+    McpEvidenceContextPayload, McpEvidenceContextProviderCoverage, McpEvidenceContextScope,
 };
 pub use graph::{
     GRAPH_ARCHITECTURE_TOOL_NAME, GRAPH_EVIDENCE_TOOL_NAME, GRAPH_SEARCH_TOOL_NAME,
@@ -114,11 +113,6 @@ pub use personal_memory::{
     PersonalMemoryLifecycle, PersonalMemoryOperation, PersonalMemoryOutput,
     PersonalMemoryRecordOutput, PersonalMemoryServiceRequest,
 };
-pub use phase2_context::{
-    McpPhase2ContextAttribution, McpPhase2ContextItem, McpPhase2ContextOmission,
-    McpPhase2ContextPayload, McpPhase2ContextProviderCoverage, McpPhase2ContextScope,
-    Phase2ContextBuildInput, Phase2ContextBuildOutput, Phase2ContextBuildServiceRequest,
-};
 pub use relevant_paths::{
     McpRelevantPath, RELEVANT_PATHS_TOOL_NAME, RelevantPathsInput, RelevantPathsOutput,
     RelevantPathsServiceRequest,
@@ -155,10 +149,8 @@ pub use test_markers::{
 
 /// MCP tool name for bounded lexical supported-language symbol search.
 pub const CODE_SEARCH_TOOL_NAME: &str = "code_search";
-/// MCP tool name for deterministic bounded context compilation.
+/// MCP tool name for deterministic bounded evidence-balanced context compilation.
 pub const CONTEXT_BUILD_TOOL_NAME: &str = "context_build";
-/// MCP tool name for the separate evidence-balanced Phase 2 context profile.
-pub const PHASE2_CONTEXT_BUILD_TOOL_NAME: &str = "phase2_context_build";
 /// MCP tool name for transactionally pinned read-only repository diagnostics.
 pub const DIAGNOSTICS_TOOL_NAME: &str = "diagnostics";
 /// MCP tool name for generation-pinned engineering-memory retrieval.
@@ -187,7 +179,7 @@ pub(crate) const MAX_MCP_ARCHITECTURE_MAP_OUTPUT_BYTES: usize = 10 * 1024 * 1024
 pub(crate) const MAX_MCP_ARCHITECTURE_OVERVIEW_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
 pub(crate) const MAX_MCP_REPOSITORY_TOPOLOGY_OUTPUT_BYTES: usize = 10 * 1024 * 1024;
 pub(crate) const MAX_MCP_CONTEXT_OUTPUT_BYTES: usize = 24 * 1024 * 1024;
-pub(crate) const MAX_MCP_PHASE2_CONTEXT_OUTPUT_BYTES: usize = 24 * 1024 * 1024;
+pub(crate) const MAX_MCP_EVIDENCE_CONTEXT_OUTPUT_BYTES: usize = 24 * 1024 * 1024;
 pub(crate) const MAX_MCP_DIAGNOSTICS_OUTPUT_BYTES: usize = 256 * 1024;
 pub(crate) const MAX_MCP_GRAPH_OUTPUT_BYTES: usize = 64 * 1024 * 1024;
 pub(crate) const MAX_MCP_MEMORY_RECALL_OUTPUT_BYTES: usize = 20 * 1024 * 1024;
@@ -625,12 +617,12 @@ pub trait RepositoryService: Send + Sync + 'static {
         Err(RepositoryServiceError::RepositoryTopology)
     }
 
-    /// Compiles one bounded evidence-bearing context pack.
+    /// Compiles one bounded evidence-balanced context pack.
     fn context_build(
         &self,
-        request: ContextBuildServiceRequest,
+        request: EvidenceContextBuildServiceRequest,
         cancelled: Arc<AtomicBool>,
-    ) -> Result<ContextBuildOutput, RepositoryServiceError>;
+    ) -> Result<EvidenceContextBuildOutput, RepositoryServiceError>;
 
     /// Builds one bounded, source-fenced revision-pinned review receipt.
     fn change_review(
@@ -639,15 +631,6 @@ pub trait RepositoryService: Send + Sync + 'static {
         _cancelled: Arc<AtomicBool>,
     ) -> Result<ChangeReviewOutput, RepositoryServiceError> {
         Err(RepositoryServiceError::ChangeReview)
-    }
-
-    /// Compiles one bounded evidence-balanced Phase 2 context pack.
-    fn phase2_context_build(
-        &self,
-        _request: Phase2ContextBuildServiceRequest,
-        _cancelled: Arc<AtomicBool>,
-    ) -> Result<Phase2ContextBuildOutput, RepositoryServiceError> {
-        Err(RepositoryServiceError::Phase2ContextBuild)
     }
 
     /// Reads one transactionally pinned active repository state.

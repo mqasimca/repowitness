@@ -98,6 +98,7 @@ passed, so maintainers accepted ADR-0018 and then ADR-0021.
 | [0052](0052-explicit-rust-scip-producer-import.md) | Produce and import one Rust SCIP overlay only through explicit local execution | Proposed |
 | [0053](0053-explicit-go-scip-producer-import.md) | Produce and import one Go SCIP overlay only through explicit local execution | Proposed |
 | [0054](0054-bounded-revision-pinned-change-receipts.md) | Produce bounded revision-pinned change receipts for review | Proposed |
+| [0055](0055-canonical-evidence-balanced-context-command.md) | Use one canonical evidence-balanced context builder | Proposed |
 
 Use [0000-template.md](0000-template.md) for a new decision.
 

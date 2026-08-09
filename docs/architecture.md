@@ -75,7 +75,7 @@ writes.
 The implemented read path provides a bounded multi-language `architecture_map`
 file inventory, source-only `architecture_overview`, bounded literal `code_search`, lexical evidence-only `locate_relevant_paths`, typed exact/prefix
 `symbol_search`, exact `symbol_get`, exact declaration-contained `outbound_sites`, repository-scoped `test_markers`, exact raw-target `syntax_site_search`, current-projection `memory_recall`,
-deterministic `context_build`, transactionally pinned `diagnostics`, and native
+deterministic evidence-balanced `context_build`, transactionally pinned `diagnostics`, and native
 Rust graph status, exact-name search, site evidence, count-only architecture,
 trace, and conservative inbound impact. The architecture map is intentionally a
 file inventory: it returns exact path, language, source/artifact/producer
@@ -412,7 +412,7 @@ read-only tools by default:
 - `code_search`
 - `locate_relevant_paths`
 - `context_build`
-- `phase2_context_build`
+- `verify`
 - `diagnostics`
 - `graph_architecture`
 - `graph_evidence`
@@ -485,7 +485,7 @@ the process-current member at startup. It regenerates and atomically publishes
 the complete source-slot view before stdio starts; it never discovers sibling
 or dependency repositories. The member's opaque selector routes source-view-
 aware lexical search, relevant paths, typed declarations, architecture maps,
-graph/SCIP reads, and Phase 2 context to its exact slot. Membership is not a cross-repository
+graph/SCIP reads, and evidence-balanced context to its exact slot. Membership is not a cross-repository
 relationship claim, and tools without a source-view receipt contract stay out
 of this mode until they have one. Catalog membership mutation, reload,
 watchers, daemons, root scanning, and generic cross-repository queries remain

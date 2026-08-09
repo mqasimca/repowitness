@@ -18,6 +18,7 @@ mod local_connected_workspace;
 mod local_context_build;
 mod local_diagnostics;
 mod local_doctor;
+mod local_evidence_context_build;
 mod local_graph_index;
 mod local_graph_read;
 mod local_identity;
@@ -25,7 +26,6 @@ mod local_index;
 mod local_known_at_history;
 mod local_memory_recall;
 mod local_personal_memory;
-mod local_phase2_context_build;
 mod local_relevant_paths;
 mod local_repository_topology;
 mod local_retention;
@@ -117,6 +117,12 @@ pub use local_doctor::{
     DoctorCheckStatus, DoctorDatabaseState, DoctorOverallStatus, LocalDoctorReport,
     LocalDoctorTargets, inspect_local_doctor,
 };
+pub use local_evidence_context_build::{
+    DEFAULT_LOCAL_EVIDENCE_CONTEXT_BUILD_DEADLINE, DEFAULT_LOCAL_EVIDENCE_CONTEXT_PROVIDER_RESULTS,
+    LocalEvidenceContextBuildError, LocalEvidenceContextBuildRequest,
+    LocalEvidenceContextBuildResult, LocalEvidenceContextItem, LocalEvidenceContextWorkspace,
+    LocalEvidenceHistoryItem, build_local_evidence_context,
+};
 pub use local_graph_read::{
     DEFAULT_LOCAL_RUST_GRAPH_READ_DEADLINE, LocalRustGraphEvidenceRead, LocalRustGraphPortError,
     LocalRustGraphReadError, LocalRustGraphReadOutput, LocalRustGraphReadRequest,
@@ -142,11 +148,6 @@ pub use local_personal_memory::{
     DEFAULT_LOCAL_PERSONAL_MEMORY_READ_DEADLINE, DEFAULT_LOCAL_PERSONAL_MEMORY_WRITE_DEADLINE,
     LocalPersonalMemoryAppendRequest, LocalPersonalMemoryError, LocalPersonalMemoryReadRequest,
     append_local_personal_memory, read_local_personal_memory,
-};
-pub use local_phase2_context_build::{
-    DEFAULT_LOCAL_PHASE2_CONTEXT_BUILD_DEADLINE, LocalPhase2ContextBuildError,
-    LocalPhase2ContextBuildRequest, LocalPhase2ContextBuildResult, LocalPhase2ContextItem,
-    LocalPhase2ContextWorkspace, LocalPhase2HistoryItem, build_local_phase2_context,
 };
 pub use local_relevant_paths::{
     DEFAULT_LOCAL_RELEVANT_PATHS_DEADLINE, LocalRelevantPathsError, LocalRelevantPathsRequest,
@@ -292,7 +293,8 @@ pub use repowitness_application::{
     SymbolSearchQuery, TestMarkersLimits, TestMarkersQuery,
 };
 pub use repowitness_application::{
-    IndexedContext, IndexedContextUnavailableReason, Phase2ContextCandidate, Phase2ContextTier,
+    DEFAULT_EVIDENCE_CONTEXT_BUDGET_UNITS, EvidenceContextCandidate, EvidenceContextTier,
+    IndexedContext, IndexedContextUnavailableReason, MAX_EVIDENCE_CONTEXT_BUDGET_UNITS,
 };
 pub use repowitness_application::{
     OUTBOUND_SITES_PROFILE_VERSION, OutboundSitesAvailability, OutboundSyntaxSite,
@@ -300,11 +302,11 @@ pub use repowitness_application::{
 };
 pub use repowitness_application::{TEST_MARKERS_PROFILE_VERSION, TestMarkersAvailability};
 pub use repowitness_domain::{
-    ConfigurationDigest, ConnectedWorkspaceId, EvidenceLocation, GitObjectId, GitObjectIdError,
-    GitObjectIdFormat, MemoryAssurance, MemoryCommitId, MemoryCorrespondenceReviewOperation,
-    MemoryKind, MemoryLifecycle, MemoryObjectFormat, MemoryObservationSource,
-    MemoryRevalidationTarget, PersonalMemoryId, PersonalMemoryKind, PersonalMemoryProfileId,
-    PersonalMemoryRecord, PersonalMemoryRevision, Phase2ContextProviderAvailability,
+    ConfigurationDigest, ConnectedWorkspaceId, EvidenceContextProviderAvailability,
+    EvidenceLocation, GitObjectId, GitObjectIdError, GitObjectIdFormat, MemoryAssurance,
+    MemoryCommitId, MemoryCorrespondenceReviewOperation, MemoryKind, MemoryLifecycle,
+    MemoryObjectFormat, MemoryObservationSource, MemoryRevalidationTarget, PersonalMemoryId,
+    PersonalMemoryKind, PersonalMemoryProfileId, PersonalMemoryRecord, PersonalMemoryRevision,
     ResolutionStatus, SourceSlotId, SourceSnapshotDigest, TaskId, TaskState, TaskStatus,
 };
 pub use rust_index::{

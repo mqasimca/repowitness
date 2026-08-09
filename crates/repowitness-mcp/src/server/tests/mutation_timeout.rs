@@ -45,9 +45,9 @@ impl RepositoryService for TimedMutationService {
 
     fn context_build(
         &self,
-        _request: ContextBuildServiceRequest,
+        _request: EvidenceContextBuildServiceRequest,
         _cancelled: Arc<AtomicBool>,
-    ) -> Result<ContextBuildOutput, RepositoryServiceError> {
+    ) -> Result<EvidenceContextBuildOutput, RepositoryServiceError> {
         Err(RepositoryServiceError::ContextBuild)
     }
 

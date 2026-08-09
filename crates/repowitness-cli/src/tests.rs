@@ -7,7 +7,6 @@ use super::*;
 mod bounded_file;
 mod codex;
 mod configuration;
-mod context;
 mod core_index_search;
 mod diagnostics;
 mod doctor;

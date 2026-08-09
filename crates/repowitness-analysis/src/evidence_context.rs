@@ -1,12 +1,13 @@
-//! Deterministic Phase 2 evidence-balanced context admission.
+//! Deterministic evidence-balanced evidence-balanced context admission.
 //!
-//! This profile is deliberately separate from the accepted Phase 0 RRF
+//! This profile is deliberately separate from the accepted baseline RRF
 //! compiler. Callers supply already-validated, generation-pinned evidence
 //! candidates; this module performs no storage, filesystem, or graph I/O.
 
 use repowitness_domain::{
-    Phase2ContextCandidateId, Phase2ContextProfile, Phase2ContextProviderAttribution,
-    Phase2ContextProviderCoverage, Phase2ContextProviderId, Phase2ContextScope, Phase2ContextTier,
+    EvidenceContextCandidateId, EvidenceContextProfile, EvidenceContextProviderAttribution,
+    EvidenceContextProviderCoverage, EvidenceContextProviderId, EvidenceContextScope,
+    EvidenceContextTier,
 };
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
@@ -17,19 +18,21 @@ use std::{
 };
 
 /// Maximum candidate items admitted to one bounded profile invocation.
-pub const MAX_PHASE2_CONTEXT_CANDIDATES: usize = 10_000;
-/// Largest complete-item budget accepted by the first Phase 2 profile.
-pub const MAX_PHASE2_CONTEXT_BUDGET_UNITS: u64 = 1_048_576;
+pub const MAX_EVIDENCE_CONTEXT_CANDIDATES: usize = 10_000;
+/// Largest complete-item budget accepted by the first evidence-balanced profile.
+pub const MAX_EVIDENCE_CONTEXT_BUDGET_UNITS: u64 = 1_048_576;
+/// Default conservative complete-item budget for context compilation.
+pub const DEFAULT_EVIDENCE_CONTEXT_BUDGET_UNITS: u64 = 64 * 1024;
 
-/// A validated whole-item allocation budget for one Phase 2 profile run.
+/// A validated whole-item allocation budget for one evidence-balanced profile run.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct Phase2ContextBudget(u64);
+pub struct EvidenceContextBudget(u64);
 
-impl Phase2ContextBudget {
+impl EvidenceContextBudget {
     /// Creates a bounded positive allocation budget.
-    pub const fn try_new(units: u64) -> Result<Self, Phase2ContextError> {
-        if units == 0 || units > MAX_PHASE2_CONTEXT_BUDGET_UNITS {
-            return Err(Phase2ContextError::InvalidBudget);
+    pub const fn try_new(units: u64) -> Result<Self, EvidenceContextError> {
+        if units == 0 || units > MAX_EVIDENCE_CONTEXT_BUDGET_UNITS {
+            return Err(EvidenceContextError::InvalidBudget);
         }
         Ok(Self(units))
     }
@@ -41,30 +44,36 @@ impl Phase2ContextBudget {
     }
 }
 
+impl Default for EvidenceContextBudget {
+    fn default() -> Self {
+        Self(DEFAULT_EVIDENCE_CONTEXT_BUDGET_UNITS)
+    }
+}
+
 /// One complete candidate supplied by a single evidence provider.
-pub struct Phase2ContextCandidate<T> {
-    scope: Phase2ContextScope,
-    tier: Phase2ContextTier,
+pub struct EvidenceContextCandidate<T> {
+    scope: EvidenceContextScope,
+    tier: EvidenceContextTier,
     provider_rank: u32,
     estimated_units: u64,
-    identity: Phase2ContextCandidateId,
-    attributions: Box<[Phase2ContextProviderAttribution]>,
+    identity: EvidenceContextCandidateId,
+    attributions: Box<[EvidenceContextProviderAttribution]>,
     payload: T,
 }
 
-impl<T> Phase2ContextCandidate<T> {
+impl<T> EvidenceContextCandidate<T> {
     /// Validates one whole-item evidence candidate.
     pub fn try_new(
-        scope: Phase2ContextScope,
-        tier: Phase2ContextTier,
+        scope: EvidenceContextScope,
+        tier: EvidenceContextTier,
         provider_rank: u32,
         estimated_units: u64,
-        identity: Phase2ContextCandidateId,
-        provider: Phase2ContextProviderId,
+        identity: EvidenceContextCandidateId,
+        provider: EvidenceContextProviderId,
         payload: T,
-    ) -> Result<Self, Phase2ContextError> {
+    ) -> Result<Self, EvidenceContextError> {
         if provider_rank == 0 || estimated_units == 0 {
-            return Err(Phase2ContextError::InvalidCandidate);
+            return Err(EvidenceContextError::InvalidCandidate);
         }
         Ok(Self {
             scope,
@@ -72,7 +81,7 @@ impl<T> Phase2ContextCandidate<T> {
             provider_rank,
             estimated_units,
             identity,
-            attributions: vec![Phase2ContextProviderAttribution::new(
+            attributions: vec![EvidenceContextProviderAttribution::new(
                 provider,
                 tier,
                 provider_rank,
@@ -84,13 +93,13 @@ impl<T> Phase2ContextCandidate<T> {
 
     /// Returns the candidate's explicit evidence tier.
     #[must_use]
-    pub const fn tier(&self) -> Phase2ContextTier {
+    pub const fn tier(&self) -> EvidenceContextTier {
         self.tier
     }
 
     /// Returns the exact immutable source scope independently validated for this item.
     #[must_use]
-    pub const fn scope(&self) -> Phase2ContextScope {
+    pub const fn scope(&self) -> EvidenceContextScope {
         self.scope
     }
 
@@ -108,13 +117,13 @@ impl<T> Phase2ContextCandidate<T> {
 
     /// Returns the stable evidence identity used for deterministic ties.
     #[must_use]
-    pub const fn identity(&self) -> Phase2ContextCandidateId {
+    pub const fn identity(&self) -> EvidenceContextCandidateId {
         self.identity
     }
 
     /// Returns every independently attributable provider of this exact item.
     #[must_use]
-    pub fn attributions(&self) -> &[Phase2ContextProviderAttribution] {
+    pub fn attributions(&self) -> &[EvidenceContextProviderAttribution] {
         &self.attributions
     }
 
@@ -125,46 +134,46 @@ impl<T> Phase2ContextCandidate<T> {
     }
 }
 
-const EVIDENCE_TIERS: [Phase2ContextTier; 7] = [
-    Phase2ContextTier::PreciseOverlay,
-    Phase2ContextTier::Syntax,
-    Phase2ContextTier::Structural,
-    Phase2ContextTier::References,
-    Phase2ContextTier::Memory,
-    Phase2ContextTier::History,
-    Phase2ContextTier::Unresolved,
+const EVIDENCE_TIERS: [EvidenceContextTier; 7] = [
+    EvidenceContextTier::PreciseOverlay,
+    EvidenceContextTier::Syntax,
+    EvidenceContextTier::Structural,
+    EvidenceContextTier::References,
+    EvidenceContextTier::Memory,
+    EvidenceContextTier::History,
+    EvidenceContextTier::Unresolved,
 ];
 
-const fn tier_index(tier: Phase2ContextTier) -> usize {
+const fn tier_index(tier: EvidenceContextTier) -> usize {
     match tier {
-        Phase2ContextTier::Anchor => 0,
-        Phase2ContextTier::PreciseOverlay => 1,
-        Phase2ContextTier::Syntax => 2,
-        Phase2ContextTier::Structural => 3,
-        Phase2ContextTier::References => 4,
-        Phase2ContextTier::Memory => 5,
-        Phase2ContextTier::History => 6,
-        Phase2ContextTier::Unresolved => 7,
+        EvidenceContextTier::Anchor => 0,
+        EvidenceContextTier::PreciseOverlay => 1,
+        EvidenceContextTier::Syntax => 2,
+        EvidenceContextTier::Structural => 3,
+        EvidenceContextTier::References => 4,
+        EvidenceContextTier::Memory => 5,
+        EvidenceContextTier::History => 6,
+        EvidenceContextTier::Unresolved => 7,
     }
 }
 
-const fn tier_lane(tier: Phase2ContextTier) -> Option<usize> {
+const fn tier_lane(tier: EvidenceContextTier) -> Option<usize> {
     match tier {
-        Phase2ContextTier::Anchor => None,
-        Phase2ContextTier::PreciseOverlay => Some(0),
-        Phase2ContextTier::Syntax => Some(1),
-        Phase2ContextTier::Structural => Some(2),
-        Phase2ContextTier::References => Some(3),
-        Phase2ContextTier::Memory => Some(4),
-        Phase2ContextTier::History => Some(5),
-        Phase2ContextTier::Unresolved => Some(6),
+        EvidenceContextTier::Anchor => None,
+        EvidenceContextTier::PreciseOverlay => Some(0),
+        EvidenceContextTier::Syntax => Some(1),
+        EvidenceContextTier::Structural => Some(2),
+        EvidenceContextTier::References => Some(3),
+        EvidenceContextTier::Memory => Some(4),
+        EvidenceContextTier::History => Some(5),
+        EvidenceContextTier::Unresolved => Some(6),
     }
 }
 
-impl<T> fmt::Debug for Phase2ContextCandidate<T> {
+impl<T> fmt::Debug for EvidenceContextCandidate<T> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("Phase2ContextCandidate")
+            .debug_struct("EvidenceContextCandidate")
             .field("scope", &self.scope)
             .field("tier", &self.tier)
             .field("provider_rank", &self.provider_rank)
@@ -176,9 +185,9 @@ impl<T> fmt::Debug for Phase2ContextCandidate<T> {
     }
 }
 
-/// Stable failure from Phase 2 deterministic allocation.
+/// Stable failure from evidence-balanced deterministic allocation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Phase2ContextError {
+pub enum EvidenceContextError {
     /// The requested whole-item allocation budget was outside the fixed profile bound.
     InvalidBudget,
     /// The request supplied an anchor in the wrong tier or too many candidates.
@@ -193,57 +202,59 @@ pub enum Phase2ContextError {
     DeadlineExceeded,
 }
 
-impl fmt::Display for Phase2ContextError {
+impl fmt::Display for EvidenceContextError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
-            Self::InvalidBudget => "invalid Phase 2 context budget",
-            Self::InvalidInput => "invalid Phase 2 context input",
-            Self::InvalidCandidate => "invalid or duplicate Phase 2 context candidate",
-            Self::CountNotRepresentable => "Phase 2 context count is not representable safely",
-            Self::Cancelled => "Phase 2 context allocation cancelled",
-            Self::DeadlineExceeded => "Phase 2 context allocation deadline exceeded",
+            Self::InvalidBudget => "invalid evidence-balanced context budget",
+            Self::InvalidInput => "invalid evidence-balanced context input",
+            Self::InvalidCandidate => "invalid or duplicate evidence-balanced context candidate",
+            Self::CountNotRepresentable => {
+                "evidence-balanced context count is not representable safely"
+            }
+            Self::Cancelled => "evidence-balanced context allocation cancelled",
+            Self::DeadlineExceeded => "evidence-balanced context allocation deadline exceeded",
         })
     }
 }
 
-impl Error for Phase2ContextError {}
+impl Error for EvidenceContextError {}
 
-/// Complete evidence inputs for one named Phase 2 allocation request.
-pub struct Phase2ContextInput<T> {
-    scope: Phase2ContextScope,
-    anchor: Option<Phase2ContextCandidate<T>>,
-    candidates: Vec<Phase2ContextCandidate<T>>,
-    provider_coverage: Box<[Phase2ContextProviderCoverage]>,
+/// Complete evidence inputs for one named evidence-balanced allocation request.
+pub struct EvidenceContextInput<T> {
+    scope: EvidenceContextScope,
+    anchor: Option<EvidenceContextCandidate<T>>,
+    candidates: Vec<EvidenceContextCandidate<T>>,
+    provider_coverage: Box<[EvidenceContextProviderCoverage]>,
 }
 
-impl<T> Phase2ContextInput<T> {
+impl<T> EvidenceContextInput<T> {
     /// Groups exact duplicates while retaining every independently attributable provider.
     pub fn try_new(
-        scope: Phase2ContextScope,
-        anchor: Option<Phase2ContextCandidate<T>>,
-        candidates: Vec<Phase2ContextCandidate<T>>,
-    ) -> Result<Self, Phase2ContextError> {
+        scope: EvidenceContextScope,
+        anchor: Option<EvidenceContextCandidate<T>>,
+        candidates: Vec<EvidenceContextCandidate<T>>,
+    ) -> Result<Self, EvidenceContextError> {
         if anchor.as_ref().is_some_and(|candidate| {
-            candidate.tier() != Phase2ContextTier::Anchor || candidate.scope() != scope
-        }) || candidates.len() > MAX_PHASE2_CONTEXT_CANDIDATES
+            candidate.tier() != EvidenceContextTier::Anchor || candidate.scope() != scope
+        }) || candidates.len() > MAX_EVIDENCE_CONTEXT_CANDIDATES
             || candidates.iter().any(|candidate| {
-                candidate.tier() == Phase2ContextTier::Anchor || candidate.scope() != scope
+                candidate.tier() == EvidenceContextTier::Anchor || candidate.scope() != scope
             })
         {
-            return Err(Phase2ContextError::InvalidInput);
+            return Err(EvidenceContextError::InvalidInput);
         }
         let mut identities = BTreeSet::new();
         if let Some(anchor) = &anchor
             && !identities.insert(anchor.identity())
         {
-            return Err(Phase2ContextError::InvalidCandidate);
+            return Err(EvidenceContextError::InvalidCandidate);
         }
         let mut grouped = BTreeMap::new();
         for candidate in candidates {
             if !identities.insert(candidate.identity())
                 && !grouped.contains_key(&candidate.identity())
             {
-                return Err(Phase2ContextError::InvalidCandidate);
+                return Err(EvidenceContextError::InvalidCandidate);
             }
             match grouped.entry(candidate.identity()) {
                 std::collections::btree_map::Entry::Vacant(entry) => {
@@ -268,14 +279,14 @@ impl<T> Phase2ContextInput<T> {
     /// coverage is therefore supplied separately from allocation candidates.
     pub fn with_provider_coverage(
         mut self,
-        coverage: Vec<Phase2ContextProviderCoverage>,
-    ) -> Result<Self, Phase2ContextError> {
+        coverage: Vec<EvidenceContextProviderCoverage>,
+    ) -> Result<Self, EvidenceContextError> {
         let mut tiers = BTreeSet::new();
         if coverage
             .iter()
             .any(|coverage| !tiers.insert(coverage.tier()))
         {
-            return Err(Phase2ContextError::InvalidInput);
+            return Err(EvidenceContextError::InvalidInput);
         }
         self.provider_coverage = coverage.into_boxed_slice();
         Ok(self)
@@ -283,13 +294,13 @@ impl<T> Phase2ContextInput<T> {
 
     /// Returns the one immutable source scope shared by every candidate.
     #[must_use]
-    pub const fn scope(&self) -> Phase2ContextScope {
+    pub const fn scope(&self) -> EvidenceContextScope {
         self.scope
     }
 }
 
-impl<T> Phase2ContextCandidate<T> {
-    fn merge_duplicate(&mut self, duplicate: Self) -> Result<(), Phase2ContextError> {
+impl<T> EvidenceContextCandidate<T> {
+    fn merge_duplicate(&mut self, duplicate: Self) -> Result<(), EvidenceContextError> {
         if self.estimated_units != duplicate.estimated_units
             || self.attributions.iter().any(|existing| {
                 duplicate
@@ -298,7 +309,7 @@ impl<T> Phase2ContextCandidate<T> {
                     .any(|incoming| existing.provider() == incoming.provider())
             })
         {
-            return Err(Phase2ContextError::InvalidCandidate);
+            return Err(EvidenceContextError::InvalidCandidate);
         }
         let old_tier = self.tier;
         let duplicate_tier = duplicate.tier;
@@ -324,26 +335,26 @@ impl<T> Phase2ContextCandidate<T> {
         Ok(())
     }
 
-    fn primary_provider(&self) -> Phase2ContextProviderId {
+    fn primary_provider(&self) -> EvidenceContextProviderId {
         self.attributions
             .iter()
             .map(|attribution| attribution.provider())
             .min()
-            .expect("Phase 2 candidate always has one provider attribution")
+            .expect("evidence-balanced candidate always has one provider attribution")
     }
 }
 
 /// Categorical omission of complete candidates from one evidence tier.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct Phase2ContextOmission {
-    tier: Phase2ContextTier,
+pub struct EvidenceContextOmission {
+    tier: EvidenceContextTier,
     count: u64,
 }
 
-impl Phase2ContextOmission {
+impl EvidenceContextOmission {
     /// Returns the evidence tier whose complete candidates did not fit.
     #[must_use]
-    pub const fn tier(self) -> Phase2ContextTier {
+    pub const fn tier(self) -> EvidenceContextTier {
         self.tier
     }
 
@@ -355,32 +366,32 @@ impl Phase2ContextOmission {
 }
 
 /// Complete allocation result in deterministic admission order.
-pub struct Phase2ContextResult<T> {
-    profile: Phase2ContextProfile,
-    scope: Phase2ContextScope,
-    budget: Phase2ContextBudget,
+pub struct EvidenceContextResult<T> {
+    profile: EvidenceContextProfile,
+    scope: EvidenceContextScope,
+    budget: EvidenceContextBudget,
     used_units: u64,
-    items: Box<[Phase2ContextCandidate<T>]>,
-    provider_coverage: Box<[Phase2ContextProviderCoverage]>,
-    omissions: Box<[Phase2ContextOmission]>,
+    items: Box<[EvidenceContextCandidate<T>]>,
+    provider_coverage: Box<[EvidenceContextProviderCoverage]>,
+    omissions: Box<[EvidenceContextOmission]>,
 }
 
-impl<T> Phase2ContextResult<T> {
+impl<T> EvidenceContextResult<T> {
     /// Returns the named immutable allocation profile.
     #[must_use]
-    pub const fn profile(&self) -> Phase2ContextProfile {
+    pub const fn profile(&self) -> EvidenceContextProfile {
         self.profile
     }
 
     /// Returns the immutable source member shared by every admitted item.
     #[must_use]
-    pub const fn scope(&self) -> Phase2ContextScope {
+    pub const fn scope(&self) -> EvidenceContextScope {
         self.scope
     }
 
     /// Returns the admitted whole-item budget.
     #[must_use]
-    pub const fn budget(&self) -> Phase2ContextBudget {
+    pub const fn budget(&self) -> EvidenceContextBudget {
         self.budget
     }
 
@@ -392,36 +403,36 @@ impl<T> Phase2ContextResult<T> {
 
     /// Returns admitted candidates in deterministic allocation order.
     #[must_use]
-    pub fn items(&self) -> &[Phase2ContextCandidate<T>] {
+    pub fn items(&self) -> &[EvidenceContextCandidate<T>] {
         &self.items
     }
 
     /// Returns categorical provider availability before allocation.
     #[must_use]
-    pub fn provider_coverage(&self) -> &[Phase2ContextProviderCoverage] {
+    pub fn provider_coverage(&self) -> &[EvidenceContextProviderCoverage] {
         &self.provider_coverage
     }
 
     /// Returns categorical complete-item budget omissions by tier.
     #[must_use]
-    pub fn omissions(&self) -> &[Phase2ContextOmission] {
+    pub fn omissions(&self) -> &[EvidenceContextOmission] {
         &self.omissions
     }
 }
 
-/// Allocates exact evidence through a named deterministic Phase 2 profile.
-pub fn compile_phase2_context<T>(
-    profile: Phase2ContextProfile,
-    input: Phase2ContextInput<T>,
-    budget: Phase2ContextBudget,
+/// Allocates exact evidence through a named deterministic evidence-balanced profile.
+pub fn compile_evidence_context<T>(
+    profile: EvidenceContextProfile,
+    input: EvidenceContextInput<T>,
+    budget: EvidenceContextBudget,
     cancelled: &AtomicBool,
     deadline: Instant,
-) -> Result<Phase2ContextResult<T>, Phase2ContextError> {
+) -> Result<EvidenceContextResult<T>, EvidenceContextError> {
     check_control(cancelled, deadline)?;
     let scope = input.scope;
-    let mut lanes: [Vec<Phase2ContextCandidate<T>>; 7] = std::array::from_fn(|_| Vec::new());
+    let mut lanes: [Vec<EvidenceContextCandidate<T>>; 7] = std::array::from_fn(|_| Vec::new());
     for candidate in input.candidates {
-        let lane = tier_lane(candidate.tier()).ok_or(Phase2ContextError::InvalidInput)?;
+        let lane = tier_lane(candidate.tier()).ok_or(EvidenceContextError::InvalidInput)?;
         lanes[lane].push(candidate);
     }
     let mut lanes = lanes.map(|mut lane| {
@@ -433,7 +444,7 @@ pub fn compile_phase2_context<T>(
         });
         VecDeque::from(lane)
     });
-    let mut allocation = Phase2Allocation::new(profile, scope, budget, input.provider_coverage);
+    let mut allocation = EvidenceAllocation::new(profile, scope, budget, input.provider_coverage);
     if let Some(anchor) = input.anchor {
         allocation.try_admit(anchor, cancelled, deadline)?;
     }
@@ -441,22 +452,22 @@ pub fn compile_phase2_context<T>(
     allocation.finish()
 }
 
-struct Phase2Allocation<T> {
-    profile: Phase2ContextProfile,
-    scope: Phase2ContextScope,
-    budget: Phase2ContextBudget,
+struct EvidenceAllocation<T> {
+    profile: EvidenceContextProfile,
+    scope: EvidenceContextScope,
+    budget: EvidenceContextBudget,
     used_units: u64,
-    items: Vec<Phase2ContextCandidate<T>>,
-    provider_coverage: Box<[Phase2ContextProviderCoverage]>,
+    items: Vec<EvidenceContextCandidate<T>>,
+    provider_coverage: Box<[EvidenceContextProviderCoverage]>,
     omissions: [u64; 8],
 }
 
-impl<T> Phase2Allocation<T> {
+impl<T> EvidenceAllocation<T> {
     fn new(
-        profile: Phase2ContextProfile,
-        scope: Phase2ContextScope,
-        budget: Phase2ContextBudget,
-        provider_coverage: Box<[Phase2ContextProviderCoverage]>,
+        profile: EvidenceContextProfile,
+        scope: EvidenceContextScope,
+        budget: EvidenceContextBudget,
+        provider_coverage: Box<[EvidenceContextProviderCoverage]>,
     ) -> Self {
         Self {
             profile,
@@ -471,15 +482,15 @@ impl<T> Phase2Allocation<T> {
 
     fn try_admit(
         &mut self,
-        candidate: Phase2ContextCandidate<T>,
+        candidate: EvidenceContextCandidate<T>,
         cancelled: &AtomicBool,
         deadline: Instant,
-    ) -> Result<bool, Phase2ContextError> {
+    ) -> Result<bool, EvidenceContextError> {
         check_control(cancelled, deadline)?;
         let next = self
             .used_units
             .checked_add(candidate.estimated_units())
-            .ok_or(Phase2ContextError::CountNotRepresentable)?;
+            .ok_or(EvidenceContextError::CountNotRepresentable)?;
         if next > self.budget.units() {
             self.omit(candidate.tier())?;
             return Ok(false);
@@ -491,10 +502,10 @@ impl<T> Phase2Allocation<T> {
 
     fn admit_round(
         &mut self,
-        lanes: &mut [VecDeque<Phase2ContextCandidate<T>>; 7],
+        lanes: &mut [VecDeque<EvidenceContextCandidate<T>>; 7],
         cancelled: &AtomicBool,
         deadline: Instant,
-    ) -> Result<bool, Phase2ContextError> {
+    ) -> Result<bool, EvidenceContextError> {
         let mut admitted = false;
         for tier in EVIDENCE_TIERS {
             let lane = &mut lanes[tier_lane(tier).expect("evidence tier")];
@@ -508,33 +519,33 @@ impl<T> Phase2Allocation<T> {
         Ok(admitted)
     }
 
-    fn omit(&mut self, tier: Phase2ContextTier) -> Result<(), Phase2ContextError> {
+    fn omit(&mut self, tier: EvidenceContextTier) -> Result<(), EvidenceContextError> {
         let count = &mut self.omissions[tier_index(tier)];
         *count = count
             .checked_add(1)
-            .ok_or(Phase2ContextError::CountNotRepresentable)?;
+            .ok_or(EvidenceContextError::CountNotRepresentable)?;
         Ok(())
     }
 
-    fn finish(self) -> Result<Phase2ContextResult<T>, Phase2ContextError> {
+    fn finish(self) -> Result<EvidenceContextResult<T>, EvidenceContextError> {
         let tiers = [
-            Phase2ContextTier::Anchor,
-            Phase2ContextTier::PreciseOverlay,
-            Phase2ContextTier::Syntax,
-            Phase2ContextTier::Structural,
-            Phase2ContextTier::References,
-            Phase2ContextTier::Memory,
-            Phase2ContextTier::History,
-            Phase2ContextTier::Unresolved,
+            EvidenceContextTier::Anchor,
+            EvidenceContextTier::PreciseOverlay,
+            EvidenceContextTier::Syntax,
+            EvidenceContextTier::Structural,
+            EvidenceContextTier::References,
+            EvidenceContextTier::Memory,
+            EvidenceContextTier::History,
+            EvidenceContextTier::Unresolved,
         ];
         let omissions = tiers
             .into_iter()
             .zip(self.omissions)
             .filter_map(|(tier, count)| {
-                (count != 0).then_some(Phase2ContextOmission { tier, count })
+                (count != 0).then_some(EvidenceContextOmission { tier, count })
             })
             .collect();
-        Ok(Phase2ContextResult {
+        Ok(EvidenceContextResult {
             profile: self.profile,
             scope: self.scope,
             budget: self.budget,
@@ -546,11 +557,11 @@ impl<T> Phase2Allocation<T> {
     }
 }
 
-fn check_control(cancelled: &AtomicBool, deadline: Instant) -> Result<(), Phase2ContextError> {
+fn check_control(cancelled: &AtomicBool, deadline: Instant) -> Result<(), EvidenceContextError> {
     if cancelled.load(Ordering::Acquire) {
-        Err(Phase2ContextError::Cancelled)
+        Err(EvidenceContextError::Cancelled)
     } else if Instant::now() >= deadline {
-        Err(Phase2ContextError::DeadlineExceeded)
+        Err(EvidenceContextError::DeadlineExceeded)
     } else {
         Ok(())
     }
@@ -561,15 +572,15 @@ mod tests {
     use std::{sync::atomic::AtomicBool, time::Duration};
 
     use repowitness_domain::{
-        ConnectedWorkspaceId, PHASE2_EVIDENCE_BALANCED_PROFILE_ID,
-        Phase2ContextProviderAvailability, Phase2ContextProviderCoverage, RepositoryIdentityDigest,
-        SourceManifestDigest, SourceSlotId, SourceSnapshotDigest,
+        ConnectedWorkspaceId, EVIDENCE_BALANCED_PROFILE_ID, EvidenceContextProviderAvailability,
+        EvidenceContextProviderCoverage, RepositoryIdentityDigest, SourceManifestDigest,
+        SourceSlotId, SourceSnapshotDigest,
     };
 
     use super::*;
 
-    fn scope() -> Phase2ContextScope {
-        Phase2ContextScope::try_new(
+    fn scope() -> EvidenceContextScope {
+        EvidenceContextScope::try_new(
             RepositoryIdentityDigest::new([1; 32]),
             ConnectedWorkspaceId::new([2; 32]),
             1,
@@ -583,18 +594,18 @@ mod tests {
     }
 
     fn candidate(
-        tier: Phase2ContextTier,
+        tier: EvidenceContextTier,
         rank: u32,
         units: u64,
         id: u8,
-    ) -> Phase2ContextCandidate<&'static str> {
-        Phase2ContextCandidate::try_new(
+    ) -> EvidenceContextCandidate<&'static str> {
+        EvidenceContextCandidate::try_new(
             scope(),
             tier,
             rank,
             units,
-            Phase2ContextCandidateId::new([id; 32]),
-            Phase2ContextProviderId::new([id; 32]),
+            EvidenceContextCandidateId::new([id; 32]),
+            EvidenceContextProviderId::new([id; 32]),
             "payload",
         )
         .expect("candidate")
@@ -603,43 +614,43 @@ mod tests {
     #[test]
     fn named_profile_admits_anchor_then_one_item_per_evidence_tier_per_round() {
         let cancelled = AtomicBool::new(false);
-        let input = Phase2ContextInput::try_new(
+        let input = EvidenceContextInput::try_new(
             scope(),
-            Some(candidate(Phase2ContextTier::Anchor, 1, 2, 1)),
+            Some(candidate(EvidenceContextTier::Anchor, 1, 2, 1)),
             vec![
-                candidate(Phase2ContextTier::Memory, 2, 2, 7),
-                candidate(Phase2ContextTier::PreciseOverlay, 2, 2, 3),
-                candidate(Phase2ContextTier::Syntax, 1, 2, 5),
-                candidate(Phase2ContextTier::Memory, 1, 2, 6),
-                candidate(Phase2ContextTier::PreciseOverlay, 1, 2, 2),
+                candidate(EvidenceContextTier::Memory, 2, 2, 7),
+                candidate(EvidenceContextTier::PreciseOverlay, 2, 2, 3),
+                candidate(EvidenceContextTier::Syntax, 1, 2, 5),
+                candidate(EvidenceContextTier::Memory, 1, 2, 6),
+                candidate(EvidenceContextTier::PreciseOverlay, 1, 2, 2),
             ],
         )
         .expect("input");
-        let result = compile_phase2_context(
-            Phase2ContextProfile::EvidenceBalancedV1,
+        let result = compile_evidence_context(
+            EvidenceContextProfile::EvidenceBalancedV1,
             input,
-            Phase2ContextBudget::try_new(12).expect("budget"),
+            EvidenceContextBudget::try_new(12).expect("budget"),
             &cancelled,
             Instant::now() + Duration::from_secs(1),
         )
         .expect("result");
 
-        assert_eq!(result.profile().id(), PHASE2_EVIDENCE_BALANCED_PROFILE_ID);
+        assert_eq!(result.profile().id(), EVIDENCE_BALANCED_PROFILE_ID);
         assert_eq!(result.profile().version(), 1);
         assert_eq!(result.used_units(), 12);
         assert_eq!(
             result
                 .items()
                 .iter()
-                .map(Phase2ContextCandidate::tier)
+                .map(EvidenceContextCandidate::tier)
                 .collect::<Vec<_>>(),
             vec![
-                Phase2ContextTier::Anchor,
-                Phase2ContextTier::PreciseOverlay,
-                Phase2ContextTier::Syntax,
-                Phase2ContextTier::Memory,
-                Phase2ContextTier::PreciseOverlay,
-                Phase2ContextTier::Memory,
+                EvidenceContextTier::Anchor,
+                EvidenceContextTier::PreciseOverlay,
+                EvidenceContextTier::Syntax,
+                EvidenceContextTier::Memory,
+                EvidenceContextTier::PreciseOverlay,
+                EvidenceContextTier::Memory,
             ]
         );
     }
@@ -647,31 +658,31 @@ mod tests {
     #[test]
     fn provider_coverage_is_retained_independently_of_budget_omissions() {
         let cancelled = AtomicBool::new(false);
-        let input = Phase2ContextInput::try_new(
+        let input = EvidenceContextInput::try_new(
             scope(),
             None,
-            vec![candidate(Phase2ContextTier::Syntax, 1, 4, 8)],
+            vec![candidate(EvidenceContextTier::Syntax, 1, 4, 8)],
         )
         .expect("input")
         .with_provider_coverage(vec![
-            Phase2ContextProviderCoverage::try_new(
-                Phase2ContextTier::PreciseOverlay,
-                Phase2ContextProviderAvailability::Unavailable,
+            EvidenceContextProviderCoverage::try_new(
+                EvidenceContextTier::PreciseOverlay,
+                EvidenceContextProviderAvailability::Unavailable,
                 0,
             )
             .expect("unavailable coverage"),
-            Phase2ContextProviderCoverage::try_new(
-                Phase2ContextTier::Syntax,
-                Phase2ContextProviderAvailability::Available,
+            EvidenceContextProviderCoverage::try_new(
+                EvidenceContextTier::Syntax,
+                EvidenceContextProviderAvailability::Available,
                 1,
             )
             .expect("available coverage"),
         ])
         .expect("coverage");
-        let result = compile_phase2_context(
-            Phase2ContextProfile::EvidenceBalancedV1,
+        let result = compile_evidence_context(
+            EvidenceContextProfile::EvidenceBalancedV1,
             input,
-            Phase2ContextBudget::try_new(2).expect("budget"),
+            EvidenceContextBudget::try_new(2).expect("budget"),
             &cancelled,
             Instant::now() + Duration::from_secs(1),
         )
@@ -679,38 +690,38 @@ mod tests {
         assert_eq!(result.provider_coverage().len(), 2);
         assert_eq!(
             result.provider_coverage()[0].availability(),
-            Phase2ContextProviderAvailability::Unavailable
+            EvidenceContextProviderAvailability::Unavailable
         );
-        assert_eq!(result.omissions()[0].tier(), Phase2ContextTier::Syntax);
+        assert_eq!(result.omissions()[0].tier(), EvidenceContextTier::Syntax);
     }
 
     #[test]
     fn whole_item_admission_skips_an_oversize_tier_item_without_starving_a_later_tier() {
         let cancelled = AtomicBool::new(false);
-        let input = Phase2ContextInput::try_new(
+        let input = EvidenceContextInput::try_new(
             scope(),
             None,
             vec![
-                candidate(Phase2ContextTier::Syntax, 1, 6, 1),
-                candidate(Phase2ContextTier::History, 1, 5, 2),
+                candidate(EvidenceContextTier::Syntax, 1, 6, 1),
+                candidate(EvidenceContextTier::History, 1, 5, 2),
             ],
         )
         .expect("input");
-        let result = compile_phase2_context(
-            Phase2ContextProfile::EvidenceBalancedV1,
+        let result = compile_evidence_context(
+            EvidenceContextProfile::EvidenceBalancedV1,
             input,
-            Phase2ContextBudget::try_new(5).expect("budget"),
+            EvidenceContextBudget::try_new(5).expect("budget"),
             &cancelled,
             Instant::now() + Duration::from_secs(1),
         )
         .expect("result");
 
         assert_eq!(result.items().len(), 1);
-        assert_eq!(result.items()[0].tier(), Phase2ContextTier::History);
+        assert_eq!(result.items()[0].tier(), EvidenceContextTier::History);
         assert_eq!(
             result.omissions(),
-            &[Phase2ContextOmission {
-                tier: Phase2ContextTier::Syntax,
+            &[EvidenceContextOmission {
+                tier: EvidenceContextTier::Syntax,
                 count: 1
             }]
         );
@@ -718,106 +729,109 @@ mod tests {
 
     #[test]
     fn duplicate_candidates_retain_attribution_and_cancelled_work_fails_closed() {
-        let duplicate = Phase2ContextCandidateId::new([9; 32]);
-        let input = Phase2ContextInput::try_new(
+        let duplicate = EvidenceContextCandidateId::new([9; 32]);
+        let input = EvidenceContextInput::try_new(
             scope(),
             None,
             vec![
-                Phase2ContextCandidate::try_new(
+                EvidenceContextCandidate::try_new(
                     scope(),
-                    Phase2ContextTier::Syntax,
+                    EvidenceContextTier::Syntax,
                     2,
                     1,
                     duplicate,
-                    Phase2ContextProviderId::new([2; 32]),
+                    EvidenceContextProviderId::new([2; 32]),
                     "syntax",
                 )
                 .expect("candidate"),
-                Phase2ContextCandidate::try_new(
+                EvidenceContextCandidate::try_new(
                     scope(),
-                    Phase2ContextTier::PreciseOverlay,
+                    EvidenceContextTier::PreciseOverlay,
                     1,
                     1,
                     duplicate,
-                    Phase2ContextProviderId::new([1; 32]),
+                    EvidenceContextProviderId::new([1; 32]),
                     "overlay",
                 )
                 .expect("candidate"),
             ],
         )
         .expect("exact duplicates should group");
-        let result = compile_phase2_context(
-            Phase2ContextProfile::EvidenceBalancedV1,
+        let result = compile_evidence_context(
+            EvidenceContextProfile::EvidenceBalancedV1,
             input,
-            Phase2ContextBudget::try_new(1).expect("budget"),
+            EvidenceContextBudget::try_new(1).expect("budget"),
             &AtomicBool::new(false),
             Instant::now() + Duration::from_secs(1),
         )
         .expect("result");
         assert_eq!(result.items().len(), 1);
-        assert_eq!(result.items()[0].tier(), Phase2ContextTier::PreciseOverlay);
+        assert_eq!(
+            result.items()[0].tier(),
+            EvidenceContextTier::PreciseOverlay
+        );
         assert_eq!(result.items()[0].attributions().len(), 2);
         assert_eq!(result.items()[0].payload(), &"overlay");
 
         let cancelled = AtomicBool::new(true);
-        let input = Phase2ContextInput::try_new(
+        let input = EvidenceContextInput::try_new(
             scope(),
             None,
-            vec![candidate(Phase2ContextTier::Syntax, 1, 1, 1)],
+            vec![candidate(EvidenceContextTier::Syntax, 1, 1, 1)],
         )
         .expect("input");
         assert!(matches!(
-            compile_phase2_context(
-                Phase2ContextProfile::EvidenceBalancedV1,
+            compile_evidence_context(
+                EvidenceContextProfile::EvidenceBalancedV1,
                 input,
-                Phase2ContextBudget::try_new(1).expect("budget"),
+                EvidenceContextBudget::try_new(1).expect("budget"),
                 &cancelled,
                 Instant::now() + Duration::from_secs(1),
             ),
-            Err(Phase2ContextError::Cancelled)
+            Err(EvidenceContextError::Cancelled)
         ));
     }
 
     #[test]
     fn duplicate_group_selection_and_attribution_order_are_input_permutation_independent() {
-        let duplicate = Phase2ContextCandidateId::new([9; 32]);
+        let duplicate = EvidenceContextCandidateId::new([9; 32]);
         let provider = |tier, rank, provider, payload| {
-            Phase2ContextCandidate::try_new(
+            EvidenceContextCandidate::try_new(
                 scope(),
                 tier,
                 rank,
                 2,
                 duplicate,
-                Phase2ContextProviderId::new([provider; 32]),
+                EvidenceContextProviderId::new([provider; 32]),
                 payload,
             )
             .expect("candidate")
         };
         let compile = |candidates| {
-            compile_phase2_context(
-                Phase2ContextProfile::EvidenceBalancedV1,
-                Phase2ContextInput::try_new(scope(), None, candidates).expect("input"),
-                Phase2ContextBudget::try_new(2).expect("budget"),
+            compile_evidence_context(
+                EvidenceContextProfile::EvidenceBalancedV1,
+                EvidenceContextInput::try_new(scope(), None, candidates).expect("input"),
+                EvidenceContextBudget::try_new(2).expect("budget"),
                 &AtomicBool::new(false),
                 Instant::now() + Duration::from_secs(1),
             )
             .expect("result")
         };
         let forward = compile(vec![
-            provider(Phase2ContextTier::Syntax, 1, 2, "syntax"),
-            provider(Phase2ContextTier::PreciseOverlay, 2, 3, "overlay-high"),
-            provider(Phase2ContextTier::PreciseOverlay, 1, 1, "overlay-low"),
+            provider(EvidenceContextTier::Syntax, 1, 2, "syntax"),
+            provider(EvidenceContextTier::PreciseOverlay, 2, 3, "overlay-high"),
+            provider(EvidenceContextTier::PreciseOverlay, 1, 1, "overlay-low"),
         ]);
         let reverse = compile(vec![
-            provider(Phase2ContextTier::PreciseOverlay, 1, 1, "overlay-low"),
-            provider(Phase2ContextTier::PreciseOverlay, 2, 3, "overlay-high"),
-            provider(Phase2ContextTier::Syntax, 1, 2, "syntax"),
+            provider(EvidenceContextTier::PreciseOverlay, 1, 1, "overlay-low"),
+            provider(EvidenceContextTier::PreciseOverlay, 2, 3, "overlay-high"),
+            provider(EvidenceContextTier::Syntax, 1, 2, "syntax"),
         ]);
         for result in [&forward, &reverse] {
             let [item] = result.items() else {
                 panic!("one exact duplicate group should be admitted");
             };
-            assert_eq!(item.tier(), Phase2ContextTier::PreciseOverlay);
+            assert_eq!(item.tier(), EvidenceContextTier::PreciseOverlay);
             assert_eq!(item.provider_rank(), 1);
             assert_eq!(item.payload(), &"overlay-low");
             assert_eq!(
@@ -826,9 +840,9 @@ mod tests {
                     .map(|attribution| attribution.provider())
                     .collect::<Vec<_>>(),
                 vec![
-                    Phase2ContextProviderId::new([1; 32]),
-                    Phase2ContextProviderId::new([2; 32]),
-                    Phase2ContextProviderId::new([3; 32]),
+                    EvidenceContextProviderId::new([1; 32]),
+                    EvidenceContextProviderId::new([2; 32]),
+                    EvidenceContextProviderId::new([3; 32]),
                 ]
             );
         }
@@ -836,51 +850,51 @@ mod tests {
 
     #[test]
     fn conflicting_duplicate_cost_or_provider_attribution_fails_closed() {
-        let duplicate = Phase2ContextCandidateId::new([7; 32]);
+        let duplicate = EvidenceContextCandidateId::new([7; 32]);
         let candidate = |units, provider| {
-            Phase2ContextCandidate::try_new(
+            EvidenceContextCandidate::try_new(
                 scope(),
-                Phase2ContextTier::Syntax,
+                EvidenceContextTier::Syntax,
                 1,
                 units,
                 duplicate,
-                Phase2ContextProviderId::new([provider; 32]),
+                EvidenceContextProviderId::new([provider; 32]),
                 "payload",
             )
             .expect("candidate")
         };
         assert!(matches!(
-            Phase2ContextInput::try_new(scope(), None, vec![candidate(1, 1), candidate(2, 2)]),
-            Err(Phase2ContextError::InvalidCandidate)
+            EvidenceContextInput::try_new(scope(), None, vec![candidate(1, 1), candidate(2, 2)]),
+            Err(EvidenceContextError::InvalidCandidate)
         ));
         assert!(matches!(
-            Phase2ContextInput::try_new(scope(), None, vec![candidate(1, 1), candidate(1, 1)]),
-            Err(Phase2ContextError::InvalidCandidate)
+            EvidenceContextInput::try_new(scope(), None, vec![candidate(1, 1), candidate(1, 1)]),
+            Err(EvidenceContextError::InvalidCandidate)
         ));
     }
 
     #[test]
     fn budget_boundaries_are_inclusive_and_invalid_before_allocation() {
         assert!(matches!(
-            Phase2ContextBudget::try_new(0),
-            Err(Phase2ContextError::InvalidBudget)
+            EvidenceContextBudget::try_new(0),
+            Err(EvidenceContextError::InvalidBudget)
         ));
         assert_eq!(
-            Phase2ContextBudget::try_new(MAX_PHASE2_CONTEXT_BUDGET_UNITS)
+            EvidenceContextBudget::try_new(MAX_EVIDENCE_CONTEXT_BUDGET_UNITS)
                 .expect("maximum budget should be admitted")
                 .units(),
-            MAX_PHASE2_CONTEXT_BUDGET_UNITS
+            MAX_EVIDENCE_CONTEXT_BUDGET_UNITS
         );
         assert!(matches!(
-            Phase2ContextBudget::try_new(MAX_PHASE2_CONTEXT_BUDGET_UNITS + 1),
-            Err(Phase2ContextError::InvalidBudget)
+            EvidenceContextBudget::try_new(MAX_EVIDENCE_CONTEXT_BUDGET_UNITS + 1),
+            Err(EvidenceContextError::InvalidBudget)
         ));
     }
 
     #[test]
     fn a_mismatched_source_scope_fails_before_ranking_or_publication() {
         let expected = scope();
-        let mismatched = Phase2ContextScope::try_new(
+        let mismatched = EvidenceContextScope::try_new(
             expected.repository(),
             expected.connected_workspace(),
             expected.workspace_view(),
@@ -891,19 +905,19 @@ mod tests {
             expected.manifest(),
         )
         .expect("mismatched scope remains structurally valid");
-        let candidate = Phase2ContextCandidate::try_new(
+        let candidate = EvidenceContextCandidate::try_new(
             mismatched,
-            Phase2ContextTier::Syntax,
+            EvidenceContextTier::Syntax,
             1,
             1,
-            Phase2ContextCandidateId::new([7; 32]),
-            Phase2ContextProviderId::new([8; 32]),
+            EvidenceContextCandidateId::new([7; 32]),
+            EvidenceContextProviderId::new([8; 32]),
             "payload",
         )
         .expect("candidate");
         assert!(matches!(
-            Phase2ContextInput::try_new(expected, None, vec![candidate]),
-            Err(Phase2ContextError::InvalidInput)
+            EvidenceContextInput::try_new(expected, None, vec![candidate]),
+            Err(EvidenceContextError::InvalidInput)
         ));
     }
 }

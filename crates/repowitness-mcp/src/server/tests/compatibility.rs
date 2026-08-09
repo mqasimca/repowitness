@@ -8,7 +8,7 @@ use crate::{
     SEARCH_GRAPH_ALIAS_TOOL_NAME, TRACE_PATH_ALIAS_TOOL_NAME,
 };
 
-const COMPATIBILITY_TOOL_NAMES: [&str; 32] = [
+const COMPATIBILITY_TOOL_NAMES: [&str; 31] = [
     ARCHITECTURE_MAP_TOOL_NAME,
     ARCHITECTURE_OVERVIEW_TOOL_NAME,
     CODE_GRAPH_QUERY_TOOL_NAME,
@@ -29,7 +29,6 @@ const COMPATIBILITY_TOOL_NAMES: [&str; 32] = [
     RELEVANT_PATHS_TOOL_NAME,
     MEMORY_RECALL_TOOL_NAME,
     OUTBOUND_SITES_TOOL_NAME,
-    PHASE2_CONTEXT_BUILD_TOOL_NAME,
     REPOSITORY_TOPOLOGY_TOOL_NAME,
     SCIP_EVIDENCE_TOOL_NAME,
     SCIP_RELATIONSHIP_TRACE_TOOL_NAME,
@@ -125,7 +124,6 @@ fn name_only_tools_list_contract(server: &RepoWitnessMcpServer) -> Value {
 fn service_call_count(service: &FakeService) -> usize {
     service.search_calls.load(Ordering::Relaxed)
         + service.context_calls.load(Ordering::Relaxed)
-        + service.phase2_context_calls.load(Ordering::Relaxed)
         + service.diagnostics_calls.load(Ordering::Relaxed)
         + service.graph_calls.load(Ordering::Relaxed)
         + service.scip_calls.load(Ordering::Relaxed)
@@ -302,7 +300,7 @@ fn memory_capability_adds_only_the_canonical_mutation_tool() {
         .iter()
         .map(|tool| tool.name.as_ref())
         .collect::<Vec<_>>();
-    assert_eq!(names.len(), 33);
+    assert_eq!(names.len(), 32);
     assert!(names.windows(2).all(|pair| pair[0] < pair[1]));
     assert_eq!(
         names

@@ -10,25 +10,6 @@ struct RecordingConfigurationLoader {
     outcome: Result<ResolvedConfiguration, ConfigurationLoadError>,
 }
 
-struct ConfigurationRecordingContextBuilder {
-    calls: Cell<u64>,
-    query_results: Cell<Option<u64>>,
-}
-
-impl RepositoryContextBuilder for ConfigurationRecordingContextBuilder {
-    fn build(
-        &self,
-        _invocation: &ContextInvocation,
-        configuration: &ResolvedConfiguration,
-    ) -> Result<ContextBuildOutput, String> {
-        self.calls.set(self.calls.get() + 1);
-        self.query_results.set(Some(
-            *configuration.preferences().query_results().effective(),
-        ));
-        Err("intentional test stop".to_owned())
-    }
-}
-
 struct ConfigurationRecordingMemory {
     calls: Cell<u64>,
     query_results: Cell<Option<u64>>,
@@ -366,10 +347,6 @@ fn context_recall_and_diagnostics_share_the_resolved_configuration() {
     let configuration = query_limited_configuration(3);
 
     let context_loader = RecordingConfigurationLoader::new(Ok(configuration.clone()));
-    let context = ConfigurationRecordingContextBuilder {
-        calls: Cell::new(0),
-        query_results: Cell::new(None),
-    };
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
     let code = run_context_build(
@@ -388,12 +365,9 @@ fn context_recall_and_diagnostics_share_the_resolved_configuration() {
         .into_iter(),
         &mut stdout,
         &mut stderr,
-        &context,
         &context_loader,
     );
     assert_eq!(code, EXIT_SOFTWARE);
-    assert_eq!(context.calls.get(), 1);
-    assert_eq!(context.query_results.get(), Some(3));
     assert_eq!(context_loader.calls.get(), 1);
 
     let memory_loader = RecordingConfigurationLoader::new(Ok(configuration.clone()));

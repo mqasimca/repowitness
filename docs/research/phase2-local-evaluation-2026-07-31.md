@@ -8,9 +8,9 @@
 
 ## Method
 
-[`../../scripts/run-phase2-evaluation`](../../scripts/run-phase2-evaluation)
-requires a clean checkout of the public pinned corpus. It builds the local
-release CLI, indexes into a disposable SQLite database, and runs the lexical
+The retired evaluation harness required a clean checkout of the public pinned
+corpus. It built the local release CLI, indexed into a disposable SQLite
+database, and ran the lexical
 selector, graph-only selector, supported Phase 0 context builder, and Phase 2
 context builder for `run`. It performs five warm builds for each context
 profile. The runner requires available syntax and reference providers, an
@@ -51,12 +51,6 @@ hooks, and plugins are disabled. Each answer must report
 the runner. The Phase 2 shutdown task must also use listener/handler navigation
 evidence. This makes the stale-answer comparison explicit: zero unsupported
 memory uses for Phase 2 may not exceed the Phase 0 count.
-
-Run locally:
-
-```text
-./scripts/run-phase2-evaluation --agent /path/to/mini-redis
-```
 
 ## Result
 

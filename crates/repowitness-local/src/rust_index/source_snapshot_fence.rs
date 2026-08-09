@@ -192,7 +192,7 @@ pub(crate) fn confirm_local_source_snapshot(
 
 /// Captures source bytes and confirms they still form the requested snapshot.
 ///
-/// This is the source-fence variant for consumers, such as the Phase 2 SCIP
+/// This is the source-fence variant for consumers, such as the evidence-balanced SCIP
 /// importer, which must validate hostile claims against exactly the bytes that
 /// were revalidated at the final fence. It performs no parsing or analysis.
 pub(crate) fn capture_confirmed_local_source_snapshot(

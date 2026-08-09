@@ -32,7 +32,6 @@ fn assert_mcp_tools(input: &mut ChildStdin, output: &mut BufReader<ChildStdout>)
             "locate_relevant_paths",
             "memory_recall",
             "outbound_sites",
-            "phase2_context_build",
             "repository_topology",
             "scip_evidence",
             "scip_relationship_trace",
@@ -814,13 +813,11 @@ fn assert_mcp_symbol(
     );
 }
 
-fn assert_mcp_context(
+fn assert_mcp_evidence_context(
     input: &mut ChildStdin,
     output: &mut BufReader<ChildStdout>,
     request_id: usize,
     intent: &str,
-    language: &str,
-    declaration_encoding: &str,
     declaration: &str,
 ) {
     let context = mcp_request(
@@ -840,51 +837,12 @@ fn assert_mcp_context(
             }
         }),
     );
-    let context = &context["result"]["structuredContent"];
-    assert_eq!(context["schema_version"], serde_json::json!(2));
-    let source = context["items"]
-        .as_array()
-        .and_then(|items| items.iter().find(|item| item["kind"] == "source"))
-        .expect("context must include exact source");
-    assert_eq!(source["language"], serde_json::json!(language));
-    assert_eq!(source["name"], serde_json::json!(intent));
-    assert_eq!(
-        source["declaration_encoding"],
-        serde_json::json!(declaration_encoding)
-    );
-    assert_eq!(source["declaration"], serde_json::json!(declaration));
-}
-
-fn assert_mcp_phase2_context(
-    input: &mut ChildStdin,
-    output: &mut BufReader<ChildStdout>,
-    request_id: usize,
-    intent: &str,
-    declaration: &str,
-) {
-    let context = mcp_request(
-        input,
-        output,
-        serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": request_id,
-            "method": "tools/call",
-            "params": {
-                "name": "phase2_context_build",
-                "arguments": {
-                    "intent": intent,
-                    "budget_units": 4096,
-                    "max_provider_results": 5
-                }
-            }
-        }),
-    );
     assert_eq!(context["result"]["isError"], serde_json::json!(false));
     let context = &context["result"]["structuredContent"];
     assert_eq!(context["schema_version"], serde_json::json!(1));
     assert_eq!(
         context["profile_id"],
-        serde_json::json!("phase2-evidence-balanced-v1")
+        serde_json::json!("evidence-balanced-v1")
     );
     assert!(context["scope"]["workspace_view"]
         .as_i64()
@@ -900,7 +858,7 @@ fn assert_mcp_phase2_context(
     let source = context["items"]
         .as_array()
         .and_then(|items| items.iter().find(|item| item["payload"]["kind"] == "syntax"))
-        .expect("Phase 2 context must include exact syntax evidence");
+        .expect("evidence-balanced context must include exact syntax evidence");
     assert_eq!(source["tier"], serde_json::json!("syntax"));
     assert_eq!(source["payload"]["declaration"], serde_json::json!(declaration));
     assert_eq!(

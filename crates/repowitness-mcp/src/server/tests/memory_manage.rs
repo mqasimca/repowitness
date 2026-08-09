@@ -36,7 +36,6 @@ fn memory_manage_tool_is_default_deny_and_conservatively_annotated() {
             MEMORY_MANAGE_TOOL_NAME,
             MEMORY_RECALL_TOOL_NAME,
             OUTBOUND_SITES_TOOL_NAME,
-            PHASE2_CONTEXT_BUILD_TOOL_NAME,
             REPOSITORY_TOPOLOGY_TOOL_NAME,
             SCIP_EVIDENCE_TOOL_NAME,
             SCIP_RELATIONSHIP_TRACE_TOOL_NAME,

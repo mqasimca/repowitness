@@ -8,12 +8,12 @@ mod artifact;
 mod coverage;
 mod digest;
 mod evidence;
+mod evidence_context;
 mod git;
 mod memory;
 mod memory_revalidation;
 mod path;
 mod personal_memory;
-mod phase2_evidence;
 mod resolution;
 mod result;
 mod scip_overlay;
@@ -35,6 +35,13 @@ pub use digest::{
 pub use evidence::{
     ByteLength, ByteOffset, ByteSpan, ByteSpanError, EvidenceIdentity, EvidenceLocation,
     EvidenceRecord, EvidenceRelation, EvidenceTier, ProducerIdentity,
+};
+pub use evidence_context::{
+    EVIDENCE_BALANCED_PROFILE_ID, EVIDENCE_BALANCED_PROFILE_VERSION, EvidenceContextCandidateId,
+    EvidenceContextProfile, EvidenceContextProviderAttribution,
+    EvidenceContextProviderAvailability, EvidenceContextProviderCoverage,
+    EvidenceContextProviderCoverageError, EvidenceContextProviderId, EvidenceContextScope,
+    EvidenceContextScopeError, EvidenceContextTier,
 };
 pub use git::{GitObjectId, GitObjectIdError, GitObjectIdFormat};
 pub use memory::{
@@ -61,13 +68,6 @@ pub use path::{
 pub use personal_memory::{
     PersonalMemoryId, PersonalMemoryKind, PersonalMemoryProfileId, PersonalMemoryRecord,
     PersonalMemoryRevision,
-};
-pub use phase2_evidence::{
-    PHASE2_EVIDENCE_BALANCED_PROFILE_ID, PHASE2_EVIDENCE_BALANCED_PROFILE_VERSION,
-    Phase2ContextCandidateId, Phase2ContextProfile, Phase2ContextProviderAttribution,
-    Phase2ContextProviderAvailability, Phase2ContextProviderCoverage,
-    Phase2ContextProviderCoverageError, Phase2ContextProviderId, Phase2ContextScope,
-    Phase2ContextScopeError, Phase2ContextTier,
 };
 pub use resolution::ResolutionStatus;
 pub use result::{

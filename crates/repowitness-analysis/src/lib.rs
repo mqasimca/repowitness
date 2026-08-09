@@ -5,8 +5,8 @@
 //! filesystem or database I/O.
 
 mod artifact_reuse;
+mod evidence_context;
 mod go_source;
-mod phase2_context;
 mod python_source;
 mod raw_syntax;
 mod reconciliation;
@@ -27,14 +27,14 @@ pub use artifact_reuse::{
     ArtifactKeySemantics, ArtifactPlanAction, ArtifactPlanCount, ArtifactPlanningError,
     ArtifactReusePlan, PlannedAnalysisArtifact, plan_artifact_reuse,
 };
+pub use evidence_context::{
+    DEFAULT_EVIDENCE_CONTEXT_BUDGET_UNITS, EvidenceContextBudget, EvidenceContextCandidate,
+    EvidenceContextError, EvidenceContextInput, EvidenceContextOmission, EvidenceContextResult,
+    MAX_EVIDENCE_CONTEXT_BUDGET_UNITS, MAX_EVIDENCE_CONTEXT_CANDIDATES, compile_evidence_context,
+};
 pub use go_source::{
     GO_ANALYSIS_PROFILE_VERSION, GoSourceAnalyzer, TREE_SITTER_GO_GRAMMAR_VERSION,
     go_analyzer_implementation_fingerprint_input, go_grammar_fingerprint_input,
-};
-pub use phase2_context::{
-    MAX_PHASE2_CONTEXT_BUDGET_UNITS, MAX_PHASE2_CONTEXT_CANDIDATES, Phase2ContextBudget,
-    Phase2ContextCandidate, Phase2ContextError, Phase2ContextInput, Phase2ContextOmission,
-    Phase2ContextResult, compile_phase2_context,
 };
 pub use python_source::{
     PYTHON_ANALYSIS_PROFILE_VERSION, PythonSourceAnalyzer, TREE_SITTER_PYTHON_GRAMMAR_VERSION,
@@ -54,11 +54,11 @@ pub use reconciliation::{
     reconcile_source_manifests,
 };
 pub use repowitness_domain::{
-    PHASE2_EVIDENCE_BALANCED_PROFILE_ID, PHASE2_EVIDENCE_BALANCED_PROFILE_VERSION,
-    Phase2ContextCandidateId, Phase2ContextProfile, Phase2ContextProviderAttribution,
-    Phase2ContextProviderAvailability, Phase2ContextProviderCoverage,
-    Phase2ContextProviderCoverageError, Phase2ContextProviderId, Phase2ContextScope,
-    Phase2ContextScopeError, Phase2ContextTier,
+    EVIDENCE_BALANCED_PROFILE_ID, EVIDENCE_BALANCED_PROFILE_VERSION, EvidenceContextCandidateId,
+    EvidenceContextProfile, EvidenceContextProviderAttribution,
+    EvidenceContextProviderAvailability, EvidenceContextProviderCoverage,
+    EvidenceContextProviderCoverageError, EvidenceContextProviderId, EvidenceContextScope,
+    EvidenceContextScopeError, EvidenceContextTier,
 };
 pub use rust_correspondence::{
     MAX_RUST_CORRESPONDENCE_CANDIDATES, RUST_CORRESPONDENCE_PROFILE_ID,

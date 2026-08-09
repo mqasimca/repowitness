@@ -1,4 +1,4 @@
-//! End-to-end Phase 2 admission of immutable Git-memory observations.
+//! End-to-end evidence-balanced admission of immutable Git-memory observations.
 
 use std::{
     process::Command,
@@ -12,13 +12,13 @@ use repowitness_domain::{
     SourceSnapshotDigest,
 };
 use repowitness_local::{
-    KnownAtApplicability, KnownAtEvidenceBasis, KnownAtHistoryCoverage, LocalIndexRequest,
+    EvidenceContextTier, KnownAtApplicability, KnownAtEvidenceBasis, KnownAtHistoryCoverage,
+    LocalEvidenceContextBuildRequest, LocalEvidenceContextItem, LocalIndexRequest,
     LocalKnownAtHistoryRequest, LocalMemoryApprovalRequest, LocalMemoryHistoryImportRequest,
-    LocalMemoryRevalidationRequest, LocalMemoryWriteRequest, LocalPhase2ContextBuildRequest,
-    LocalPhase2ContextItem, MemoryEffectiveState, OwnedSqliteReader, Phase2ContextTier,
-    approve_local_memory, build_local_phase2_context, import_local_memory_history,
-    index_local_repository, read_local_known_at_history, revalidate_local_memory,
-    write_local_memory,
+    LocalMemoryRevalidationRequest, LocalMemoryWriteRequest, MemoryEffectiveState,
+    OwnedSqliteReader, approve_local_memory, build_local_evidence_context,
+    import_local_memory_history, index_local_repository, read_local_known_at_history,
+    revalidate_local_memory, write_local_memory,
 };
 use rusqlite::Connection;
 
@@ -38,7 +38,7 @@ fn not_cancelled() -> Arc<AtomicBool> {
     clippy::too_many_lines,
     reason = "one end-to-end timeline proves the recorded-time cutoff cannot leak later approvals"
 )]
-fn phase2_history_requires_current_approved_memory_and_an_immutable_git_observation() {
+fn evidence_history_requires_current_approved_memory_and_an_immutable_git_observation() {
     let directory = fixture::TempDirectory::new();
     let repository = directory.repository();
     let database = directory.database();
@@ -77,7 +77,7 @@ fn phase2_history_requires_current_approved_memory_and_an_immutable_git_observat
             &database,
             repository_identity.as_str(),
             &fixture::record_id_text(),
-            "phase2-history-fixture",
+            "evidence-history-fixture",
             MIGRATION_TIMESTAMP,
             APPROVAL_TIMESTAMP,
         ),
@@ -111,7 +111,7 @@ fn phase2_history_requires_current_approved_memory_and_an_immutable_git_observat
             &repository,
             &database,
             repository_identity.as_str(),
-            "phase2-history-fixture",
+            "evidence-history-fixture",
             MIGRATION_TIMESTAMP,
             APPROVAL_TIMESTAMP + 1,
         ),
@@ -259,8 +259,8 @@ fn phase2_history_requires_current_approved_memory_and_an_immutable_git_observat
     );
     reader.shutdown(deadline).expect("reader should shut down");
 
-    let context = build_local_phase2_context(
-        LocalPhase2ContextBuildRequest::new(
+    let context = build_local_evidence_context(
+        LocalEvidenceContextBuildRequest::new(
             &repository,
             &database,
             repository_identity.as_str(),
@@ -270,8 +270,8 @@ fn phase2_history_requires_current_approved_memory_and_an_immutable_git_observat
     )
     .expect("the pinned source and current projection should build context");
     assert!(context.items().iter().any(|item| {
-        item.tier() == Phase2ContextTier::History
-            && matches!(item.payload(), LocalPhase2ContextItem::History(history)
+        item.tier() == EvidenceContextTier::History
+            && matches!(item.payload(), LocalEvidenceContextItem::History(history)
                 if history.commit() == observed_commit
                     && history.record().effective_state() == MemoryEffectiveState::Current)
     }));
@@ -302,7 +302,7 @@ fn retained_active_snapshot(
     clippy::too_many_lines,
     reason = "the end-to-end stale-history fixture keeps every lifecycle transition visible"
 )]
-fn phase2_context_never_emits_stale_memory_or_its_history_receipt() {
+fn evidence_context_never_emits_stale_memory_or_its_history_receipt() {
     let directory = fixture::TempDirectory::new();
     let repository = directory.repository();
     let database = directory.database();
@@ -340,7 +340,7 @@ fn phase2_context_never_emits_stale_memory_or_its_history_receipt() {
             &database,
             repository_identity.as_str(),
             &fixture::record_id_text(),
-            "phase2-history-stale-fixture",
+            "evidence-history-stale-fixture",
             MIGRATION_TIMESTAMP,
             APPROVAL_TIMESTAMP,
         ),
@@ -372,7 +372,7 @@ fn phase2_context_never_emits_stale_memory_or_its_history_receipt() {
             &repository,
             &database,
             repository_identity.as_str(),
-            "phase2-history-stale-fixture",
+            "evidence-history-stale-fixture",
             MIGRATION_TIMESTAMP,
             APPROVAL_TIMESTAMP + 1,
         ),
@@ -403,8 +403,8 @@ fn phase2_context_never_emits_stale_memory_or_its_history_receipt() {
     )
     .expect("the changed source should make the old evidence non-current");
 
-    let context = build_local_phase2_context(
-        LocalPhase2ContextBuildRequest::new(
+    let context = build_local_evidence_context(
+        LocalEvidenceContextBuildRequest::new(
             &repository,
             &database,
             repository_identity.as_str(),
@@ -416,7 +416,7 @@ fn phase2_context_never_emits_stale_memory_or_its_history_receipt() {
     assert!(context.items().iter().all(|item| {
         !matches!(
             item.payload(),
-            LocalPhase2ContextItem::Memory(_) | LocalPhase2ContextItem::History(_)
+            LocalEvidenceContextItem::Memory(_) | LocalEvidenceContextItem::History(_)
         )
     }));
 }
