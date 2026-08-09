@@ -2,8 +2,8 @@ use std::{collections::BTreeSet, error::Error, fmt};
 
 use super::retention::RetentionConfigurationOverrides;
 use crate::{
-    SourceLanguage, code_search::MAX_CODE_SEARCH_RESULTS,
-    context_build::MAX_CONTEXT_BUILD_BUDGET_UNITS, rust_index::MAX_RUST_INDEX_FILES,
+    MAX_EVIDENCE_CONTEXT_BUDGET_UNITS, SourceLanguage, code_search::MAX_CODE_SEARCH_RESULTS,
+    rust_index::MAX_RUST_INDEX_FILES,
 };
 
 pub(super) const SUPPORTED_CONFIGURATION_LANGUAGES: [SourceLanguage; 5] = [
@@ -21,7 +21,7 @@ pub const MAX_CONFIGURATION_FILE_LAYERS: usize = 5;
 /// Absolute query-result ceiling accepted by configuration version 1.
 pub const MAX_CONFIGURATION_QUERY_RESULTS: u64 = MAX_CODE_SEARCH_RESULTS as u64;
 /// Absolute context-content ceiling accepted by configuration version 1.
-pub const MAX_CONFIGURATION_CONTEXT_BYTES: u64 = MAX_CONTEXT_BUILD_BUDGET_UNITS;
+pub const MAX_CONFIGURATION_CONTEXT_BYTES: u64 = MAX_EVIDENCE_CONTEXT_BUDGET_UNITS;
 /// Absolute graph traversal depth accepted by configuration version 1.
 pub const MAX_CONFIGURATION_GRAPH_DEPTH: u64 = 64;
 /// Absolute graph-result ceiling accepted by configuration version 1.

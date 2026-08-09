@@ -95,11 +95,11 @@ fn workspace_index_admits_one_explicit_relative_source_without_leaking_inputs() 
     let fixture = index_workspace_fixture(&directory);
     assert_workspace_graph_cli(&fixture);
     assert_workspace_graph_mcp(&fixture);
-    assert_workspace_phase2_context_mcp(&fixture);
+    assert_workspace_evidence_context_mcp(&fixture);
 }
 
 #[test]
-fn phase2_context_build_pins_single_repository_scope_and_labels_evidence() {
+fn context_build_pins_single_repository_scope_and_labels_evidence() {
     let directory = TempDirectory::new();
     let repository = fixture_repository(&directory);
     let database = directory.database();
@@ -111,7 +111,7 @@ fn phase2_context_build_pins_single_repository_scope_and_labels_evidence() {
     );
 
     let output = repowitness_os([
-        OsStr::new("phase2-context-build"),
+        OsStr::new("context-build"),
         OsStr::new("--repository-id"),
         OsStr::new(REPOSITORY_ID),
         OsStr::new("--database"),
@@ -132,11 +132,11 @@ fn phase2_context_build_pins_single_repository_scope_and_labels_evidence() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(output.stderr.is_empty());
-    let report = String::from_utf8(output.stdout).expect("Phase 2 context report");
-    assert_eq!(report_value(&report, "operation"), "phase2-context-build");
+    let report = String::from_utf8(output.stdout).expect("evidence-balanced context report");
+    assert_eq!(report_value(&report, "operation"), "context-build");
     assert_eq!(
         report_value(&report, "profile_id"),
-        "phase2-evidence-balanced-v1"
+        "evidence-balanced-v1"
     );
     assert_eq!(report_value(&report, "profile_version"), "1");
     assert!(report_value(&report, "workspace_view")
@@ -163,11 +163,11 @@ fn phase2_context_build_pins_single_repository_scope_and_labels_evidence() {
 }
 
 #[test]
-fn phase2_context_build_accepts_one_explicit_connected_source_slot() {
+fn context_build_accepts_one_explicit_connected_source_slot() {
     let directory = TempDirectory::new();
     let fixture = index_workspace_fixture(&directory);
     let output = repowitness_os([
-        OsStr::new("phase2-context-build"),
+        OsStr::new("context-build"),
         OsStr::new("--repository-id"),
         OsStr::new(REPOSITORY_ID),
         OsStr::new("--database"),
@@ -187,8 +187,8 @@ fn phase2_context_build_accepts_one_explicit_connected_source_slot() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let report = String::from_utf8(output.stdout).expect("Phase 2 context report");
-    assert_eq!(report_value(&report, "operation"), "phase2-context-build");
+    let report = String::from_utf8(output.stdout).expect("evidence-balanced context report");
+    assert_eq!(report_value(&report, "operation"), "context-build");
     assert!(report.contains("context_item_0_kind=syntax\n"));
     for sensitive in [
         fixture.repository.to_string_lossy().as_ref(),
@@ -264,7 +264,7 @@ fn scip_import_admits_one_contained_file_and_publishes_an_exact_active_overlay()
     assert_eq!(evidence["relationships"].as_array().map(Vec::len), Some(1));
 
     let context = repowitness_os([
-        OsStr::new("phase2-context-build"),
+        OsStr::new("context-build"),
         OsStr::new("--repository-id"),
         OsStr::new(REPOSITORY_ID),
         OsStr::new("--database"),
@@ -283,13 +283,13 @@ fn scip_import_admits_one_contained_file_and_publishes_an_exact_active_overlay()
         "{}",
         String::from_utf8_lossy(&context.stderr)
     );
-    let context = String::from_utf8(context.stdout).expect("Phase 2 context report");
+    let context = String::from_utf8(context.stdout).expect("evidence-balanced context report");
     assert!(context.contains("context_item_0_tier=precise_overlay\n"));
     assert!(context.contains("context_item_0_kind=precise_overlay\n"));
     assert!(context.contains("context_item_0_relationship_count=1\n"));
     assert!(context.contains("provider_coverage_1_tier=syntax\n"));
     assert!(context.contains("provider_coverage_1_availability=available\n"));
-    assert_workspace_phase2_context_mcp_with_scip(&fixture);
+    assert_workspace_evidence_context_mcp_with_scip(&fixture);
 }
 
 #[cfg(unix)]
@@ -1057,7 +1057,7 @@ fn assert_workspace_graph_mcp(fixture: &WorkspaceGraphFixture) {
     stop_mcp(child, input, output);
 }
 
-fn assert_workspace_phase2_context_mcp(fixture: &WorkspaceGraphFixture) {
+fn assert_workspace_evidence_context_mcp(fixture: &WorkspaceGraphFixture) {
     let (child, mut input, mut output) = start_mcp_with_graph_workspace(
         &fixture.repository,
         &fixture.database,
@@ -1073,7 +1073,7 @@ fn assert_workspace_phase2_context_mcp(fixture: &WorkspaceGraphFixture) {
             "id": 61,
             "method": "tools/call",
             "params": {
-                "name": "phase2_context_build",
+                "name": "context_build",
                 "arguments": {"intent": "Widget", "budget_units": 4096}
             }
         }),
@@ -1092,7 +1092,7 @@ fn assert_workspace_phase2_context_mcp(fixture: &WorkspaceGraphFixture) {
     stop_mcp(child, input, output);
 }
 
-fn assert_workspace_phase2_context_mcp_with_scip(fixture: &WorkspaceGraphFixture) {
+fn assert_workspace_evidence_context_mcp_with_scip(fixture: &WorkspaceGraphFixture) {
     let (child, mut input, mut output) = start_mcp_with_graph_workspace(
         &fixture.repository,
         &fixture.database,
@@ -1108,7 +1108,7 @@ fn assert_workspace_phase2_context_mcp_with_scip(fixture: &WorkspaceGraphFixture
             "id": 62,
             "method": "tools/call",
             "params": {
-                "name": "phase2_context_build",
+                "name": "context_build",
                 "arguments": {
                     "intent": "Widget",
                     "budget_units": 4096
@@ -1121,7 +1121,7 @@ fn assert_workspace_phase2_context_mcp_with_scip(fixture: &WorkspaceGraphFixture
     let item = context["items"]
         .as_array()
         .and_then(|items| items.first())
-        .expect("precise Phase 2 item");
+        .expect("precise evidence-balanced item");
     assert_eq!(item["tier"], serde_json::json!("precise_overlay"));
     assert_eq!(item["payload"]["kind"], serde_json::json!("precise_overlay"));
     assert_eq!(item["payload"]["relationship_count"], serde_json::json!(1));

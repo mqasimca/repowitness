@@ -35,24 +35,23 @@ use crate::{
     CHANGE_REVIEW_TOOL_NAME, CODE_GRAPH_QUERY_TOOL_NAME, CODE_SEARCH_TOOL_NAME,
     CONTEXT_BUILD_TOOL_NAME, ChangeReviewInput, ChangeReviewOutput, ChangeReviewServiceRequest,
     CodeGraphQueryInput, CodeGraphQueryOutput, CodeGraphQueryServiceRequest, CodeSearchInput,
-    CodeSearchOutput, CodeSearchServiceRequest, ContextBuildInput, ContextBuildOutput,
-    ContextBuildServiceRequest, DIAGNOSTICS_TOOL_NAME, DiagnosticsInput, DiagnosticsOutput,
-    DiagnosticsServiceRequest, GRAPH_ARCHITECTURE_TOOL_NAME, GRAPH_EVIDENCE_TOOL_NAME,
-    GRAPH_SEARCH_TOOL_NAME, GRAPH_STATUS_TOOL_NAME, GRAPH_TRACE_TOOL_NAME, GraphArchitectureInput,
-    GraphArchitectureOutput, GraphEvidenceInput, GraphEvidenceOutput, GraphImpactInput,
-    GraphImpactOutput, GraphReadServiceOutput, GraphReadServiceRequest, GraphSearchInput,
-    GraphSearchOutput, GraphStatusInput, GraphStatusOutput, GraphTraceInput, GraphTraceOutput,
-    HISTORICAL_MEMORY_TOOL_NAME, HistoricalMemoryInput, HistoricalMemoryOutput,
-    HistoricalMemoryServiceRequest, IMPACT_ANALYZE_TOOL_NAME, MAX_MCP_INPUT_LINE_BYTES,
-    MEMORY_MANAGE_TOOL_NAME, MEMORY_RECALL_TOOL_NAME, MemoryManageInput, MemoryManageOutput,
-    MemoryManageServiceRequest, MemoryMutationRequestScope, MemoryRecallInput, MemoryRecallOutput,
-    MemoryRecallServiceRequest, NativeTaskState, NativeTaskStatus, OUTBOUND_SITES_TOOL_NAME,
-    OutboundSitesInput, OutboundSitesOutput, OutboundSitesServiceRequest,
-    PERSONAL_MEMORY_TOOL_NAME, PHASE2_CONTEXT_BUILD_TOOL_NAME, PersonalMemoryInput,
-    PersonalMemoryOutput, PersonalMemoryServiceRequest, Phase2ContextBuildInput,
-    Phase2ContextBuildOutput, Phase2ContextBuildServiceRequest, RELEVANT_PATHS_TOOL_NAME,
-    REPOSITORY_TOPOLOGY_TOOL_NAME, RelevantPathsInput, RelevantPathsOutput,
-    RelevantPathsServiceRequest, RepositoryService, RepositoryServiceError,
+    CodeSearchOutput, CodeSearchServiceRequest, DIAGNOSTICS_TOOL_NAME, DiagnosticsInput,
+    DiagnosticsOutput, DiagnosticsServiceRequest, EvidenceContextBuildInput,
+    EvidenceContextBuildOutput, EvidenceContextBuildServiceRequest, GRAPH_ARCHITECTURE_TOOL_NAME,
+    GRAPH_EVIDENCE_TOOL_NAME, GRAPH_SEARCH_TOOL_NAME, GRAPH_STATUS_TOOL_NAME,
+    GRAPH_TRACE_TOOL_NAME, GraphArchitectureInput, GraphArchitectureOutput, GraphEvidenceInput,
+    GraphEvidenceOutput, GraphImpactInput, GraphImpactOutput, GraphReadServiceOutput,
+    GraphReadServiceRequest, GraphSearchInput, GraphSearchOutput, GraphStatusInput,
+    GraphStatusOutput, GraphTraceInput, GraphTraceOutput, HISTORICAL_MEMORY_TOOL_NAME,
+    HistoricalMemoryInput, HistoricalMemoryOutput, HistoricalMemoryServiceRequest,
+    IMPACT_ANALYZE_TOOL_NAME, MAX_MCP_INPUT_LINE_BYTES, MEMORY_MANAGE_TOOL_NAME,
+    MEMORY_RECALL_TOOL_NAME, MemoryManageInput, MemoryManageOutput, MemoryManageServiceRequest,
+    MemoryMutationRequestScope, MemoryRecallInput, MemoryRecallOutput, MemoryRecallServiceRequest,
+    NativeTaskState, NativeTaskStatus, OUTBOUND_SITES_TOOL_NAME, OutboundSitesInput,
+    OutboundSitesOutput, OutboundSitesServiceRequest, PERSONAL_MEMORY_TOOL_NAME,
+    PersonalMemoryInput, PersonalMemoryOutput, PersonalMemoryServiceRequest,
+    RELEVANT_PATHS_TOOL_NAME, REPOSITORY_TOPOLOGY_TOOL_NAME, RelevantPathsInput,
+    RelevantPathsOutput, RelevantPathsServiceRequest, RepositoryService, RepositoryServiceError,
     RepositoryTopologyInput, RepositoryTopologyOutput, RepositoryTopologyServiceRequest,
     SCIP_EVIDENCE_TOOL_NAME, SCIP_RELATIONSHIP_TRACE_TOOL_NAME, SCIP_SYMBOL_RESOLVE_TOOL_NAME,
     SYMBOL_GET_TOOL_NAME, SYMBOL_SEARCH_TOOL_NAME, SYNTAX_SITE_SEARCH_TOOL_NAME, ScipEvidenceInput,
@@ -64,10 +63,10 @@ use crate::{
     wire::{
         MAX_MCP_ARCHITECTURE_MAP_OUTPUT_BYTES, MAX_MCP_ARCHITECTURE_OVERVIEW_OUTPUT_BYTES,
         MAX_MCP_CODE_GRAPH_QUERY_OUTPUT_BYTES, MAX_MCP_CONTEXT_OUTPUT_BYTES,
-        MAX_MCP_DIAGNOSTICS_OUTPUT_BYTES, MAX_MCP_GRAPH_OUTPUT_BYTES,
-        MAX_MCP_HISTORICAL_MEMORY_OUTPUT_BYTES, MAX_MCP_MEMORY_MANAGE_OUTPUT_BYTES,
-        MAX_MCP_MEMORY_RECALL_OUTPUT_BYTES, MAX_MCP_OUTBOUND_SITES_OUTPUT_BYTES,
-        MAX_MCP_PERSONAL_MEMORY_OUTPUT_BYTES, MAX_MCP_PHASE2_CONTEXT_OUTPUT_BYTES,
+        MAX_MCP_DIAGNOSTICS_OUTPUT_BYTES, MAX_MCP_EVIDENCE_CONTEXT_OUTPUT_BYTES,
+        MAX_MCP_GRAPH_OUTPUT_BYTES, MAX_MCP_HISTORICAL_MEMORY_OUTPUT_BYTES,
+        MAX_MCP_MEMORY_MANAGE_OUTPUT_BYTES, MAX_MCP_MEMORY_RECALL_OUTPUT_BYTES,
+        MAX_MCP_OUTBOUND_SITES_OUTPUT_BYTES, MAX_MCP_PERSONAL_MEMORY_OUTPUT_BYTES,
         MAX_MCP_RELEVANT_PATHS_OUTPUT_BYTES, MAX_MCP_REPOSITORY_TOPOLOGY_OUTPUT_BYTES,
         MAX_MCP_SCIP_EVIDENCE_OUTPUT_BYTES, MAX_MCP_SCIP_RELATIONSHIP_TRACE_OUTPUT_BYTES,
         MAX_MCP_SEARCH_OUTPUT_BYTES, MAX_MCP_SYMBOL_OUTPUT_BYTES,
@@ -89,7 +88,7 @@ const MAX_NATIVE_TASKS: usize = 16;
 const NATIVE_TASK_PAGE_SIZE: usize = 8;
 const DEFAULT_NATIVE_TASK_TTL: Duration = Duration::from_secs(5 * 60);
 const MAX_NATIVE_TASK_TTL: Duration = Duration::from_secs(5 * 60);
-const MAX_NATIVE_TASK_RESULT_BYTES: usize = MAX_MCP_PHASE2_CONTEXT_OUTPUT_BYTES;
+const MAX_NATIVE_TASK_RESULT_BYTES: usize = MAX_MCP_EVIDENCE_CONTEXT_OUTPUT_BYTES;
 
 fn code_graph_query_input_schema() -> JsonObject {
     let mut union = serde_json::to_value(schemars::schema_for!(CodeGraphQueryInput))
@@ -691,7 +690,7 @@ impl RepoWitnessMcpServer {
 
     async fn call_context_build(
         &self,
-        request: ContextBuildServiceRequest,
+        request: EvidenceContextBuildServiceRequest,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
         let service = Arc::clone(&self.service);
@@ -701,7 +700,7 @@ impl RepoWitnessMcpServer {
                 service.context_build(request.with_timeout(remaining), cancelled)
             })
             .await?;
-        operation_result(output, MAX_MCP_CONTEXT_OUTPUT_BYTES)
+        operation_result(output, MAX_MCP_EVIDENCE_CONTEXT_OUTPUT_BYTES)
     }
 
     async fn call_change_review(
@@ -717,21 +716,6 @@ impl RepoWitnessMcpServer {
             })
             .await?;
         operation_result(output, MAX_MCP_CONTEXT_OUTPUT_BYTES)
-    }
-
-    async fn call_phase2_context_build(
-        &self,
-        request: Phase2ContextBuildServiceRequest,
-        context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, McpError> {
-        let service = Arc::clone(&self.service);
-        let timeout = request.timeout();
-        let output = self
-            .run_blocking(timeout, context, move |remaining, cancelled| {
-                service.phase2_context_build(request.with_timeout(remaining), cancelled)
-            })
-            .await?;
-        operation_result(output, MAX_MCP_PHASE2_CONTEXT_OUTPUT_BYTES)
     }
 
     async fn call_memory_recall(
@@ -978,18 +962,11 @@ impl RepoWitnessMcpServer {
                 self.call_change_review(request, context).await
             }
             CONTEXT_BUILD_TOOL_NAME => {
-                let input = parse_arguments::<ContextBuildInput>(request.arguments)?;
+                let input = parse_arguments::<EvidenceContextBuildInput>(request.arguments)?;
                 let request = input
                     .validate()
                     .map_err(|message| McpError::invalid_params(message, None))?;
                 self.call_context_build(request, context).await
-            }
-            PHASE2_CONTEXT_BUILD_TOOL_NAME => {
-                let input = parse_arguments::<Phase2ContextBuildInput>(request.arguments)?;
-                let request = input
-                    .validate()
-                    .map_err(|message| McpError::invalid_params(message, None))?;
-                self.call_phase2_context_build(request, context).await
             }
             DIAGNOSTICS_TOOL_NAME => {
                 let input = parse_arguments::<DiagnosticsInput>(request.arguments)?;
@@ -1151,7 +1128,6 @@ impl ServerHandler for RepoWitnessMcpServer {
                 | CODE_GRAPH_QUERY_TOOL_NAME
                 | CHANGE_REVIEW_TOOL_NAME
                 | CONTEXT_BUILD_TOOL_NAME
-                | PHASE2_CONTEXT_BUILD_TOOL_NAME
                 | DIAGNOSTICS_TOOL_NAME
                 | GRAPH_STATUS_TOOL_NAME
                 | GRAPH_SEARCH_TOOL_NAME
@@ -1199,13 +1175,13 @@ impl ServerHandler for RepoWitnessMcpServer {
         mut request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CreateTaskResult, McpError> {
-        if !self.tasks_enabled || request.name.as_ref() != PHASE2_CONTEXT_BUILD_TOOL_NAME {
+        if !self.tasks_enabled || request.name.as_ref() != CONTEXT_BUILD_TOOL_NAME {
             return Err(McpError::invalid_params(
                 "native task invocation is not enabled for this tool",
                 None,
             ));
         }
-        let objective = parse_arguments::<Phase2ContextBuildInput>(request.arguments.clone())?
+        let objective = parse_arguments::<EvidenceContextBuildInput>(request.arguments.clone())?
             .validate()
             .map_err(|message| McpError::invalid_params(message, None))?
             .intent()
@@ -1715,12 +1691,13 @@ fn tools(
     .annotate(annotations.clone());
     let context_build = Tool::new(
         CONTEXT_BUILD_TOOL_NAME,
-        "Compile a deterministic generation-pinned context pack from exact source declarations \
-         and current engineering memory under a labeled conservative content budget.",
+        "Compile a deterministic evidence-balanced, generation-pinned context pack from exact \
+         source, native graph, eligible SCIP, current memory, and qualified history evidence \
+         under a labeled conservative content budget.",
         JsonObject::new(),
     )
-    .with_input_schema::<ContextBuildInput>()
-    .with_output_schema::<ContextBuildOutput>()
+    .with_input_schema::<EvidenceContextBuildInput>()
+    .with_output_schema::<EvidenceContextBuildOutput>()
     .annotate(annotations.clone());
     let change_review = Tool::new(
         CHANGE_REVIEW_TOOL_NAME,
@@ -1730,20 +1707,10 @@ fn tools(
     .with_input_schema::<ChangeReviewInput>()
     .with_output_schema::<ChangeReviewOutput>()
     .annotate(annotations.clone());
-    let phase2_context_build = Tool::new(
-        PHASE2_CONTEXT_BUILD_TOOL_NAME,
-        "Compile the separately versioned evidence-balanced Phase 2 context pack from pinned \
-         exact source and current-memory evidence under a labeled conservative content budget.",
-        JsonObject::new(),
-    )
-    .with_input_schema::<Phase2ContextBuildInput>()
-    .with_output_schema::<Phase2ContextBuildOutput>()
-    .annotate(annotations.clone());
-    let phase2_context_build = if tasks_enabled {
-        phase2_context_build
-            .with_execution(ToolExecution::new().with_task_support(TaskSupport::Optional))
+    let context_build = if tasks_enabled {
+        context_build.with_execution(ToolExecution::new().with_task_support(TaskSupport::Optional))
     } else {
-        phase2_context_build
+        context_build
     };
     let diagnostics = Tool::new(
         DIAGNOSTICS_TOOL_NAME,
@@ -1790,7 +1757,6 @@ fn tools(
         code_graph_query,
         change_review,
         context_build,
-        phase2_context_build,
         diagnostics,
         memory_recall,
         Tool::new(

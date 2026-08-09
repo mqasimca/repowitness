@@ -1,39 +1,39 @@
-fn mcp_phase2_context_output(
-    result: repowitness_local::LocalPhase2ContextBuildResult,
-) -> Result<Phase2ContextBuildOutput, String> {
+fn mcp_evidence_context_output(
+    result: repowitness_local::LocalEvidenceContextBuildResult,
+) -> Result<EvidenceContextBuildOutput, String> {
     let scope = result.scope();
     interoperable_i64(&[scope.workspace_view(), scope.generation()])?;
     interoperable(&[scope.source_epoch()])?;
     let omissions = result
         .omissions()
         .iter()
-        .map(|omission| McpPhase2ContextOmission {
-            tier: phase2_context_tier(omission.tier()).to_owned(),
+        .map(|omission| McpEvidenceContextOmission {
+            tier: evidence_context_tier(omission.tier()).to_owned(),
             count: omission.count(),
         })
         .collect();
     let provider_coverage = result
         .provider_coverage()
         .iter()
-        .map(|coverage| McpPhase2ContextProviderCoverage {
-            tier: phase2_context_tier(coverage.tier()).to_owned(),
-            availability: phase2_provider_availability(coverage.availability()).to_owned(),
+        .map(|coverage| McpEvidenceContextProviderCoverage {
+            tier: evidence_context_tier(coverage.tier()).to_owned(),
+            availability: evidence_provider_availability(coverage.availability()).to_owned(),
             candidate_count: coverage.candidate_count(),
         })
         .collect();
     let items = result
         .items()
         .iter()
-        .map(mcp_phase2_context_item)
+        .map(mcp_evidence_context_item)
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(Phase2ContextBuildOutput {
+    Ok(EvidenceContextBuildOutput {
         schema_version: 1,
         profile_id: result.profile().id().to_owned(),
         profile_version: result.profile().version(),
         budget_estimator: "utf8_bytes_upper_bound_v1".to_owned(),
         budget_units: result.budget().units(),
         used_units: result.used_units(),
-        scope: McpPhase2ContextScope {
+        scope: McpEvidenceContextScope {
             repository_sha256: hex(scope.repository().as_bytes()),
             connected_workspace_sha256: hex(scope.connected_workspace().as_bytes()),
             workspace_view: scope.workspace_view(),
@@ -49,31 +49,31 @@ fn mcp_phase2_context_output(
     })
 }
 
-fn phase2_provider_availability(
-    availability: repowitness_local::Phase2ContextProviderAvailability,
+fn evidence_provider_availability(
+    availability: repowitness_local::EvidenceContextProviderAvailability,
 ) -> &'static str {
     match availability {
-        repowitness_local::Phase2ContextProviderAvailability::Available => "available",
-        repowitness_local::Phase2ContextProviderAvailability::Unavailable => "unavailable",
+        repowitness_local::EvidenceContextProviderAvailability::Available => "available",
+        repowitness_local::EvidenceContextProviderAvailability::Unavailable => "unavailable",
     }
 }
 
-fn mcp_phase2_context_item(
-    item: &Phase2ContextCandidate<LocalPhase2ContextItem>,
-) -> Result<McpPhase2ContextItem, String> {
+fn mcp_evidence_context_item(
+    item: &EvidenceContextCandidate<LocalEvidenceContextItem>,
+) -> Result<McpEvidenceContextItem, String> {
     let providers = item
         .attributions()
         .iter()
-        .map(|attribution| McpPhase2ContextAttribution {
+        .map(|attribution| McpEvidenceContextAttribution {
             provider_sha256: hex(attribution.provider().as_bytes()),
-            tier: phase2_context_tier(attribution.tier()).to_owned(),
+            tier: evidence_context_tier(attribution.tier()).to_owned(),
             provider_rank: attribution.provider_rank(),
         })
         .collect();
     let payload = match item.payload() {
-        LocalPhase2ContextItem::Syntax(candidate) => {
+        LocalEvidenceContextItem::Syntax(candidate) => {
             let declaration = encoded_source_bytes(candidate.declaration());
-            McpPhase2ContextPayload::Syntax {
+            McpEvidenceContextPayload::Syntax {
                 path: RepositoryPathTextV1::encode(candidate.selector().path(), PATH_TEXT_LIMIT)
                     .map_err(|error| error.to_string())?
                     .into_string(),
@@ -84,11 +84,11 @@ fn mcp_phase2_context_item(
                 declaration: declaration.data,
             }
         }
-        LocalPhase2ContextItem::Memory(record) => McpPhase2ContextPayload::Memory {
+        LocalEvidenceContextItem::Memory(record) => McpEvidenceContextPayload::Memory {
             record_id_sha256: hex(record.record_id().as_bytes()),
             record: Box::new(mcp_memory_record(record)?),
         },
-        LocalPhase2ContextItem::History(item) => McpPhase2ContextPayload::History {
+        LocalEvidenceContextItem::History(item) => McpEvidenceContextPayload::History {
             record_id_sha256: hex(item.record().record_id().as_bytes()),
             commit_object_format: match item.commit().object_format() {
                 repowitness_local::MemoryObjectFormat::Sha1 => "sha1",
@@ -98,10 +98,10 @@ fn mcp_phase2_context_item(
             commit_object_id_hex: hex(item.commit().as_bytes()),
             record: Box::new(mcp_memory_record(item.record())?),
         },
-        LocalPhase2ContextItem::PreciseOverlay(item) => {
+        LocalEvidenceContextItem::PreciseOverlay(item) => {
             let occurrence = item.occurrence();
             let source = encoded_source_bytes(item.source());
-            McpPhase2ContextPayload::PreciseOverlay {
+            McpEvidenceContextPayload::PreciseOverlay {
                 overlay_sha256: hex(item.overlay().digest().as_bytes()),
                 path: RepositoryPathTextV1::encode(occurrence.path(), PATH_TEXT_LIMIT)
                     .map_err(|error| error.to_string())?
@@ -115,10 +115,10 @@ fn mcp_phase2_context_item(
                 source: source.data,
             }
         }
-        LocalPhase2ContextItem::GraphRelation(item) => {
+        LocalEvidenceContextItem::GraphRelation(item) => {
             let candidate = item.candidate();
             let declaration = encoded_source_bytes(candidate.declaration());
-            McpPhase2ContextPayload::GraphRelation {
+            McpEvidenceContextPayload::GraphRelation {
                 edge_kind: item.edge_kind().as_str().to_owned(),
                 depth: item.depth(),
                 path: RepositoryPathTextV1::encode(candidate.selector().path(), PATH_TEXT_LIMIT)
@@ -132,8 +132,8 @@ fn mcp_phase2_context_item(
             }
         }
     };
-    Ok(McpPhase2ContextItem {
-        tier: phase2_context_tier(item.tier()).to_owned(),
+    Ok(McpEvidenceContextItem {
+        tier: evidence_context_tier(item.tier()).to_owned(),
         provider_rank: item.provider_rank(),
         estimated_units: item.estimated_units(),
         identity_sha256: hex(item.identity().as_bytes()),
@@ -142,15 +142,15 @@ fn mcp_phase2_context_item(
     })
 }
 
-fn phase2_context_tier(tier: Phase2ContextTier) -> &'static str {
+fn evidence_context_tier(tier: EvidenceContextTier) -> &'static str {
     match tier {
-        Phase2ContextTier::Anchor => "anchor",
-        Phase2ContextTier::PreciseOverlay => "precise_overlay",
-        Phase2ContextTier::Syntax => "syntax",
-        Phase2ContextTier::Structural => "structural",
-        Phase2ContextTier::References => "references",
-        Phase2ContextTier::Memory => "memory",
-        Phase2ContextTier::History => "history",
-        Phase2ContextTier::Unresolved => "unresolved",
+        EvidenceContextTier::Anchor => "anchor",
+        EvidenceContextTier::PreciseOverlay => "precise_overlay",
+        EvidenceContextTier::Syntax => "syntax",
+        EvidenceContextTier::Structural => "structural",
+        EvidenceContextTier::References => "references",
+        EvidenceContextTier::Memory => "memory",
+        EvidenceContextTier::History => "history",
+        EvidenceContextTier::Unresolved => "unresolved",
     }
 }

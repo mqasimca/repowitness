@@ -322,7 +322,7 @@ fn mcp_registry_routes_two_independent_indexes_without_default_or_path_disclosur
         }),
     );
     let tools = listed["result"]["tools"].as_array().expect("tool list");
-    assert_eq!(tools.len(), 25);
+    assert_eq!(tools.len(), 24);
     assert!(tools.iter().all(|tool| tool["name"] != "memory_manage"));
     let code_search = tools
         .iter()
@@ -983,16 +983,14 @@ fn mcp_stdio_indexes_searches_retrieves_and_rejects_a_stale_selector() {
     assert_mcp_primary_discovery_tools(&mut input, &mut output);
     let exact_arguments = mcp_search_selector(&mut input, &mut output);
     assert_mcp_symbol(&mut input, &mut output, &exact_arguments);
-    assert_mcp_context(
+    assert_mcp_evidence_context(
         &mut input,
         &mut output,
         14,
         "Widget",
-        "rust",
-        "utf8",
         "pub struct Widget;",
     );
-    assert_mcp_phase2_context(&mut input, &mut output, 18, "Widget", "pub struct Widget;");
+    assert_mcp_evidence_context(&mut input, &mut output, 18, "Widget", "pub struct Widget;");
     assert_mcp_go_round_trip(&mut input, &mut output);
     assert_mcp_supported_language_round_trip(
         &mut input,
@@ -1120,15 +1118,11 @@ fn mcp_stdio_round_trips_an_exact_symbol_from_a_real_repository() {
         "exact retrieval must label its declaration representation"
     );
     let source = &symbol["symbol"];
-    assert_mcp_context(
+    assert_mcp_evidence_context(
         &mut input,
         &mut output,
         41,
         source["name"].as_str().expect("symbol name"),
-        source["language"].as_str().expect("symbol language"),
-        source["declaration_encoding"]
-            .as_str()
-            .expect("declaration encoding"),
         source["declaration"].as_str().expect("declaration data"),
     );
     assert_mcp_diagnostics_and_absent_memory(&mut input, &mut output, 42, 43);

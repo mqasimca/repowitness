@@ -339,12 +339,12 @@ unit tests; in-process SDK initialization, schema, tool, semaphore,
 cancellation, and encoded-output tests; and an installed-binary stdio
 round-trip. The black-box test indexes a temporary five-language worktree,
 negotiates MCP `2025-11-25`, and lists exactly twenty-four read-only tools:
-`architecture_map`, `architecture_overview`, `repository_topology`, `code_graph_query`, `code_search`, `context_build`, `phase2_context_build`, `diagnostics`, `graph_architecture`,
+`architecture_map`, `architecture_overview`, `repository_topology`, `code_graph_query`, `code_search`, `context_build`, `diagnostics`, `graph_architecture`,
 `graph_evidence`, `graph_search`, `graph_status`, `graph_trace`,
-`impact_analyze`, `historical_memory`, `locate_relevant_paths`, `memory_recall`, `outbound_sites`, `scip_evidence`, `scip_relationship_trace`, `scip_symbol_resolve`, `symbol_get`, `symbol_search`, and `syntax_site_search`. It inventories exact indexed paths before retrieving exact
+`impact_analyze`, `historical_memory`, `locate_relevant_paths`, `memory_recall`, `outbound_sites`, `scip_evidence`, `scip_relationship_trace`, `scip_symbol_resolve`, `symbol_get`, `symbol_search`, `syntax_site_search`, and `verify`. It inventories exact indexed paths before retrieving exact
 declarations from every language, reads exact declaration-contained raw syntax
 observations without target resolution, searches exact raw targets without target resolution, exercises the finite `code_graph_query` envelope, builds exact UTF-8 source contexts through
-both the preserved Phase 0 and the separately versioned Phase 2 profiles,
+the evidence-balanced profile,
 round-trips Rust graph status/search/evidence/architecture/trace/impact,
 reindexes, and proves the old generation selector fails.
 Focused protocol tests cover context, memory, diagnostics, graph and SCIP schemas,

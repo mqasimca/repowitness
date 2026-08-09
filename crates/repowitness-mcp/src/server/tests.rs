@@ -16,8 +16,8 @@ use rmcp::{
 
 use super::*;
 use crate::{
-    MAX_MCP_INTEROPERABLE_INTEGER, MEMORY_MANAGE_SCHEMA_VERSION, McpContextCoverage, McpCoverage,
-    McpMemoryCoverage, McpMemoryProducer, McpMemoryTarget, McpSearchMatch, McpSpan, McpSymbol,
+    MAX_MCP_INTEROPERABLE_INTEGER, MEMORY_MANAGE_SCHEMA_VERSION, McpCoverage, McpMemoryCoverage,
+    McpMemoryProducer, McpMemoryTarget, McpSearchMatch, McpSpan, McpSymbol,
     MemoryManageDatabaseIdentityStatus, MemoryManageMaintenanceStatus,
     MemoryManageMaintenanceStepStatus, MemoryManageOperation, MemoryRecallServiceSelection,
     PersonalMemoryOperation, RepositoryTopologyOutput, SymbolSelectorOutput,
@@ -49,7 +49,6 @@ struct FakeService {
     code_graph_query_calls: AtomicUsize,
     search_calls: AtomicUsize,
     context_calls: AtomicUsize,
-    phase2_context_calls: AtomicUsize,
     diagnostics_calls: AtomicUsize,
     graph_calls: AtomicUsize,
     scip_calls: AtomicUsize,
@@ -96,9 +95,9 @@ impl RepositoryService for ConcurrencyService {
 
     fn context_build(
         &self,
-        _request: ContextBuildServiceRequest,
+        _request: EvidenceContextBuildServiceRequest,
         _cancelled: Arc<AtomicBool>,
-    ) -> Result<ContextBuildOutput, RepositoryServiceError> {
+    ) -> Result<EvidenceContextBuildOutput, RepositoryServiceError> {
         Err(RepositoryServiceError::ContextBuild)
     }
 
@@ -128,7 +127,6 @@ impl FakeService {
             code_graph_query_calls: AtomicUsize::new(0),
             search_calls: AtomicUsize::new(0),
             context_calls: AtomicUsize::new(0),
-            phase2_context_calls: AtomicUsize::new(0),
             diagnostics_calls: AtomicUsize::new(0),
             graph_calls: AtomicUsize::new(0),
             scip_calls: AtomicUsize::new(0),
@@ -369,28 +367,16 @@ impl RepositoryService for FakeService {
 
     fn context_build(
         &self,
-        request: ContextBuildServiceRequest,
+        request: EvidenceContextBuildServiceRequest,
         _cancelled: Arc<AtomicBool>,
-    ) -> Result<ContextBuildOutput, RepositoryServiceError> {
+    ) -> Result<EvidenceContextBuildOutput, RepositoryServiceError> {
         self.context_calls.fetch_add(1, Ordering::Relaxed);
         self.context_request.lock().expect("lock").replace((
             request.intent().to_owned(),
             request.budget_units(),
             request.max_provider_results(),
         ));
-        Ok(context_output())
-    }
-
-    fn phase2_context_build(
-        &self,
-        request: Phase2ContextBuildServiceRequest,
-        _cancelled: Arc<AtomicBool>,
-    ) -> Result<Phase2ContextBuildOutput, RepositoryServiceError> {
-        self.phase2_context_calls.fetch_add(1, Ordering::Relaxed);
-        assert_eq!(request.intent(), "run");
-        assert_eq!(request.budget_units(), 4096);
-        assert_eq!(request.max_provider_results(), 7);
-        Ok(phase2_context_output())
+        Ok(evidence_context_output())
     }
 
     fn diagnostics(
@@ -581,7 +567,6 @@ fn tool_contract_is_exact_sorted_versioned_and_read_only() {
     for tool_name in [
         ARCHITECTURE_MAP_TOOL_NAME,
         CODE_SEARCH_TOOL_NAME,
-        CONTEXT_BUILD_TOOL_NAME,
         SYMBOL_GET_TOOL_NAME,
         SYMBOL_SEARCH_TOOL_NAME,
     ] {
@@ -641,7 +626,7 @@ async fn registry_mode_requires_an_explicit_selector_and_routes_only_to_its_serv
         ),
     ]))
     .expect("non-empty bounded registry");
-    assert_eq!(server.tools.len(), 25);
+    assert_eq!(server.tools.len(), 24);
     assert!(
         server
             .tools
@@ -1131,8 +1116,8 @@ async fn initialized_client_lists_and_calls_all_tools() {
         .call_tool(
             CallToolRequestParams::new(CONTEXT_BUILD_TOOL_NAME).with_arguments(json_object(
                 serde_json::json!({
-                    "query": "  run  ",
-                    "max_chars": 4096,
+                    "intent": "  run  ",
+                    "budget_units": 4096,
                     "max_provider_results": 7
                 }),
             )),
@@ -1142,28 +1127,6 @@ async fn initialized_client_lists_and_calls_all_tools() {
     assert_eq!(context.is_error, Some(false));
     assert_eq!(
         context
-            .structured_content
-            .as_ref()
-            .and_then(|value| value.get("schema_version"))
-            .and_then(serde_json::Value::as_u64),
-        Some(2)
-    );
-
-    let phase2_context = client
-        .call_tool(
-            CallToolRequestParams::new(PHASE2_CONTEXT_BUILD_TOOL_NAME).with_arguments(json_object(
-                serde_json::json!({
-                    "intent": "  run  ",
-                    "budget_units": 4096,
-                    "max_provider_results": 7
-                }),
-            )),
-        )
-        .await
-        .expect("Phase 2 context response");
-    assert_eq!(phase2_context.is_error, Some(false));
-    assert_eq!(
-        phase2_context
             .structured_content
             .as_ref()
             .and_then(|value| value.get("schema_version"))
@@ -1307,7 +1270,6 @@ async fn initialized_client_lists_and_calls_all_tools() {
     assert_eq!(service.code_graph_query_calls.load(Ordering::Relaxed), 1);
     assert_eq!(service.search_calls.load(Ordering::Relaxed), 1);
     assert_eq!(service.context_calls.load(Ordering::Relaxed), 1);
-    assert_eq!(service.phase2_context_calls.load(Ordering::Relaxed), 1);
     assert_eq!(service.diagnostics_calls.load(Ordering::Relaxed), 1);
     assert_eq!(service.memory_calls.load(Ordering::Relaxed), 1);
     assert_eq!(service.symbol_calls.load(Ordering::Relaxed), 1);
@@ -1339,7 +1301,7 @@ async fn initialized_client_lists_and_calls_all_tools() {
 }
 
 #[test]
-fn native_tasks_are_opt_in_and_only_the_phase2_context_tool_is_task_capable() {
+fn native_tasks_are_opt_in_and_only_the_context_tool_is_task_capable() {
     let default = RepoWitnessMcpServer::new(Arc::new(FakeService::new()));
     assert!(default.get_info().capabilities.tasks.is_none());
     let enabled = RepoWitnessMcpServer::with_native_tasks(Arc::new(FakeService::new()));
@@ -1350,7 +1312,7 @@ fn native_tasks_are_opt_in_and_only_the_phase2_context_tool_is_task_capable() {
         .filter(|tool| tool.task_support() != rmcp::model::TaskSupport::Forbidden)
         .map(|tool| tool.name.as_ref())
         .collect::<Vec<_>>();
-    assert_eq!(task_tools, vec![PHASE2_CONTEXT_BUILD_TOOL_NAME]);
+    assert_eq!(task_tools, vec![CONTEXT_BUILD_TOOL_NAME]);
 }
 
 #[tokio::test]
@@ -1369,7 +1331,7 @@ async fn native_task_submission_returns_an_opaque_id_and_retains_a_bounded_resul
     let client = ().serve(client_transport).await.expect("client starts");
     let response = client
         .send_request(ClientRequest::CallToolRequest(CallToolRequest::new(
-            CallToolRequestParams::new(PHASE2_CONTEXT_BUILD_TOOL_NAME)
+            CallToolRequestParams::new(CONTEXT_BUILD_TOOL_NAME)
                 .with_arguments(json_object(serde_json::json!({
                     "intent": "run",
                     "budget_units": 4096,

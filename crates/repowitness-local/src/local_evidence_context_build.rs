@@ -1,4 +1,4 @@
-//! One-shot local composition for the separately versioned Phase 2 profile.
+//! One-shot local composition for the canonical evidence-balanced profile.
 
 use std::{
     collections::BTreeSet,
@@ -15,20 +15,20 @@ use std::{
 use repowitness_application::{
     CodeSearchCandidate, CodeSearchError, CodeSearchLimits, CodeSearchPort, CodeSearchPortResult,
     CodeSearchQuery, CodeSearchQueryError, CodeSearchRequest, ConnectedWorkspaceIdTextV1,
-    ContextBuildBudget, ContextBuildError, ContextSourceCandidate,
-    DEFAULT_CODE_SEARCH_OUTPUT_BYTES, DEFAULT_MEMORY_RECALL_OUTPUT_BYTES,
-    DEFAULT_MEMORY_RECALL_SCAN_BYTES, MemoryEffectiveState, MemoryRecallError, MemoryRecallLimits,
-    MemoryRecallQuery, MemoryRecallQueryError, MemoryRecallRecord, MemoryRecallRequest,
-    PackageScope, Phase2ContextBudget, Phase2ContextCandidate, Phase2ContextCandidateId,
-    Phase2ContextError, Phase2ContextInput, Phase2ContextProfile, Phase2ContextProviderId,
-    Phase2ContextResult, Phase2ContextScope, Phase2ContextTier, RepositoryIdentityTextError,
-    RepositoryIdentityTextV1, RustSymbolOccurrence, ScipSymbol, SourceArtifactEvidence,
-    SourceSlotIdTextV1, SymbolGetSelector, WorkspaceIdentityTextError, code_search,
-    compile_phase2_context, hash_source_content, memory_recall,
+    ContextSourceCandidate, DEFAULT_CODE_SEARCH_OUTPUT_BYTES, DEFAULT_MEMORY_RECALL_OUTPUT_BYTES,
+    DEFAULT_MEMORY_RECALL_SCAN_BYTES, EvidenceContextBudget, EvidenceContextCandidate,
+    EvidenceContextCandidateId, EvidenceContextError, EvidenceContextInput, EvidenceContextProfile,
+    EvidenceContextProviderId, EvidenceContextResult, EvidenceContextScope, EvidenceContextTier,
+    MemoryEffectiveState, MemoryRecallError, MemoryRecallLimits, MemoryRecallQuery,
+    MemoryRecallQueryError, MemoryRecallRecord, MemoryRecallRequest, PackageScope,
+    RepositoryIdentityTextError, RepositoryIdentityTextV1, ResolvedConfiguration,
+    RustSymbolOccurrence, ScipSymbol, SourceArtifactEvidence, SourceSlotIdTextV1,
+    SymbolGetSelector, WorkspaceIdentityTextError, code_search, compile_evidence_context,
+    hash_source_content, memory_recall,
 };
 use repowitness_domain::{
-    ConnectedWorkspaceId, EvidenceLocation, Phase2ContextProviderAvailability,
-    Phase2ContextProviderCoverage, ScipSymbolError, SourceSlotId,
+    ConnectedWorkspaceId, EvidenceContextProviderAvailability, EvidenceContextProviderCoverage,
+    EvidenceLocation, ScipSymbolError, SourceSlotId,
 };
 use sha2::{Digest, Sha256};
 
@@ -38,8 +38,10 @@ use crate::{
     RustGraphEdgeKinds, RustGraphReadError, RustGraphReadLimits, RustGraphRelationshipCardinality,
     RustGraphTraceStart, ScipEvidenceReadLimits, ScipOccurrenceEvidence, ScipOverlaySummary,
     ScipSymbolEvidenceResult, ScipSyntaxSymbolResolution, SourceReadLimits, SqliteStoreError,
-    local_context_build::DEFAULT_LOCAL_CONTEXT_PROVIDER_RESULTS,
 };
+
+/// Default candidates requested independently from each evidence provider.
+pub const DEFAULT_LOCAL_EVIDENCE_CONTEXT_PROVIDER_RESULTS: u16 = 20;
 
 struct PinnedWorkspaceCodeSearchPort<'a> {
     reader: &'a OwnedSqliteReader,
@@ -111,38 +113,38 @@ impl CodeSearchPort for PinnedWorkspaceCodeSearchPort<'_> {
     }
 }
 
-/// Default end-to-end deadline for one local Phase 2 context build.
-pub const DEFAULT_LOCAL_PHASE2_CONTEXT_BUILD_DEADLINE: Duration = Duration::from_secs(10);
+/// Default end-to-end deadline for one local evidence-balanced context build.
+pub const DEFAULT_LOCAL_EVIDENCE_CONTEXT_BUILD_DEADLINE: Duration = Duration::from_secs(10);
 
 /// Maximum complete Rust graph relationship input admitted while expanding one
-/// bounded Phase 2 context request.
+/// bounded evidence-balanced context request.
 ///
 /// This is intentionally independent from the traversal visit cap: the reader
 /// validates its complete immutable graph input before it can retain a small
 /// one-hop result set.
-const PHASE2_CONTEXT_GRAPH_INPUT_EDGE_LIMIT: u64 = 200_000;
+const EVIDENCE_CONTEXT_GRAPH_INPUT_EDGE_LIMIT: u64 = 200_000;
 
-const PROVIDER_ID_VERSION: &[u8] = b"repowitness:phase2-provider-id:v1\0";
-const CANDIDATE_ID_VERSION: &[u8] = b"repowitness:phase2-candidate-id:v1\0";
+const PROVIDER_ID_VERSION: &[u8] = b"repowitness:evidence-provider-id:v1\0";
+const CANDIDATE_ID_VERSION: &[u8] = b"repowitness:evidence-candidate-id:v1\0";
 
-/// One locally materialized exact Phase 2 context item.
+/// One locally materialized exact evidence-balanced context item.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum LocalPhase2ContextItem {
+pub enum LocalEvidenceContextItem {
     /// An exact syntax declaration expanded from a lexical source hit.
     Syntax(ContextSourceCandidate),
     /// A current, evidence-backed engineering-memory record.
     Memory(MemoryRecallRecord),
     /// A locally approved current memory record with an immutable Git observation receipt.
-    History(LocalPhase2HistoryItem),
+    History(LocalEvidenceHistoryItem),
     /// A source-verified, unambiguous occurrence from one immutable SCIP overlay.
-    PreciseOverlay(LocalPhase2PreciseOverlayItem),
+    PreciseOverlay(LocalEvidencePreciseOverlayItem),
     /// A source-verified target declaration reached through one unique pinned graph edge.
-    GraphRelation(LocalPhase2GraphRelationItem),
+    GraphRelation(LocalEvidenceGraphRelationItem),
 }
 
 /// One source-verified declaration selected through a unique immutable graph relationship.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct LocalPhase2GraphRelationItem {
+pub struct LocalEvidenceGraphRelationItem {
     candidate: ContextSourceCandidate,
     edge_kind: RustGraphEdgeKind,
     depth: u32,
@@ -154,12 +156,12 @@ pub struct LocalPhase2GraphRelationItem {
 /// revision at the commit. It does not assert the object is still reachable or
 /// that its historical source bytes equal the current source view.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct LocalPhase2HistoryItem {
+pub struct LocalEvidenceHistoryItem {
     record: MemoryRecallRecord,
     commit: repowitness_domain::MemoryCommitId,
 }
 
-impl LocalPhase2HistoryItem {
+impl LocalEvidenceHistoryItem {
     /// Returns the currently eligible, evidence-backed memory record.
     #[must_use]
     pub const fn record(&self) -> &MemoryRecallRecord {
@@ -173,7 +175,7 @@ impl LocalPhase2HistoryItem {
     }
 }
 
-impl LocalPhase2GraphRelationItem {
+impl LocalEvidenceGraphRelationItem {
     /// Returns the exact source declaration at the relationship target.
     #[must_use]
     pub const fn candidate(&self) -> &ContextSourceCandidate {
@@ -195,14 +197,14 @@ impl LocalPhase2GraphRelationItem {
 
 /// One source-verified SCIP occurrence admitted as precise context evidence.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct LocalPhase2PreciseOverlayItem {
+pub struct LocalEvidencePreciseOverlayItem {
     overlay: ScipOverlaySummary,
     occurrence: ScipOccurrenceEvidence,
     source: Box<[u8]>,
     relationship_count: u64,
 }
 
-impl LocalPhase2PreciseOverlayItem {
+impl LocalEvidencePreciseOverlayItem {
     /// Returns the exact immutable overlay receipt used by this item.
     #[must_use]
     pub const fn overlay(&self) -> ScipOverlaySummary {
@@ -228,26 +230,27 @@ impl LocalPhase2PreciseOverlayItem {
     }
 }
 
-/// Complete local Phase 2 allocation result.
-pub type LocalPhase2ContextBuildResult = Phase2ContextResult<LocalPhase2ContextItem>;
+/// Complete local evidence-balanced allocation result.
+pub type LocalEvidenceContextBuildResult = EvidenceContextResult<LocalEvidenceContextItem>;
 
-/// Complete local input for one Phase 2 context-build operation.
+/// Complete local input for one evidence-balanced context-build operation.
 #[derive(Clone, Copy)]
-pub struct LocalPhase2ContextBuildRequest<'a> {
+pub struct LocalEvidenceContextBuildRequest<'a> {
     root: &'a Path,
     database: &'a Path,
     repository_identity: &'a str,
-    workspace: LocalPhase2ContextWorkspace<'a>,
+    workspace: LocalEvidenceContextWorkspace<'a>,
     scip_symbol: Option<&'a str>,
     intent: &'a str,
-    budget: Phase2ContextBudget,
+    budget: EvidenceContextBudget,
     max_provider_results: u16,
+    configuration: Option<&'a ResolvedConfiguration>,
     deadline: Duration,
 }
 
-/// Explicit workspace source selection for one Phase 2 context build.
+/// Explicit workspace source selection for one evidence-balanced context build.
 #[derive(Clone, Copy)]
-pub enum LocalPhase2ContextWorkspace<'a> {
+pub enum LocalEvidenceContextWorkspace<'a> {
     /// The compatible default workspace derived from one repository identity.
     SingleRepository,
     /// One explicitly selected source slot in a connected workspace.
@@ -259,7 +262,7 @@ pub enum LocalPhase2ContextWorkspace<'a> {
     },
 }
 
-impl<'a> LocalPhase2ContextBuildRequest<'a> {
+impl<'a> LocalEvidenceContextBuildRequest<'a> {
     /// Constructs a request with the fixed evidence-balanced profile defaults.
     #[must_use]
     pub fn new(
@@ -272,13 +275,13 @@ impl<'a> LocalPhase2ContextBuildRequest<'a> {
             root,
             database,
             repository_identity,
-            workspace: LocalPhase2ContextWorkspace::SingleRepository,
+            workspace: LocalEvidenceContextWorkspace::SingleRepository,
             scip_symbol: None,
             intent,
-            budget: Phase2ContextBudget::try_new(ContextBuildBudget::default().units())
-                .expect("Phase 0 default context budget is within Phase 2 profile bounds"),
-            max_provider_results: DEFAULT_LOCAL_CONTEXT_PROVIDER_RESULTS,
-            deadline: DEFAULT_LOCAL_PHASE2_CONTEXT_BUILD_DEADLINE,
+            budget: EvidenceContextBudget::default(),
+            max_provider_results: DEFAULT_LOCAL_EVIDENCE_CONTEXT_PROVIDER_RESULTS,
+            configuration: None,
+            deadline: DEFAULT_LOCAL_EVIDENCE_CONTEXT_BUILD_DEADLINE,
         }
     }
 
@@ -296,22 +299,22 @@ impl<'a> LocalPhase2ContextBuildRequest<'a> {
             root,
             database,
             repository_identity,
-            workspace: LocalPhase2ContextWorkspace::ConnectedWorkspace {
+            workspace: LocalEvidenceContextWorkspace::ConnectedWorkspace {
                 connected_workspace,
                 source_slot,
             },
             scip_symbol: None,
             intent,
-            budget: Phase2ContextBudget::try_new(ContextBuildBudget::default().units())
-                .expect("Phase 0 default context budget is within Phase 2 profile bounds"),
-            max_provider_results: DEFAULT_LOCAL_CONTEXT_PROVIDER_RESULTS,
-            deadline: DEFAULT_LOCAL_PHASE2_CONTEXT_BUILD_DEADLINE,
+            budget: EvidenceContextBudget::default(),
+            max_provider_results: DEFAULT_LOCAL_EVIDENCE_CONTEXT_PROVIDER_RESULTS,
+            configuration: None,
+            deadline: DEFAULT_LOCAL_EVIDENCE_CONTEXT_BUILD_DEADLINE,
         }
     }
 
     /// Replaces the conservative whole-item allocation budget.
-    pub fn with_budget_units(mut self, units: u64) -> Result<Self, Phase2ContextError> {
-        self.budget = Phase2ContextBudget::try_new(units)?;
+    pub fn with_budget_units(mut self, units: u64) -> Result<Self, EvidenceContextError> {
+        self.budget = EvidenceContextBudget::try_new(units)?;
         Ok(self)
     }
 
@@ -319,7 +322,7 @@ impl<'a> LocalPhase2ContextBuildRequest<'a> {
     pub fn with_max_provider_results(
         mut self,
         max_results: u16,
-    ) -> Result<Self, ContextBuildError> {
+    ) -> Result<Self, EvidenceContextError> {
         if max_results == 0
             || CodeSearchLimits::try_new(max_results, DEFAULT_CODE_SEARCH_OUTPUT_BYTES).is_err()
             || MemoryRecallLimits::try_new(
@@ -329,7 +332,7 @@ impl<'a> LocalPhase2ContextBuildRequest<'a> {
             )
             .is_err()
         {
-            return Err(ContextBuildError::InvalidSourceInput);
+            return Err(EvidenceContextError::InvalidInput);
         }
         self.max_provider_results = max_results;
         Ok(self)
@@ -342,6 +345,13 @@ impl<'a> LocalPhase2ContextBuildRequest<'a> {
         self
     }
 
+    /// Applies resolved query and context ceilings as additional bounds.
+    #[must_use]
+    pub const fn with_configuration(mut self, configuration: &'a ResolvedConfiguration) -> Self {
+        self.configuration = Some(configuration);
+        self
+    }
+
     /// Replaces the complete operation deadline.
     #[must_use]
     pub const fn with_deadline(mut self, deadline: Duration) -> Self {
@@ -350,10 +360,10 @@ impl<'a> LocalPhase2ContextBuildRequest<'a> {
     }
 }
 
-impl fmt::Debug for LocalPhase2ContextBuildRequest<'_> {
+impl fmt::Debug for LocalEvidenceContextBuildRequest<'_> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("LocalPhase2ContextBuildRequest")
+            .debug_struct("LocalEvidenceContextBuildRequest")
             .field("root", &"<redacted-path>")
             .field("database", &"<redacted-path>")
             .field("repository_identity", &"<redacted-identity>")
@@ -365,27 +375,31 @@ impl fmt::Debug for LocalPhase2ContextBuildRequest<'_> {
             .field("intent", &"<redacted-intent>")
             .field("budget", &self.budget)
             .field("max_provider_results", &self.max_provider_results)
+            .field(
+                "configuration_digest",
+                &self.configuration.map(ResolvedConfiguration::digest),
+            )
             .field("deadline", &self.deadline)
             .finish()
     }
 }
 
-impl fmt::Debug for LocalPhase2ContextWorkspace<'_> {
+impl fmt::Debug for LocalEvidenceContextWorkspace<'_> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::SingleRepository => {
-                formatter.write_str("LocalPhase2ContextWorkspace::SingleRepository")
+                formatter.write_str("LocalEvidenceContextWorkspace::SingleRepository")
             }
             Self::ConnectedWorkspace { .. } => {
-                formatter.write_str("LocalPhase2ContextWorkspace::ConnectedWorkspace(<redacted>)")
+                formatter.write_str("LocalEvidenceContextWorkspace::ConnectedWorkspace(<redacted>)")
             }
         }
     }
 }
 
-/// Stable content-redacted local Phase 2 context failure.
+/// Stable content-redacted local evidence-balanced context failure.
 #[derive(Debug)]
-pub enum LocalPhase2ContextBuildError {
+pub enum LocalEvidenceContextBuildError {
     /// Repository identity text was malformed or non-canonical.
     RepositoryIdentity(RepositoryIdentityTextError),
     /// Connected-workspace identity text was malformed or non-canonical.
@@ -425,18 +439,18 @@ pub enum LocalPhase2ContextBuildError {
     /// The selected immutable syntax graph could not be read.
     Graph(RustGraphReadError),
     /// Exact source expansion failed.
-    SourceExpansion(LocalPhase2SourceExpansionError),
+    SourceExpansion(LocalEvidenceSourceExpansionError),
     /// Independently retrieved evidence did not match the pinned source member.
     EvidenceScopeMismatch,
-    /// The Phase 2 candidate or allocation contract failed.
-    Compile(Phase2ContextError),
+    /// The evidence-balanced candidate or allocation contract failed.
+    Compile(EvidenceContextError),
     /// The reader did not shut down cleanly.
     Shutdown(SqliteStoreError),
 }
 
-/// Stable, content-redacted source-expansion failure for a pinned Phase 2 scope.
+/// Stable, content-redacted source-expansion failure for a pinned evidence-balanced scope.
 #[derive(Debug)]
-pub enum LocalPhase2SourceExpansionError {
+pub enum LocalEvidenceSourceExpansionError {
     /// The capability-contained source read failed.
     Source(ContainedSourceError),
     /// Current source bytes do not match the indexed content identity.
@@ -445,17 +459,17 @@ pub enum LocalPhase2SourceExpansionError {
     InvalidSourceSpan,
 }
 
-impl fmt::Display for LocalPhase2SourceExpansionError {
+impl fmt::Display for LocalEvidenceSourceExpansionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
-            Self::Source(_) => "Phase 2 declaration source read failed",
-            Self::StaleSource => "Phase 2 declaration source is stale",
-            Self::InvalidSourceSpan => "Phase 2 declaration source span is invalid",
+            Self::Source(_) => "evidence-balanced declaration source read failed",
+            Self::StaleSource => "evidence-balanced declaration source is stale",
+            Self::InvalidSourceSpan => "evidence-balanced declaration source span is invalid",
         })
     }
 }
 
-impl Error for LocalPhase2SourceExpansionError {
+impl Error for LocalEvidenceSourceExpansionError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Source(source) => Some(source),
@@ -464,40 +478,42 @@ impl Error for LocalPhase2SourceExpansionError {
     }
 }
 
-impl fmt::Display for LocalPhase2ContextBuildError {
+impl fmt::Display for LocalEvidenceContextBuildError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
             Self::RepositoryIdentity(_) => "repository identity is invalid",
             Self::ConnectedWorkspaceIdentity(_) | Self::SourceSlotIdentity(_) => {
-                "Phase 2 context workspace identity is invalid"
+                "evidence-balanced context workspace identity is invalid"
             }
             Self::SourceQuery(_) | Self::MemoryQuery(_) => "context intent is invalid",
-            Self::ScipSymbol(_) => "Phase 2 SCIP symbol is invalid",
-            Self::DeadlineNotRepresentable => "Phase 2 context deadline is not representable",
-            Self::Cancelled => "Phase 2 context build was cancelled",
-            Self::DeadlineExceeded => "Phase 2 context build deadline elapsed",
+            Self::ScipSymbol(_) => "evidence-balanced SCIP symbol is invalid",
+            Self::DeadlineNotRepresentable => {
+                "evidence-balanced context deadline is not representable"
+            }
+            Self::Cancelled => "evidence-balanced context build was cancelled",
+            Self::DeadlineExceeded => "evidence-balanced context build deadline elapsed",
             Self::RootOpen(_) => "source root could not open",
-            Self::ReaderStart(_) => "Phase 2 context reader startup failed",
+            Self::ReaderStart(_) => "evidence-balanced context reader startup failed",
             Self::WorkspaceUnavailable | Self::WorkspaceMismatch => {
-                "Phase 2 context workspace selection is unavailable"
+                "evidence-balanced context workspace selection is unavailable"
             }
-            Self::SourceScope(_) => "Phase 2 context source scope read failed",
-            Self::Search(_) => "Phase 2 context source search failed",
-            Self::Memory(_) => "Phase 2 context memory recall failed",
-            Self::History(_) => "Phase 2 Git-history evidence read failed",
-            Self::ScipEvidence(_) => "Phase 2 SCIP evidence read failed",
-            Self::Graph(_) => "Phase 2 graph evidence read failed",
-            Self::SourceExpansion(_) => "Phase 2 context source expansion failed",
+            Self::SourceScope(_) => "evidence-balanced context source scope read failed",
+            Self::Search(_) => "evidence-balanced context source search failed",
+            Self::Memory(_) => "evidence-balanced context memory recall failed",
+            Self::History(_) => "evidence-balanced Git-history evidence read failed",
+            Self::ScipEvidence(_) => "evidence-balanced SCIP evidence read failed",
+            Self::Graph(_) => "evidence-balanced graph evidence read failed",
+            Self::SourceExpansion(_) => "evidence-balanced context source expansion failed",
             Self::EvidenceScopeMismatch => {
-                "Phase 2 context evidence did not match the pinned source"
+                "evidence-balanced context evidence did not match the pinned source"
             }
-            Self::Compile(_) => "Phase 2 context compilation failed",
-            Self::Shutdown(_) => "Phase 2 context reader shutdown failed",
+            Self::Compile(_) => "evidence-balanced context compilation failed",
+            Self::Shutdown(_) => "evidence-balanced context reader shutdown failed",
         })
     }
 }
 
-impl Error for LocalPhase2ContextBuildError {
+impl Error for LocalEvidenceContextBuildError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::RepositoryIdentity(error) => Some(error),
@@ -529,30 +545,32 @@ impl Error for LocalPhase2ContextBuildError {
 }
 
 /// Opens one immutable local view, gathers bounded syntax and memory evidence,
-/// then allocates it through the separate Phase 2 profile.
-pub fn build_local_phase2_context(
-    request: LocalPhase2ContextBuildRequest<'_>,
+/// then allocates it through the evidence-balanced profile.
+pub fn build_local_evidence_context(
+    request: LocalEvidenceContextBuildRequest<'_>,
     cancelled: Arc<AtomicBool>,
-) -> Result<LocalPhase2ContextBuildResult, LocalPhase2ContextBuildError> {
+) -> Result<LocalEvidenceContextBuildResult, LocalEvidenceContextBuildError> {
     let repository = RepositoryIdentityTextV1::decode(request.repository_identity)
-        .map_err(LocalPhase2ContextBuildError::RepositoryIdentity)?;
+        .map_err(LocalEvidenceContextBuildError::RepositoryIdentity)?;
+    let request =
+        effective_context_request(request).map_err(LocalEvidenceContextBuildError::Compile)?;
     let source_query = CodeSearchQuery::try_new(request.intent)
-        .map_err(LocalPhase2ContextBuildError::SourceQuery)?;
+        .map_err(LocalEvidenceContextBuildError::SourceQuery)?;
     let memory_query = MemoryRecallQuery::try_new(request.intent)
-        .map_err(LocalPhase2ContextBuildError::MemoryQuery)?;
+        .map_err(LocalEvidenceContextBuildError::MemoryQuery)?;
     let scip_symbol = request
         .scip_symbol
         .map(|symbol| ScipSymbol::try_new(symbol.to_owned()))
         .transpose()
-        .map_err(LocalPhase2ContextBuildError::ScipSymbol)?;
+        .map_err(LocalEvidenceContextBuildError::ScipSymbol)?;
     let deadline = Instant::now()
         .checked_add(request.deadline)
-        .ok_or(LocalPhase2ContextBuildError::DeadlineNotRepresentable)?;
+        .ok_or(LocalEvidenceContextBuildError::DeadlineNotRepresentable)?;
     check_control(&cancelled, deadline)?;
-    let root =
-        ContainedSourceRoot::open(request.root).map_err(LocalPhase2ContextBuildError::RootOpen)?;
+    let root = ContainedSourceRoot::open(request.root)
+        .map_err(LocalEvidenceContextBuildError::RootOpen)?;
     let reader = OwnedSqliteReader::start(request.database, deadline)
-        .map_err(LocalPhase2ContextBuildError::ReaderStart)?;
+        .map_err(LocalEvidenceContextBuildError::ReaderStart)?;
     let result = build_with_reader(
         &reader,
         &root,
@@ -568,8 +586,23 @@ pub fn build_local_phase2_context(
     match (result, shutdown) {
         (Ok(result), Ok(())) => Ok(result),
         (Err(error), _) => Err(error),
-        (Ok(_), Err(error)) => Err(LocalPhase2ContextBuildError::Shutdown(error)),
+        (Ok(_), Err(error)) => Err(LocalEvidenceContextBuildError::Shutdown(error)),
     }
+}
+
+fn effective_context_request<'a>(
+    mut request: LocalEvidenceContextBuildRequest<'a>,
+) -> Result<LocalEvidenceContextBuildRequest<'a>, EvidenceContextError> {
+    let Some(configuration) = request.configuration else {
+        return Ok(request);
+    };
+    let configured_budget = *configuration.preferences().context_bytes().effective();
+    request.budget = EvidenceContextBudget::try_new(request.budget.units().min(configured_budget))?;
+    let configured_results = *configuration.preferences().query_results().effective();
+    let configured_results =
+        u16::try_from(configured_results).map_err(|_| EvidenceContextError::InvalidInput)?;
+    request.max_provider_results = request.max_provider_results.min(configured_results);
+    Ok(request)
 }
 
 #[allow(
@@ -584,46 +617,46 @@ fn build_with_reader(
     source_query: CodeSearchQuery,
     memory_query: MemoryRecallQuery,
     scip_symbol: Option<ScipSymbol>,
-    request: LocalPhase2ContextBuildRequest<'_>,
+    request: LocalEvidenceContextBuildRequest<'_>,
     cancelled: Arc<AtomicBool>,
     deadline: Instant,
-) -> Result<LocalPhase2ContextBuildResult, LocalPhase2ContextBuildError> {
+) -> Result<LocalEvidenceContextBuildResult, LocalEvidenceContextBuildError> {
     let (workspace, source_slot, requires_single_member) = match request.workspace {
-        LocalPhase2ContextWorkspace::SingleRepository => (
+        LocalEvidenceContextWorkspace::SingleRepository => (
             ConnectedWorkspaceId::for_single_repository(repository),
             SourceSlotId::for_repository(repository),
             true,
         ),
-        LocalPhase2ContextWorkspace::ConnectedWorkspace {
+        LocalEvidenceContextWorkspace::ConnectedWorkspace {
             connected_workspace,
             source_slot,
         } => (
             ConnectedWorkspaceIdTextV1::decode(connected_workspace)
-                .map_err(LocalPhase2ContextBuildError::ConnectedWorkspaceIdentity)?,
+                .map_err(LocalEvidenceContextBuildError::ConnectedWorkspaceIdentity)?,
             SourceSlotIdTextV1::decode(source_slot)
-                .map_err(LocalPhase2ContextBuildError::SourceSlotIdentity)?,
+                .map_err(LocalEvidenceContextBuildError::SourceSlotIdentity)?,
             false,
         ),
     };
     let view = reader
         .pin_workspace_view(workspace, None, Arc::clone(&cancelled), deadline)
-        .map_err(LocalPhase2ContextBuildError::SourceScope)?
-        .ok_or(LocalPhase2ContextBuildError::WorkspaceUnavailable)?;
+        .map_err(LocalEvidenceContextBuildError::SourceScope)?
+        .ok_or(LocalEvidenceContextBuildError::WorkspaceUnavailable)?;
     if requires_single_member && view.members().len() != 1 {
-        return Err(LocalPhase2ContextBuildError::WorkspaceMismatch);
+        return Err(LocalEvidenceContextBuildError::WorkspaceMismatch);
     }
     let member = view
         .members()
         .iter()
         .find(|member| member.source_slot() == source_slot)
-        .ok_or(LocalPhase2ContextBuildError::WorkspaceMismatch)?;
+        .ok_or(LocalEvidenceContextBuildError::WorkspaceMismatch)?;
     if member.repository() != repository {
-        return Err(LocalPhase2ContextBuildError::WorkspaceMismatch);
+        return Err(LocalEvidenceContextBuildError::WorkspaceMismatch);
     }
     let source = reader
         .scip_import_scope(&view, source_slot, Arc::clone(&cancelled), deadline)
-        .map_err(LocalPhase2ContextBuildError::SourceScope)?;
-    let scope = Phase2ContextScope::try_new(
+        .map_err(LocalEvidenceContextBuildError::SourceScope)?;
+    let scope = EvidenceContextScope::try_new(
         repository,
         source.connected_workspace(),
         source.workspace_view().get(),
@@ -633,12 +666,12 @@ fn build_with_reader(
         source.source_snapshot(),
         source.source_manifest(),
     )
-    .map_err(|_| LocalPhase2ContextBuildError::EvidenceScopeMismatch)?;
+    .map_err(|_| LocalEvidenceContextBuildError::EvidenceScopeMismatch)?;
     let search_limits = CodeSearchLimits::try_new(
         request.max_provider_results,
         DEFAULT_CODE_SEARCH_OUTPUT_BYTES,
     )
-    .map_err(|_| LocalPhase2ContextBuildError::EvidenceScopeMismatch)?;
+    .map_err(|_| LocalEvidenceContextBuildError::EvidenceScopeMismatch)?;
     let search_port = PinnedWorkspaceCodeSearchPort {
         reader,
         view: view.clone(),
@@ -655,12 +688,11 @@ fn build_with_reader(
             deadline,
         ),
     )
-    .map_err(LocalPhase2ContextBuildError::Search)?;
+    .map_err(LocalEvidenceContextBuildError::Search)?;
     if *search.snapshot() != scope.snapshot() || search.generation().get() != scope.generation() {
-        return Err(LocalPhase2ContextBuildError::EvidenceScopeMismatch);
+        return Err(LocalEvidenceContextBuildError::EvidenceScopeMismatch);
     }
-    let expansion_budget = ContextBuildBudget::try_new(request.budget.units())
-        .map_err(|_| LocalPhase2ContextBuildError::EvidenceScopeMismatch)?;
+    let expansion_budget = request.budget;
     let source_candidates = expand_pinned_source_candidates(
         root,
         &search,
@@ -692,7 +724,7 @@ fn build_with_reader(
             check_control(&cancelled, deadline)?;
             let EvidenceLocation::SymbolOccurrence(occurrence) = evidence.identity().location()
             else {
-                return Err(LocalPhase2ContextBuildError::EvidenceScopeMismatch);
+                return Err(LocalEvidenceContextBuildError::EvidenceScopeMismatch);
             };
             if let ScipSyntaxSymbolResolution::Exact(symbol) = reader
                 .scip_symbol_at_syntax_span(
@@ -704,7 +736,7 @@ fn build_with_reader(
                     Arc::clone(&cancelled),
                     deadline,
                 )
-                .map_err(LocalPhase2ContextBuildError::ScipEvidence)?
+                .map_err(LocalEvidenceContextBuildError::ScipEvidence)?
             {
                 scip_symbols.insert(symbol);
             }
@@ -716,7 +748,7 @@ fn build_with_reader(
             request.max_provider_results,
             1024 * 1024,
         )
-        .map_err(|_| LocalPhase2ContextBuildError::EvidenceScopeMismatch)?;
+        .map_err(|_| LocalEvidenceContextBuildError::EvidenceScopeMismatch)?;
         let evidence = reader
             .scip_symbol_evidence(
                 &view,
@@ -727,7 +759,7 @@ fn build_with_reader(
                 Arc::clone(&cancelled),
                 deadline,
             )
-            .map_err(LocalPhase2ContextBuildError::ScipEvidence)?;
+            .map_err(LocalEvidenceContextBuildError::ScipEvidence)?;
         if let ScipSymbolEvidenceResult::Found(evidence) = evidence
             && evidence.occurrences().len() == 1
             && !evidence.occurrences_truncated()
@@ -748,7 +780,7 @@ fn build_with_reader(
                 occurrence,
                 source,
                 u64::try_from(evidence.relationships().len())
-                    .map_err(|_| LocalPhase2ContextBuildError::EvidenceScopeMismatch)?,
+                    .map_err(|_| LocalEvidenceContextBuildError::EvidenceScopeMismatch)?,
             )?);
         }
     }
@@ -757,7 +789,7 @@ fn build_with_reader(
         DEFAULT_MEMORY_RECALL_OUTPUT_BYTES,
         DEFAULT_MEMORY_RECALL_SCAN_BYTES,
     )
-    .map_err(|_| LocalPhase2ContextBuildError::EvidenceScopeMismatch)?;
+    .map_err(|_| LocalEvidenceContextBuildError::EvidenceScopeMismatch)?;
     match memory_recall(
         reader,
         MemoryRecallRequest::new(
@@ -812,39 +844,39 @@ fn build_with_reader(
                         }
                     }
                     Err(SqliteStoreError::MemoryProjectionUnavailable) => {}
-                    Err(error) => return Err(LocalPhase2ContextBuildError::History(error)),
+                    Err(error) => return Err(LocalEvidenceContextBuildError::History(error)),
                 }
             }
         }
         Err(MemoryRecallError::Port(SqliteStoreError::MemoryProjectionUnavailable)) => {}
-        Err(error) => return Err(LocalPhase2ContextBuildError::Memory(error)),
+        Err(error) => return Err(LocalEvidenceContextBuildError::Memory(error)),
     }
     let provider_coverage = local_provider_coverage(&candidates)?;
-    let input = Phase2ContextInput::try_new(scope, None, candidates)
-        .map_err(LocalPhase2ContextBuildError::Compile)?
+    let input = EvidenceContextInput::try_new(scope, None, candidates)
+        .map_err(LocalEvidenceContextBuildError::Compile)?
         .with_provider_coverage(provider_coverage)
-        .map_err(LocalPhase2ContextBuildError::Compile)?;
-    compile_phase2_context(
-        Phase2ContextProfile::EvidenceBalancedV1,
+        .map_err(LocalEvidenceContextBuildError::Compile)?;
+    compile_evidence_context(
+        EvidenceContextProfile::EvidenceBalancedV1,
         input,
         request.budget,
         &cancelled,
         deadline,
     )
-    .map_err(LocalPhase2ContextBuildError::Compile)
+    .map_err(LocalEvidenceContextBuildError::Compile)
 }
 
 fn local_provider_coverage(
-    candidates: &[Phase2ContextCandidate<LocalPhase2ContextItem>],
-) -> Result<Vec<Phase2ContextProviderCoverage>, LocalPhase2ContextBuildError> {
+    candidates: &[EvidenceContextCandidate<LocalEvidenceContextItem>],
+) -> Result<Vec<EvidenceContextProviderCoverage>, LocalEvidenceContextBuildError> {
     let mut coverage = Vec::with_capacity(6);
     for tier in [
-        Phase2ContextTier::PreciseOverlay,
-        Phase2ContextTier::Syntax,
-        Phase2ContextTier::Structural,
-        Phase2ContextTier::References,
-        Phase2ContextTier::Memory,
-        Phase2ContextTier::History,
+        EvidenceContextTier::PreciseOverlay,
+        EvidenceContextTier::Syntax,
+        EvidenceContextTier::Structural,
+        EvidenceContextTier::References,
+        EvidenceContextTier::Memory,
+        EvidenceContextTier::History,
     ] {
         let candidate_count = u64::try_from(
             candidates
@@ -852,15 +884,15 @@ fn local_provider_coverage(
                 .filter(|candidate| candidate.tier() == tier)
                 .count(),
         )
-        .map_err(|_| LocalPhase2ContextBuildError::EvidenceScopeMismatch)?;
+        .map_err(|_| LocalEvidenceContextBuildError::EvidenceScopeMismatch)?;
         let availability = if candidate_count == 0 {
-            Phase2ContextProviderAvailability::Unavailable
+            EvidenceContextProviderAvailability::Unavailable
         } else {
-            Phase2ContextProviderAvailability::Available
+            EvidenceContextProviderAvailability::Available
         };
         coverage.push(
-            Phase2ContextProviderCoverage::try_new(tier, availability, candidate_count)
-                .map_err(|_| LocalPhase2ContextBuildError::EvidenceScopeMismatch)?,
+            EvidenceContextProviderCoverage::try_new(tier, availability, candidate_count)
+                .map_err(|_| LocalEvidenceContextBuildError::EvidenceScopeMismatch)?,
         );
     }
     Ok(coverage)
@@ -871,14 +903,14 @@ fn local_provider_coverage(
     reason = "the exact provider identity, source occurrence, and source bytes each protect the immutable overlay fence"
 )]
 fn precise_overlay_candidate(
-    scope: Phase2ContextScope,
+    scope: EvidenceContextScope,
     overlay: ScipOverlaySummary,
     occurrence: ScipOccurrenceEvidence,
     source: Box<[u8]>,
     relationship_count: u64,
-) -> Result<Phase2ContextCandidate<LocalPhase2ContextItem>, LocalPhase2ContextBuildError> {
+) -> Result<EvidenceContextCandidate<LocalEvidenceContextItem>, LocalEvidenceContextBuildError> {
     let units = u64::try_from(source.len())
-        .map_err(|_| LocalPhase2ContextBuildError::EvidenceScopeMismatch)?;
+        .map_err(|_| LocalEvidenceContextBuildError::EvidenceScopeMismatch)?;
     let identity = candidate_identity(scope, b"scip-overlay", |hasher| {
         hasher.update(overlay.digest().as_bytes());
         hasher.update(occurrence.path().as_bytes());
@@ -889,21 +921,21 @@ fn precise_overlay_candidate(
         hasher.update(&source);
     });
     let provider = provider_identity_with(b"scip-overlay", overlay.digest().as_bytes());
-    Phase2ContextCandidate::try_new(
+    EvidenceContextCandidate::try_new(
         scope,
-        Phase2ContextTier::PreciseOverlay,
+        EvidenceContextTier::PreciseOverlay,
         1,
         units,
         identity,
         provider,
-        LocalPhase2ContextItem::PreciseOverlay(LocalPhase2PreciseOverlayItem {
+        LocalEvidenceContextItem::PreciseOverlay(LocalEvidencePreciseOverlayItem {
             overlay,
             occurrence,
             source,
             relationship_count,
         }),
     )
-    .map_err(LocalPhase2ContextBuildError::Compile)
+    .map_err(LocalEvidenceContextBuildError::Compile)
 }
 
 #[allow(
@@ -916,20 +948,21 @@ fn graph_relation_candidates(
     root: &ContainedSourceRoot,
     view: &crate::PinnedWorkspaceView,
     source_slot: SourceSlotId,
-    scope: Phase2ContextScope,
+    scope: EvidenceContextScope,
     producer_manifest: repowitness_domain::ProducerManifestDigest,
     query: &str,
     max_results: u16,
     cancelled: Arc<AtomicBool>,
     deadline: Instant,
-) -> Result<Vec<Phase2ContextCandidate<LocalPhase2ContextItem>>, LocalPhase2ContextBuildError> {
+) -> Result<Vec<EvidenceContextCandidate<LocalEvidenceContextItem>>, LocalEvidenceContextBuildError>
+{
     // Context expansion is deliberately one hop from an already matched syntax
     // declaration.  The graph read API supports deeper navigation, but letting
     // a broad lexical term fan out recursively here would spend the evidence
     // budget on transitive neighbours before each independent tier receives an
     // opportunity to contribute.
     let limits = RustGraphReadLimits::try_new_with_input(
-        PHASE2_CONTEXT_GRAPH_INPUT_EDGE_LIMIT,
+        EVIDENCE_CONTEXT_GRAPH_INPUT_EDGE_LIMIT,
         64 * 1024 * 1024,
         1,
         u32::from(max_results),
@@ -938,7 +971,7 @@ fn graph_relation_candidates(
         10_000,
         4 * 1024 * 1024,
     )
-    .map_err(LocalPhase2ContextBuildError::Graph)?;
+    .map_err(LocalEvidenceContextBuildError::Graph)?;
     let definitions = match reader.search_rust_graph_symbols(
         view,
         crate::GenerationId::from_database(scope.generation()),
@@ -950,7 +983,7 @@ fn graph_relation_candidates(
     ) {
         Ok(result) => result,
         Err(RustGraphReadError::GraphNotProduced) => return Ok(Vec::new()),
-        Err(error) => return Err(LocalPhase2ContextBuildError::Graph(error)),
+        Err(error) => return Err(LocalEvidenceContextBuildError::Graph(error)),
     };
     let mut candidates = Vec::new();
     let mut identities = BTreeSet::new();
@@ -974,7 +1007,7 @@ fn graph_relation_candidates(
         ) {
             Ok(trace) => trace,
             Err(RustGraphReadError::GraphNotProduced) => return Ok(candidates),
-            Err(error) => return Err(LocalPhase2ContextBuildError::Graph(error)),
+            Err(error) => return Err(LocalEvidenceContextBuildError::Graph(error)),
         };
         for edge in trace.edges() {
             check_control(&cancelled, deadline)?;
@@ -1004,9 +1037,9 @@ fn graph_relation_candidates(
                 target.name_span(),
                 target.declaration_span(),
             )
-            .map_err(|_| LocalPhase2ContextBuildError::EvidenceScopeMismatch)?;
+            .map_err(|_| LocalEvidenceContextBuildError::EvidenceScopeMismatch)?;
             let rank = u16::try_from(candidates.len() + 1)
-                .map_err(|_| LocalPhase2ContextBuildError::EvidenceScopeMismatch)?;
+                .map_err(|_| LocalEvidenceContextBuildError::EvidenceScopeMismatch)?;
             let candidate = ContextSourceCandidate::try_new(
                 rank,
                 SymbolGetSelector::new(
@@ -1018,7 +1051,7 @@ fn graph_relation_candidates(
                 occurrence,
                 source,
             )
-            .map_err(|_| LocalPhase2ContextBuildError::EvidenceScopeMismatch)?;
+            .map_err(|_| LocalEvidenceContextBuildError::EvidenceScopeMismatch)?;
             let relation = graph_relation_candidate(scope, edge.kind(), edge.depth(), candidate)?;
             if identities.insert(relation.identity()) {
                 candidates.push(relation);
@@ -1032,17 +1065,17 @@ fn graph_relation_candidates(
 }
 
 fn graph_relation_candidate(
-    scope: Phase2ContextScope,
+    scope: EvidenceContextScope,
     edge_kind: RustGraphEdgeKind,
     depth: u32,
     candidate: ContextSourceCandidate,
-) -> Result<Phase2ContextCandidate<LocalPhase2ContextItem>, LocalPhase2ContextBuildError> {
+) -> Result<EvidenceContextCandidate<LocalEvidenceContextItem>, LocalEvidenceContextBuildError> {
     let tier = match edge_kind {
-        RustGraphEdgeKind::Import => Phase2ContextTier::Structural,
-        RustGraphEdgeKind::Reference | RustGraphEdgeKind::Call => Phase2ContextTier::References,
+        RustGraphEdgeKind::Import => EvidenceContextTier::Structural,
+        RustGraphEdgeKind::Reference | RustGraphEdgeKind::Call => EvidenceContextTier::References,
     };
     let units = u64::try_from(candidate.declaration().len())
-        .map_err(|_| LocalPhase2ContextBuildError::EvidenceScopeMismatch)?;
+        .map_err(|_| LocalEvidenceContextBuildError::EvidenceScopeMismatch)?;
     let identity = candidate_identity(scope, b"source-declaration", |hasher| {
         hasher.update(candidate.selector().path().as_bytes());
         hasher.update(candidate.selector().content_digest().as_bytes());
@@ -1050,20 +1083,20 @@ fn graph_relation_candidate(
         hasher.update(candidate.selector().fact_ordinal().to_be_bytes());
         hasher.update(candidate.declaration());
     });
-    Phase2ContextCandidate::try_new(
+    EvidenceContextCandidate::try_new(
         scope,
         tier,
         u32::from(candidate.provider_rank()),
         units,
         identity,
         provider_identity(b"rust-graph"),
-        LocalPhase2ContextItem::GraphRelation(LocalPhase2GraphRelationItem {
+        LocalEvidenceContextItem::GraphRelation(LocalEvidenceGraphRelationItem {
             candidate,
             edge_kind,
             depth,
         }),
     )
-    .map_err(LocalPhase2ContextBuildError::Compile)
+    .map_err(LocalEvidenceContextBuildError::Compile)
 }
 
 /// Expands declarations from the already-pinned lexical evidence without consulting a
@@ -1072,15 +1105,15 @@ fn graph_relation_candidate(
 fn expand_pinned_source_candidates(
     root: &ContainedSourceRoot,
     search: &crate::LocalCodeSearchResult,
-    budget: ContextBuildBudget,
+    budget: EvidenceContextBudget,
     cancelled: Arc<AtomicBool>,
     deadline: Instant,
-) -> Result<Vec<ContextSourceCandidate>, LocalPhase2ContextBuildError> {
+) -> Result<Vec<ContextSourceCandidate>, LocalEvidenceContextBuildError> {
     let mut candidates = Vec::with_capacity(search.evidence().as_slice().len());
     for (index, evidence) in search.evidence().as_slice().iter().enumerate() {
         check_control(&cancelled, deadline)?;
         let EvidenceLocation::SymbolOccurrence(occurrence) = evidence.identity().location() else {
-            return Err(LocalPhase2ContextBuildError::EvidenceScopeMismatch);
+            return Err(LocalEvidenceContextBuildError::EvidenceScopeMismatch);
         };
         if occurrence.declaration_span().len().get() > budget.units() {
             continue;
@@ -1088,46 +1121,46 @@ fn expand_pinned_source_candidates(
         let read_limits = SourceReadLimits::try_new(
             deadline
                 .checked_duration_since(Instant::now())
-                .ok_or(LocalPhase2ContextBuildError::DeadlineExceeded)?,
+                .ok_or(LocalEvidenceContextBuildError::DeadlineExceeded)?,
             DEFAULT_SOURCE_FILE_BYTES,
             DEFAULT_SOURCE_READ_CHUNK_BYTES,
         )
-        .map_err(|_| LocalPhase2ContextBuildError::EvidenceScopeMismatch)?;
+        .map_err(|_| LocalEvidenceContextBuildError::EvidenceScopeMismatch)?;
         let source = root
             .read_with_cancel(evidence.identity().path(), read_limits, || {
                 cancelled.load(Ordering::Acquire)
             })
             .map_err(|error| match error {
-                ContainedSourceError::Cancelled => LocalPhase2ContextBuildError::Cancelled,
+                ContainedSourceError::Cancelled => LocalEvidenceContextBuildError::Cancelled,
                 ContainedSourceError::DeadlineExceeded { .. } => {
-                    LocalPhase2ContextBuildError::DeadlineExceeded
+                    LocalEvidenceContextBuildError::DeadlineExceeded
                 }
-                error => LocalPhase2ContextBuildError::SourceExpansion(
-                    LocalPhase2SourceExpansionError::Source(error),
+                error => LocalEvidenceContextBuildError::SourceExpansion(
+                    LocalEvidenceSourceExpansionError::Source(error),
                 ),
             })?;
         check_control(&cancelled, deadline)?;
         if hash_source_content(&source) != *evidence.identity().content_digest() {
-            return Err(LocalPhase2ContextBuildError::SourceExpansion(
-                LocalPhase2SourceExpansionError::StaleSource,
+            return Err(LocalEvidenceContextBuildError::SourceExpansion(
+                LocalEvidenceSourceExpansionError::StaleSource,
             ));
         }
         let start = usize::try_from(occurrence.declaration_span().start().get()).map_err(|_| {
-            LocalPhase2ContextBuildError::SourceExpansion(
-                LocalPhase2SourceExpansionError::InvalidSourceSpan,
+            LocalEvidenceContextBuildError::SourceExpansion(
+                LocalEvidenceSourceExpansionError::InvalidSourceSpan,
             )
         })?;
         let end = usize::try_from(occurrence.declaration_span().end().get()).map_err(|_| {
-            LocalPhase2ContextBuildError::SourceExpansion(
-                LocalPhase2SourceExpansionError::InvalidSourceSpan,
+            LocalEvidenceContextBuildError::SourceExpansion(
+                LocalEvidenceSourceExpansionError::InvalidSourceSpan,
             )
         })?;
         let declaration = source
             .get(start..end)
             .map(<[u8]>::to_vec)
             .map(Vec::into_boxed_slice)
-            .ok_or(LocalPhase2ContextBuildError::SourceExpansion(
-                LocalPhase2SourceExpansionError::InvalidSourceSpan,
+            .ok_or(LocalEvidenceContextBuildError::SourceExpansion(
+                LocalEvidenceSourceExpansionError::InvalidSourceSpan,
             ))?;
         let selector = SymbolGetSelector::new(
             evidence.identity().path().clone(),
@@ -1138,12 +1171,12 @@ fn expand_pinned_source_candidates(
         candidates.push(
             ContextSourceCandidate::try_new(
                 u16::try_from(index + 1)
-                    .map_err(|_| LocalPhase2ContextBuildError::EvidenceScopeMismatch)?,
+                    .map_err(|_| LocalEvidenceContextBuildError::EvidenceScopeMismatch)?,
                 selector,
                 occurrence.clone(),
                 declaration,
             )
-            .map_err(|_| LocalPhase2ContextBuildError::EvidenceScopeMismatch)?,
+            .map_err(|_| LocalEvidenceContextBuildError::EvidenceScopeMismatch)?,
         );
     }
     Ok(candidates)
@@ -1158,58 +1191,58 @@ fn read_verified_pinned_span(
     span: repowitness_domain::ByteSpan,
     cancelled: &AtomicBool,
     deadline: Instant,
-) -> Result<Box<[u8]>, LocalPhase2ContextBuildError> {
+) -> Result<Box<[u8]>, LocalEvidenceContextBuildError> {
     check_control(cancelled, deadline)?;
     let read_limits = SourceReadLimits::try_new(
         deadline
             .checked_duration_since(Instant::now())
-            .ok_or(LocalPhase2ContextBuildError::DeadlineExceeded)?,
+            .ok_or(LocalEvidenceContextBuildError::DeadlineExceeded)?,
         DEFAULT_SOURCE_FILE_BYTES,
         DEFAULT_SOURCE_READ_CHUNK_BYTES,
     )
-    .map_err(|_| LocalPhase2ContextBuildError::EvidenceScopeMismatch)?;
+    .map_err(|_| LocalEvidenceContextBuildError::EvidenceScopeMismatch)?;
     let source = root
         .read_with_cancel(path, read_limits, || cancelled.load(Ordering::Acquire))
         .map_err(|error| match error {
-            ContainedSourceError::Cancelled => LocalPhase2ContextBuildError::Cancelled,
+            ContainedSourceError::Cancelled => LocalEvidenceContextBuildError::Cancelled,
             ContainedSourceError::DeadlineExceeded { .. } => {
-                LocalPhase2ContextBuildError::DeadlineExceeded
+                LocalEvidenceContextBuildError::DeadlineExceeded
             }
-            error => LocalPhase2ContextBuildError::SourceExpansion(
-                LocalPhase2SourceExpansionError::Source(error),
+            error => LocalEvidenceContextBuildError::SourceExpansion(
+                LocalEvidenceSourceExpansionError::Source(error),
             ),
         })?;
     check_control(cancelled, deadline)?;
     if hash_source_content(&source) != content {
-        return Err(LocalPhase2ContextBuildError::SourceExpansion(
-            LocalPhase2SourceExpansionError::StaleSource,
+        return Err(LocalEvidenceContextBuildError::SourceExpansion(
+            LocalEvidenceSourceExpansionError::StaleSource,
         ));
     }
     let start = usize::try_from(span.start().get()).map_err(|_| {
-        LocalPhase2ContextBuildError::SourceExpansion(
-            LocalPhase2SourceExpansionError::InvalidSourceSpan,
+        LocalEvidenceContextBuildError::SourceExpansion(
+            LocalEvidenceSourceExpansionError::InvalidSourceSpan,
         )
     })?;
     let end = usize::try_from(span.end().get()).map_err(|_| {
-        LocalPhase2ContextBuildError::SourceExpansion(
-            LocalPhase2SourceExpansionError::InvalidSourceSpan,
+        LocalEvidenceContextBuildError::SourceExpansion(
+            LocalEvidenceSourceExpansionError::InvalidSourceSpan,
         )
     })?;
     source
         .get(start..end)
         .map(<[u8]>::to_vec)
         .map(Vec::into_boxed_slice)
-        .ok_or(LocalPhase2ContextBuildError::SourceExpansion(
-            LocalPhase2SourceExpansionError::InvalidSourceSpan,
+        .ok_or(LocalEvidenceContextBuildError::SourceExpansion(
+            LocalEvidenceSourceExpansionError::InvalidSourceSpan,
         ))
 }
 
 fn syntax_candidate(
-    scope: Phase2ContextScope,
+    scope: EvidenceContextScope,
     candidate: ContextSourceCandidate,
-) -> Result<Phase2ContextCandidate<LocalPhase2ContextItem>, LocalPhase2ContextBuildError> {
+) -> Result<EvidenceContextCandidate<LocalEvidenceContextItem>, LocalEvidenceContextBuildError> {
     let units = u64::try_from(candidate.declaration().len())
-        .map_err(|_| LocalPhase2ContextBuildError::EvidenceScopeMismatch)?;
+        .map_err(|_| LocalEvidenceContextBuildError::EvidenceScopeMismatch)?;
     let identity = candidate_identity(scope, b"source-declaration", |hasher| {
         hasher.update(candidate.selector().path().as_bytes());
         hasher.update(candidate.selector().content_digest().as_bytes());
@@ -1217,71 +1250,71 @@ fn syntax_candidate(
         hasher.update(candidate.selector().fact_ordinal().to_be_bytes());
         hasher.update(candidate.declaration());
     });
-    Phase2ContextCandidate::try_new(
+    EvidenceContextCandidate::try_new(
         scope,
-        Phase2ContextTier::Syntax,
+        EvidenceContextTier::Syntax,
         u32::from(candidate.provider_rank()),
         units,
         identity,
         provider_identity(b"syntax"),
-        LocalPhase2ContextItem::Syntax(candidate),
+        LocalEvidenceContextItem::Syntax(candidate),
     )
-    .map_err(LocalPhase2ContextBuildError::Compile)
+    .map_err(LocalEvidenceContextBuildError::Compile)
 }
 
 fn memory_candidate(
-    scope: Phase2ContextScope,
+    scope: EvidenceContextScope,
     index: usize,
     record: MemoryRecallRecord,
-) -> Result<Phase2ContextCandidate<LocalPhase2ContextItem>, LocalPhase2ContextBuildError> {
+) -> Result<EvidenceContextCandidate<LocalEvidenceContextItem>, LocalEvidenceContextBuildError> {
     let semantic = record
         .record()
-        .ok_or(LocalPhase2ContextBuildError::EvidenceScopeMismatch)?;
+        .ok_or(LocalEvidenceContextBuildError::EvidenceScopeMismatch)?;
     let title = u64::try_from(semantic.claim().title().as_str().len())
-        .map_err(|_| LocalPhase2ContextBuildError::EvidenceScopeMismatch)?;
+        .map_err(|_| LocalEvidenceContextBuildError::EvidenceScopeMismatch)?;
     let body = u64::try_from(semantic.claim().body().as_str().len())
-        .map_err(|_| LocalPhase2ContextBuildError::EvidenceScopeMismatch)?;
+        .map_err(|_| LocalEvidenceContextBuildError::EvidenceScopeMismatch)?;
     let units = title
         .checked_add(body)
-        .ok_or(LocalPhase2ContextBuildError::EvidenceScopeMismatch)?;
+        .ok_or(LocalEvidenceContextBuildError::EvidenceScopeMismatch)?;
     let rank = u32::try_from(index + 1)
-        .map_err(|_| LocalPhase2ContextBuildError::EvidenceScopeMismatch)?;
+        .map_err(|_| LocalEvidenceContextBuildError::EvidenceScopeMismatch)?;
     let identity = candidate_identity(scope, b"memory", |hasher| {
         hasher.update(record.record_id().as_bytes());
         if let Some(revision) = record.revision() {
             hasher.update(revision.as_bytes());
         }
     });
-    Phase2ContextCandidate::try_new(
+    EvidenceContextCandidate::try_new(
         scope,
-        Phase2ContextTier::Memory,
+        EvidenceContextTier::Memory,
         rank,
         units,
         identity,
         provider_identity(b"memory"),
-        LocalPhase2ContextItem::Memory(record),
+        LocalEvidenceContextItem::Memory(record),
     )
-    .map_err(LocalPhase2ContextBuildError::Compile)
+    .map_err(LocalEvidenceContextBuildError::Compile)
 }
 
 fn history_candidate(
-    scope: Phase2ContextScope,
+    scope: EvidenceContextScope,
     index: usize,
     record: MemoryRecallRecord,
     commit: repowitness_domain::MemoryCommitId,
-) -> Result<Phase2ContextCandidate<LocalPhase2ContextItem>, LocalPhase2ContextBuildError> {
+) -> Result<EvidenceContextCandidate<LocalEvidenceContextItem>, LocalEvidenceContextBuildError> {
     let semantic = record
         .record()
-        .ok_or(LocalPhase2ContextBuildError::EvidenceScopeMismatch)?;
+        .ok_or(LocalEvidenceContextBuildError::EvidenceScopeMismatch)?;
     let title = u64::try_from(semantic.claim().title().as_str().len())
-        .map_err(|_| LocalPhase2ContextBuildError::EvidenceScopeMismatch)?;
+        .map_err(|_| LocalEvidenceContextBuildError::EvidenceScopeMismatch)?;
     let body = u64::try_from(semantic.claim().body().as_str().len())
-        .map_err(|_| LocalPhase2ContextBuildError::EvidenceScopeMismatch)?;
+        .map_err(|_| LocalEvidenceContextBuildError::EvidenceScopeMismatch)?;
     let units = title
         .checked_add(body)
-        .ok_or(LocalPhase2ContextBuildError::EvidenceScopeMismatch)?;
+        .ok_or(LocalEvidenceContextBuildError::EvidenceScopeMismatch)?;
     let rank = u32::try_from(index + 1)
-        .map_err(|_| LocalPhase2ContextBuildError::EvidenceScopeMismatch)?;
+        .map_err(|_| LocalEvidenceContextBuildError::EvidenceScopeMismatch)?;
     let identity = candidate_identity(scope, b"memory-git-history", |hasher| {
         hasher.update(record.record_id().as_bytes());
         if let Some(revision) = record.revision() {
@@ -1293,35 +1326,35 @@ fn history_candidate(
         });
         hasher.update(commit.as_bytes());
     });
-    Phase2ContextCandidate::try_new(
+    EvidenceContextCandidate::try_new(
         scope,
-        Phase2ContextTier::History,
+        EvidenceContextTier::History,
         rank,
         units,
         identity,
         provider_identity(b"memory-git-history"),
-        LocalPhase2ContextItem::History(LocalPhase2HistoryItem { record, commit }),
+        LocalEvidenceContextItem::History(LocalEvidenceHistoryItem { record, commit }),
     )
-    .map_err(LocalPhase2ContextBuildError::Compile)
+    .map_err(LocalEvidenceContextBuildError::Compile)
 }
 
-fn provider_identity(label: &[u8]) -> Phase2ContextProviderId {
+fn provider_identity(label: &[u8]) -> EvidenceContextProviderId {
     provider_identity_with(label, &[])
 }
 
-fn provider_identity_with(label: &[u8], immutable_identity: &[u8]) -> Phase2ContextProviderId {
+fn provider_identity_with(label: &[u8], immutable_identity: &[u8]) -> EvidenceContextProviderId {
     let mut hasher = Sha256::new();
     hasher.update(PROVIDER_ID_VERSION);
     hasher.update(label);
     hasher.update(immutable_identity);
-    Phase2ContextProviderId::new(hasher.finalize().into())
+    EvidenceContextProviderId::new(hasher.finalize().into())
 }
 
 fn candidate_identity(
-    scope: Phase2ContextScope,
+    scope: EvidenceContextScope,
     provider: &[u8],
     write_payload: impl FnOnce(&mut Sha256),
-) -> Phase2ContextCandidateId {
+) -> EvidenceContextCandidateId {
     let mut hasher = Sha256::new();
     hasher.update(CANDIDATE_ID_VERSION);
     hasher.update(scope.repository().as_bytes());
@@ -1334,17 +1367,17 @@ fn candidate_identity(
     hasher.update(scope.manifest().as_bytes());
     hasher.update(provider);
     write_payload(&mut hasher);
-    Phase2ContextCandidateId::new(hasher.finalize().into())
+    EvidenceContextCandidateId::new(hasher.finalize().into())
 }
 
 fn check_control(
     cancelled: &AtomicBool,
     deadline: Instant,
-) -> Result<(), LocalPhase2ContextBuildError> {
+) -> Result<(), LocalEvidenceContextBuildError> {
     if cancelled.load(Ordering::Acquire) {
-        Err(LocalPhase2ContextBuildError::Cancelled)
+        Err(LocalEvidenceContextBuildError::Cancelled)
     } else if Instant::now() >= deadline {
-        Err(LocalPhase2ContextBuildError::DeadlineExceeded)
+        Err(LocalEvidenceContextBuildError::DeadlineExceeded)
     } else {
         Ok(())
     }
@@ -1388,7 +1421,7 @@ mod tests {
         fn new() -> Self {
             let ordinal = NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed);
             let path = std::env::temp_dir().join(format!(
-                "repowitness-local-phase2-context-{}-{ordinal}",
+                "repowitness-local-evidence-context-{}-{ordinal}",
                 std::process::id()
             ));
             fs::create_dir(&path).expect("fixture directory");
@@ -1438,7 +1471,7 @@ mod tests {
     }
 
     #[test]
-    fn indexed_source_builds_an_exact_scoped_phase2_syntax_context() {
+    fn indexed_source_builds_an_exact_scoped_evidence_syntax_context() {
         let directory = TempDirectory::new();
         let repository = fixture_repository(&directory);
         let database = directory.database();
@@ -1447,17 +1480,17 @@ mod tests {
             Arc::new(AtomicBool::new(false)),
         )
         .expect("index");
-        let result = build_local_phase2_context(
-            LocalPhase2ContextBuildRequest::new(&repository, &database, REPOSITORY_ID, "Widget"),
+        let result = build_local_evidence_context(
+            LocalEvidenceContextBuildRequest::new(&repository, &database, REPOSITORY_ID, "Widget"),
             Arc::new(AtomicBool::new(false)),
         )
-        .expect("Phase 2 context");
-        assert_eq!(result.profile(), Phase2ContextProfile::EvidenceBalancedV1);
+        .expect("evidence-balanced context");
+        assert_eq!(result.profile(), EvidenceContextProfile::EvidenceBalancedV1);
         assert_eq!(result.scope().generation(), report.generation().get());
         assert!(!result.items().is_empty());
         assert!(result.items().iter().all(|item| {
-            item.tier() == Phase2ContextTier::Syntax
-                && matches!(item.payload(), LocalPhase2ContextItem::Syntax(_))
+            item.tier() == EvidenceContextTier::Syntax
+                && matches!(item.payload(), LocalEvidenceContextItem::Syntax(_))
         }));
     }
 
@@ -1476,16 +1509,16 @@ mod tests {
             Arc::new(AtomicBool::new(false)),
         )
         .expect("index");
-        let result = build_local_phase2_context(
-            LocalPhase2ContextBuildRequest::new(&repository, &database, REPOSITORY_ID, "Widget"),
+        let result = build_local_evidence_context(
+            LocalEvidenceContextBuildRequest::new(&repository, &database, REPOSITORY_ID, "Widget"),
             Arc::new(AtomicBool::new(false)),
         )
-        .expect("Phase 2 context");
+        .expect("evidence-balanced context");
         assert!(result.items().iter().any(|item| {
-            item.tier() == Phase2ContextTier::References
+            item.tier() == EvidenceContextTier::References
                 && matches!(
                     item.payload(),
-                    LocalPhase2ContextItem::GraphRelation(relation)
+                    LocalEvidenceContextItem::GraphRelation(relation)
                         if relation.edge_kind() == RustGraphEdgeKind::Call
                             && relation.depth() == 1
                             && std::str::from_utf8(relation.candidate().declaration())
@@ -1520,16 +1553,16 @@ mod tests {
         )
         .expect("index");
 
-        let result = build_local_phase2_context(
-            LocalPhase2ContextBuildRequest::new(&repository, &database, REPOSITORY_ID, "Widget")
+        let result = build_local_evidence_context(
+            LocalEvidenceContextBuildRequest::new(&repository, &database, REPOSITORY_ID, "Widget")
                 .with_deadline(LARGE_GRAPH_TEST_DEADLINE),
             Arc::new(AtomicBool::new(false)),
         )
         .expect("graph input above the traversal visit cap remains usable");
 
         assert!(result.items().iter().any(|item| {
-            item.tier() == Phase2ContextTier::References
-                && matches!(item.payload(), LocalPhase2ContextItem::GraphRelation(_))
+            item.tier() == EvidenceContextTier::References
+                && matches!(item.payload(), LocalEvidenceContextItem::GraphRelation(_))
         }));
     }
 
@@ -1548,17 +1581,20 @@ mod tests {
             Arc::new(AtomicBool::new(false)),
         )
         .expect("index");
-        let result = build_local_phase2_context(
-            LocalPhase2ContextBuildRequest::new(&repository, &database, REPOSITORY_ID, "Widget"),
+        let result = build_local_evidence_context(
+            LocalEvidenceContextBuildRequest::new(&repository, &database, REPOSITORY_ID, "Widget"),
             Arc::new(AtomicBool::new(false)),
         )
-        .expect("Phase 2 context");
+        .expect("evidence-balanced context");
         let [item] = result.items() else {
             panic!("the duplicate source declaration should be grouped");
         };
-        assert_eq!(item.tier(), Phase2ContextTier::Syntax);
+        assert_eq!(item.tier(), EvidenceContextTier::Syntax);
         assert_eq!(item.attributions().len(), 2);
-        assert!(matches!(item.payload(), LocalPhase2ContextItem::Syntax(_)));
+        assert!(matches!(
+            item.payload(),
+            LocalEvidenceContextItem::Syntax(_)
+        ));
     }
 
     #[test]
@@ -1623,39 +1659,44 @@ mod tests {
                         .is_ok_and(|source| source.contains(anchor))
             ));
 
-            let phase2 = build_local_phase2_context(
-                LocalPhase2ContextBuildRequest::new(&repository, &database, REPOSITORY_ID, anchor),
+            let evidence = build_local_evidence_context(
+                LocalEvidenceContextBuildRequest::new(
+                    &repository,
+                    &database,
+                    REPOSITORY_ID,
+                    anchor,
+                ),
                 Arc::new(AtomicBool::new(false)),
             )
-            .expect("Phase 2 context");
-            assert!(phase2.items().iter().any(|item| {
-                matches!(item.payload(), LocalPhase2ContextItem::Syntax(candidate)
+            .expect("evidence-balanced context");
+            assert!(evidence.items().iter().any(|item| {
+                matches!(item.payload(), LocalEvidenceContextItem::Syntax(candidate)
                     if std::str::from_utf8(candidate.declaration())
                         .is_ok_and(|source| source.contains(anchor)))
             }));
-            assert!(phase2.items().iter().any(|item| {
-                matches!(item.payload(), LocalPhase2ContextItem::GraphRelation(relation)
+            assert!(evidence.items().iter().any(|item| {
+                matches!(item.payload(), LocalEvidenceContextItem::GraphRelation(relation)
                     if relation.edge_kind() == RustGraphEdgeKind::Call
                         && std::str::from_utf8(relation.candidate().declaration())
                             .is_ok_and(|source| source.contains(target)))
             }));
 
             // The lexical and graph-only baselines expose only selectors, while
-            // the incumbent expands one source declaration. Phase 2 expands the
+            // the incumbent expands one source declaration. evidence-balanced expands the
             // same anchor plus the direct call target. Both declarations are
             // one-line required task evidence, so its relevant-source density
             // must improve for each downstream navigation task.
             assert!(incumbent.used_units() > 0);
-            assert!(phase2.used_units() > incumbent.used_units());
-            assert!(2 * incumbent.used_units() > phase2.used_units());
+            assert!(evidence.used_units() > incumbent.used_units());
+            assert!(2 * incumbent.used_units() > evidence.used_units());
         }
     }
 
     #[test]
     fn invalid_boundary_inputs_fail_before_filesystem_or_database_access() {
-        let missing = Path::new("/missing/private-phase2-context-input");
-        let invalid_identity = match build_local_phase2_context(
-            LocalPhase2ContextBuildRequest::new(missing, missing, "invalid", "Widget"),
+        let missing = Path::new("/missing/private-evidence-context-input");
+        let invalid_identity = match build_local_evidence_context(
+            LocalEvidenceContextBuildRequest::new(missing, missing, "invalid", "Widget"),
             Arc::new(AtomicBool::new(false)),
         ) {
             Ok(_) => panic!("identity validation should fail"),
@@ -1663,15 +1704,18 @@ mod tests {
         };
         assert!(matches!(
             invalid_identity,
-            LocalPhase2ContextBuildError::RepositoryIdentity(_)
+            LocalEvidenceContextBuildError::RepositoryIdentity(_)
         ));
-        let cancelled = match build_local_phase2_context(
-            LocalPhase2ContextBuildRequest::new(missing, missing, REPOSITORY_ID, "Widget"),
+        let cancelled = match build_local_evidence_context(
+            LocalEvidenceContextBuildRequest::new(missing, missing, REPOSITORY_ID, "Widget"),
             Arc::new(AtomicBool::new(true)),
         ) {
             Ok(_) => panic!("cancellation should fail"),
             Err(error) => error,
         };
-        assert!(matches!(cancelled, LocalPhase2ContextBuildError::Cancelled));
+        assert!(matches!(
+            cancelled,
+            LocalEvidenceContextBuildError::Cancelled
+        ));
     }
 }

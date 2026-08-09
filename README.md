@@ -90,9 +90,9 @@ connected-workspace setup are in the [CLI section](#cli).
 
 ## Current status
 
-Phase 0 and Phase 1 are complete. The separately versioned Phase 2
-evidence-balanced context profile and optional SCIP precision overlay meet their
-exit gate. Phase 3 durable engineering-memory beta implementation is in
+Phase 0 and Phase 1 are complete. The evidence-balanced context profile and
+optional SCIP precision overlay meet their Phase 2 exit gate. Phase 3 durable
+engineering-memory beta implementation is in
 progress; its public beta claim remains withheld pending longitudinal evidence.
 
 RepoWitness has a tested Phase 0 indexer for Rust, Go, TypeScript, TSX, and
@@ -196,7 +196,7 @@ files.
 
 The CLI provides memory revalidation and recall, a bounded multi-language source
 architecture map, source-only architecture overview, and path-only repository
-topology inventory, Phase 0 and separately versioned Phase 2 context compilation,
+topology inventory, canonical evidence-balanced context compilation,
 repository diagnostics, pinned Rust graph reads, contained `scip-import`, and
 explicit `scip-rust-import` and `scip-go-import` production/import, package-scoped `scip-evidence`
 reads, exact-receipt `scip-symbol-resolve` navigation, and bounded
@@ -216,10 +216,10 @@ path- and content-free failure category and leaves the preceding overlay
 readable. SCIP artifact admission is capped at 64 MiB, matching the bounded
 outer-wire decoder limit. The local stdio MCP server
 has twenty-four read-only tools:
-`architecture_map`, `architecture_overview`, `code_graph_query`, `code_search`, `context_build`, `phase2_context_build`, `diagnostics`,
+`architecture_map`, `architecture_overview`, `code_graph_query`, `code_search`, `context_build`, `diagnostics`,
 `graph_architecture`, `graph_evidence`, `graph_search`, `graph_status`,
 `graph_trace`, `impact_analyze`, `historical_memory`, `locate_relevant_paths`, `memory_recall`,
-`outbound_sites`, `repository_topology`, `scip_evidence`, `scip_relationship_trace`, `scip_symbol_resolve`, `symbol_get`, `symbol_search`, and `syntax_site_search`. `scip_symbol_resolve` accepts one
+`outbound_sites`, `repository_topology`, `scip_evidence`, `scip_relationship_trace`, `scip_symbol_resolve`, `symbol_get`, `symbol_search`, `syntax_site_search`, and `verify`. `scip_symbol_resolve` accepts one
 `symbol_search` candidate's immutable selector and name span and returns a categorical opaque SCIP symbol; only a
 subsequent `scip_evidence` call returns provider-declared relationships; `scip_relationship_trace`
 can then traverse those exact persisted rows with explicit direction and bounds. At startup,
@@ -680,8 +680,8 @@ local API. Such archival reviews validate the exact retained generation and
 retain their original target identity; they never become a review of the
 currently indexed source snapshot merely because the repository has advanced.
 
-Compile exact source and eligible current memory under a conservative content
-budget:
+Compile evidence-balanced source, graph, eligible current memory, history, and
+optional exact SCIP evidence under a conservative content budget:
 
 ```text
 target/debug/repowitness context-build \
@@ -694,11 +694,12 @@ target/debug/repowitness context-build \
 ```
 
 The `utf8_bytes_upper_bound_v1` budget is deterministic and conservative; it is
-not an exact model-token count. If no memory projection exists, context
-compilation remains source-only and reports that omission. Exact declarations
-use labeled display-safe `utf8` or exact `lowercase_hex` representations; the
-CLI puts their data in one JSON-escaped field so source text cannot forge
-report lines.
+not an exact model-token count. The default profile reports provider
+availability, typed evidence tiers, and omissions before and after allocation.
+If no memory projection or precision provider is eligible, its absence remains
+explicit. Exact declarations use labeled display-safe `utf8` or exact
+`lowercase_hex` representations; the CLI puts their data in one JSON-escaped
+field so source text cannot forge report lines.
 
 Build a read-only revision-pinned change-review receipt before requesting a
 human or agent review:
@@ -721,11 +722,10 @@ instead of returning stale source. It labels index/worktree alignment
 `unverified`; it never claims tests ran, returns an approval/rejection verdict,
 persists a receipt, or writes to a forge.
 
-The separately versioned Phase 2 profile preserves that Phase 0 contract. Its
-initial local providers are exact syntax, unique pinned native-graph structural
+The evidence-balanced profile preserves the evidence-first contract. Its initial local providers are exact syntax, unique pinned native-graph structural
 or reference targets, current memory, and the Git observations of locally
 approved current memory revisions, allocated through
-the named `phase2-evidence-balanced-v1` profile with a single pinned source
+the named `evidence-balanced-v1` profile with a single pinned source
 scope, deterministic tiers, complete provider attribution, and whole-item
 omissions. Every response also reports each active provider as `available` or
 `unavailable` before allocation, so absence is not misreported as a budget
@@ -738,7 +738,7 @@ Absent, ambiguous, or truncated overlay evidence remains out of the precision
 tier rather than changing syntax results:
 
 ```text
-target/debug/repowitness phase2-context-build \
+target/debug/repowitness context-build \
   --repository-id rwi1:h:0000000000000000000000000000000000000000000000000000000000000001 \
   --database /path/outside/the/worktree/repowitness.sqlite3 \
   --root ../repository \
@@ -828,7 +828,7 @@ the final identity is changed or unconfirmed.
 
 Native MCP Tasks are disabled by default. Adding `--enable-native-tasks` at
 single-repository MCP startup enables optional task execution for
-`phase2_context_build`; durable task state survives a restart, while bounded
+`context_build`; durable task state survives a restart, while bounded
 process-local result payloads do not. Registry and catalog modes remain
 read-only and do not permit native tasks.
 
@@ -913,7 +913,7 @@ package metadata; update membership by removing and recreating its named
 workspace. Shared membership alone does not create cross-repository semantic
 edges: those require attributed supported evidence. The source-view-aware tools
 are code search, relevant paths, typed declaration search, architecture map,
-Rust graph reads, SCIP reads, and Phase 2 context. See the [connected-workspace catalog
+Rust graph reads, SCIP reads, and evidence-balanced context. See the [connected-workspace catalog
 format](docs/schemas/codex-connected-workspace-catalog-v1.md) and
 [ADR-0051](docs/adr/0051-explicit-codex-connected-workspace-catalog.md).
 
@@ -962,10 +962,10 @@ Restart the Codex client after changing configuration, then use `/mcp` in the
 terminal UI to inspect the connection. Codex CLI, the IDE extension, and the
 ChatGPT desktop app share the local Codex MCP configuration; see the current
 [Codex MCP documentation](https://learn.chatgpt.com/docs/extend/mcp). The
-server exposes the read-only `architecture_map`, `architecture_overview`, `code_graph_query`, `code_search`, `locate_relevant_paths`, `symbol_search`, `syntax_site_search`, `context_build`, `phase2_context_build`, `diagnostics`,
+server exposes the read-only `architecture_map`, `architecture_overview`, `code_graph_query`, `code_search`, `locate_relevant_paths`, `symbol_search`, `syntax_site_search`, `context_build`, `diagnostics`,
 `graph_architecture`, `graph_evidence`, `graph_search`, `graph_status`,
-`graph_trace`, `impact_analyze`, `historical_memory`, `memory_recall`, `outbound_sites`, `repository_topology`, `scip_evidence`, `scip_relationship_trace`, `scip_symbol_resolve`, and
-`symbol_get` tools by
+`graph_trace`, `impact_analyze`, `historical_memory`, `memory_recall`, `outbound_sites`, `repository_topology`, `scip_evidence`, `scip_relationship_trace`, `scip_symbol_resolve`, `symbol_get`, and
+`verify` tools by
 default. Call `architecture_map` to inventory exact indexed paths and language totals; it is a file inventory only and never infers relationships. Call `repository_topology` to orient from bounded cached tracked non-source path categories; it excludes untracked and deleted paths, does not read those files, and infers no relationships. Call `architecture_overview` for a bounded source-fact orientation with structural path buckets and syntax-only `function main` candidates; it never proves architecture relationships or runtime entry points. Call `locate_relevant_paths` to group one bounded literal declaration search into path summaries; its ordering and counts cover only returned lexical candidates, so use its underlying match coverage before treating paths as exhaustive. It never proves a semantic relationship. Call `symbol_search` for bounded typed declaration discovery; same-name matches never infer relationships. To use an imported SCIP overlay, copy one candidate's immutable selector and name span plus the returned `workspace_view` to `scip_symbol_resolve`, then pass an `exact` result's opaque symbol and unchanged view to `scip_evidence`. Call `outbound_sites` only with a complete exact declaration selector; it returns parser-attributed raw import/reference/call/test-marker observations physically contained in that declaration, never target resolution or inferred edges. Call `syntax_site_search` with one exact raw parser target when exploring observations across languages; equal text does not prove a declaration, caller, reference, or edge. Call `code_graph_query` only for one of its seven documented finite operations; it rejects Cypher, SQL, unknown operations, and cross-operation fields before repository access. Call `code_search` and pass its complete exact selector unchanged
 to `symbol_get` when retrieving a declaration directly. Call `graph_search`
 before graph trace or impact so its exact selector and immutable context can be
@@ -974,12 +974,13 @@ symbol and use its immutable view context unchanged. Call `scip_relationship_tra
 producer-declared overlay rows; it is not a source-call, runtime, or completeness query. Enable mutation only in a trusted local configuration whose
 operator intends to grant that capability.
 
-For `context_build`, use `intent` and `budget_units` as the canonical MCP
-fields. The agent-oriented spellings `query` and `max_chars` are also accepted
-for compatibility; `max_chars` uses the same conservative UTF-8 byte-budget
-semantics as `budget_units`, so it is not an exact Unicode-character limit.
-`context_build` compiles a bounded source-and-memory pack; use `graph_search`
-and `graph_trace` when the task requires a caller or path traversal.
+For `context_build`, use `intent` and `budget_units`; the request also accepts
+`max_provider_results`, `timeout_ms`, and an optional exact `scip_symbol`.
+It compiles a bounded evidence-balanced pack from exact syntax, eligible native
+graph, current memory, qualified history, and eligible SCIP evidence. The
+budget uses conservative UTF-8 byte units rather than an exact model-token
+count. Use `graph_search` and `graph_trace` when a task needs an explicit
+caller or path traversal receipt.
 
 To inspect only aggregate repository-path discovery facts without indexing:
 

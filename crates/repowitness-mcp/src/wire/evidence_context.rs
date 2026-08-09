@@ -1,18 +1,17 @@
 use std::{fmt, time::Duration};
 
 use repowitness_application::{
-    ContextBuildBudget, DEFAULT_CODE_SEARCH_RESULTS, MemoryRecallQuery, Phase2ContextBudget,
-    ScipSymbol,
+    DEFAULT_CODE_SEARCH_RESULTS, EvidenceContextBudget, MemoryRecallQuery, ScipSymbol,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::validate_timeout;
 
-/// Version-1 wire input for the separately versioned Phase 2 context profile.
+/// Version-1 wire input for the canonical evidence-balanced context profile.
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct Phase2ContextBuildInput {
+pub struct EvidenceContextBuildInput {
     /// Bounded literal engineering intent used by the implemented providers.
     pub intent: String,
     /// Conservative `utf8_bytes_upper_bound_v1` content budget.
@@ -25,10 +24,10 @@ pub struct Phase2ContextBuildInput {
     pub timeout_ms: Option<u64>,
 }
 
-impl fmt::Debug for Phase2ContextBuildInput {
+impl fmt::Debug for EvidenceContextBuildInput {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("Phase2ContextBuildInput")
+            .debug_struct("EvidenceContextBuildInput")
             .field("intent", &"<redacted-intent>")
             .field("budget_units", &self.budget_units)
             .field("max_provider_results", &self.max_provider_results)
@@ -41,17 +40,16 @@ impl fmt::Debug for Phase2ContextBuildInput {
     }
 }
 
-impl Phase2ContextBuildInput {
-    pub(crate) fn validate(self) -> Result<Phase2ContextBuildServiceRequest, &'static str> {
+impl EvidenceContextBuildInput {
+    pub(crate) fn validate(self) -> Result<EvidenceContextBuildServiceRequest, &'static str> {
         let source = repowitness_application::CodeSearchQuery::try_new(&self.intent)
             .map_err(|_| "intent does not satisfy the bounded literal source profile")?;
         MemoryRecallQuery::try_new(&self.intent)
             .map_err(|_| "intent does not satisfy the bounded literal memory profile")?;
         let budget = match self.budget_units {
-            Some(units) => Phase2ContextBudget::try_new(units)
-                .map_err(|_| "budget_units is outside the Phase 2 context bounds")?,
-            None => Phase2ContextBudget::try_new(ContextBuildBudget::default().units())
-                .expect("the Phase 0 default budget is valid for Phase 2"),
+            Some(units) => EvidenceContextBudget::try_new(units)
+                .map_err(|_| "budget_units is outside the evidence-balanced context bounds")?,
+            None => EvidenceContextBudget::default(),
         };
         let max_provider_results = self
             .max_provider_results
@@ -65,7 +63,7 @@ impl Phase2ContextBuildInput {
             .transpose()
             .map_err(|_| "scip_symbol does not satisfy the bounded opaque-symbol profile")?
             .map(ScipSymbol::into_string);
-        Ok(Phase2ContextBuildServiceRequest {
+        Ok(EvidenceContextBuildServiceRequest {
             intent: source.as_str().to_owned(),
             budget_units: budget.units(),
             max_provider_results,
@@ -75,8 +73,8 @@ impl Phase2ContextBuildInput {
     }
 }
 
-/// Validated owned Phase 2 context request passed to the composition root.
-pub struct Phase2ContextBuildServiceRequest {
+/// Validated owned evidence-balanced context request passed to the composition root.
+pub struct EvidenceContextBuildServiceRequest {
     intent: String,
     budget_units: u64,
     max_provider_results: u16,
@@ -84,7 +82,7 @@ pub struct Phase2ContextBuildServiceRequest {
     timeout: Duration,
 }
 
-impl Phase2ContextBuildServiceRequest {
+impl EvidenceContextBuildServiceRequest {
     /// Returns canonical literal source intent.
     #[must_use]
     pub fn intent(&self) -> &str {
@@ -121,10 +119,10 @@ impl Phase2ContextBuildServiceRequest {
     }
 }
 
-impl fmt::Debug for Phase2ContextBuildServiceRequest {
+impl fmt::Debug for EvidenceContextBuildServiceRequest {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("Phase2ContextBuildServiceRequest")
+            .debug_struct("EvidenceContextBuildServiceRequest")
             .field("intent", &"<redacted-intent>")
             .field("budget_units", &self.budget_units)
             .field("max_provider_results", &self.max_provider_results)
@@ -137,10 +135,10 @@ impl fmt::Debug for Phase2ContextBuildServiceRequest {
     }
 }
 
-/// One immutable source member used by every included Phase 2 candidate.
+/// One immutable source member used by every included evidence-balanced candidate.
 #[derive(Clone, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct McpPhase2ContextScope {
+pub struct McpEvidenceContextScope {
     /// Repository identity SHA-256.
     pub repository_sha256: String,
     /// Connected workspace identity SHA-256.
@@ -162,7 +160,7 @@ pub struct McpPhase2ContextScope {
 /// One provider attribution retained after exact duplicate grouping.
 #[derive(Clone, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct McpPhase2ContextAttribution {
+pub struct McpEvidenceContextAttribution {
     /// Stable provider identity SHA-256.
     pub provider_sha256: String,
     /// Evidence category for this attribution.
@@ -174,7 +172,7 @@ pub struct McpPhase2ContextAttribution {
 /// One categorical whole-item omission.
 #[derive(Clone, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct McpPhase2ContextOmission {
+pub struct McpEvidenceContextOmission {
     /// Evidence category whose complete items did not fit.
     pub tier: String,
     /// Exact number of whole items omitted in this category.
@@ -184,7 +182,7 @@ pub struct McpPhase2ContextOmission {
 /// Categorical availability for one provider before context allocation.
 #[derive(Clone, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct McpPhase2ContextProviderCoverage {
+pub struct McpEvidenceContextProviderCoverage {
     /// Evidence tier supplied by this provider.
     pub tier: String,
     /// `available` when complete candidates were admissible; otherwise `unavailable`.
@@ -193,10 +191,10 @@ pub struct McpPhase2ContextProviderCoverage {
     pub candidate_count: u64,
 }
 
-/// Exact bounded Phase 2 item payload.
+/// Exact bounded evidence-balanced item payload.
 #[derive(Clone, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub enum McpPhase2ContextPayload {
+pub enum McpEvidenceContextPayload {
     /// Exact verified syntax declaration.
     Syntax {
         /// Canonical byte-preserving repository path.
@@ -272,10 +270,10 @@ pub enum McpPhase2ContextPayload {
     },
 }
 
-/// One deterministic selected Phase 2 candidate.
+/// One deterministic selected evidence-balanced candidate.
 #[derive(Clone, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct McpPhase2ContextItem {
+pub struct McpEvidenceContextItem {
     /// Evidence tier after versioned profile selection.
     pub tier: String,
     /// Provider-local deterministic rank.
@@ -285,15 +283,15 @@ pub struct McpPhase2ContextItem {
     /// Stable candidate identity SHA-256.
     pub identity_sha256: String,
     /// Complete retained contributing providers.
-    pub providers: Vec<McpPhase2ContextAttribution>,
+    pub providers: Vec<McpEvidenceContextAttribution>,
     /// Exact bounded item payload.
-    pub payload: McpPhase2ContextPayload,
+    pub payload: McpEvidenceContextPayload,
 }
 
-/// Version-1 structured response for `phase2_context_build`.
+/// Version-1 structured response for evidence-balanced `context_build`.
 #[derive(Clone, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct Phase2ContextBuildOutput {
+pub struct EvidenceContextBuildOutput {
     /// Wire schema version.
     pub schema_version: u16,
     /// Immutable named profile identifier.
@@ -307,13 +305,13 @@ pub struct Phase2ContextBuildOutput {
     /// Conservative content units consumed.
     pub used_units: u64,
     /// One common pinned source scope for every selected item.
-    pub scope: McpPhase2ContextScope,
+    pub scope: McpEvidenceContextScope,
     /// Provider availability before allocation.
-    pub provider_coverage: Vec<McpPhase2ContextProviderCoverage>,
+    pub provider_coverage: Vec<McpEvidenceContextProviderCoverage>,
     /// Whole-item budget omissions by evidence tier.
-    pub omissions: Vec<McpPhase2ContextOmission>,
+    pub omissions: Vec<McpEvidenceContextOmission>,
     /// Selected context in deterministic profile order.
-    pub items: Vec<McpPhase2ContextItem>,
+    pub items: Vec<McpEvidenceContextItem>,
 }
 
 #[cfg(test)]
@@ -322,7 +320,7 @@ mod tests {
 
     #[test]
     fn input_is_bounded_canonical_and_redacted() {
-        let input = Phase2ContextBuildInput {
+        let input = EvidenceContextBuildInput {
             intent: "  Publish\tAtomic ".to_owned(),
             budget_units: Some(4096),
             max_provider_results: Some(7),
@@ -338,23 +336,23 @@ mod tests {
     }
 
     #[test]
-    fn invalid_phase2_input_fails_at_the_wire_boundary() {
+    fn invalid_evidence_input_fails_at_the_wire_boundary() {
         for input in [
-            Phase2ContextBuildInput {
+            EvidenceContextBuildInput {
                 intent: String::new(),
                 budget_units: None,
                 max_provider_results: None,
                 scip_symbol: None,
                 timeout_ms: None,
             },
-            Phase2ContextBuildInput {
+            EvidenceContextBuildInput {
                 intent: "x".to_owned(),
                 budget_units: Some(0),
                 max_provider_results: None,
                 scip_symbol: None,
                 timeout_ms: None,
             },
-            Phase2ContextBuildInput {
+            EvidenceContextBuildInput {
                 intent: "x".to_owned(),
                 budget_units: None,
                 max_provider_results: Some(101),

@@ -1,13 +1,13 @@
 use super::*;
 use crate::{
     ARCHITECTURE_OVERVIEW_LIMITATIONS, ArchitectureMapOutput, ArchitectureOverviewOutput,
-    GraphArchitectureOutput, GraphEvidenceOutput, GraphImpactOutput, GraphReadServiceOutput,
-    GraphReadServiceRequest, GraphSearchOutput, GraphStatusOutput, GraphTraceOutput,
-    McpArchitectureMapFile, McpArchitectureMapLanguage, McpArchitectureOverviewKind,
-    McpArchitectureOverviewRoot, McpConfigurationIdentity, McpDiagnosticsMemoryProjection,
-    McpGraphContext, McpGraphPublication, McpGraphTrace, McpGraphTraceCoverage,
-    McpGraphTraceTruncation, McpPhase2ContextScope, McpRelevantPath, McpRepositoryTopologyCategory,
-    McpRepositoryTopologyCoverage, McpRepositoryTopologyEntry, Phase2ContextBuildOutput,
+    EvidenceContextBuildOutput, GraphArchitectureOutput, GraphEvidenceOutput, GraphImpactOutput,
+    GraphReadServiceOutput, GraphReadServiceRequest, GraphSearchOutput, GraphStatusOutput,
+    GraphTraceOutput, McpArchitectureMapFile, McpArchitectureMapLanguage,
+    McpArchitectureOverviewKind, McpArchitectureOverviewRoot, McpConfigurationIdentity,
+    McpDiagnosticsMemoryProjection, McpEvidenceContextScope, McpGraphContext, McpGraphPublication,
+    McpGraphTrace, McpGraphTraceCoverage, McpGraphTraceTruncation, McpRelevantPath,
+    McpRepositoryTopologyCategory, McpRepositoryTopologyCoverage, McpRepositoryTopologyEntry,
     RelevantPathsOutput, RepositoryTopologyOutput, SyntaxSiteSearchOutput,
 };
 use rmcp::model::JsonObject;
@@ -369,45 +369,15 @@ pub(super) fn memory_output() -> MemoryRecallOutput {
     }
 }
 
-pub(super) fn context_output() -> ContextBuildOutput {
-    ContextBuildOutput {
-        schema_version: 2,
-        context_profile: 1,
-        reciprocal_rank_k: 60,
-        budget_estimator: "utf8_bytes_upper_bound_v1".to_owned(),
-        budget_units: 4096,
-        used_units: 0,
-        query_sha256: "44".repeat(32),
-        snapshot_sha256: "11".repeat(32),
-        generation: 9,
-        memory: None,
-        coverage: McpContextCoverage {
-            source_index: coverage(),
-            source_total_matches: 0,
-            source_returned_matches: 0,
-            source_expansion_omitted: 0,
-            source_budget_omitted: 0,
-            source_included: 0,
-            memory_total_matches: 0,
-            memory_returned_matches: 0,
-            memory_non_current_omitted: 0,
-            memory_budget_omitted: 0,
-            memory_included: 0,
-        },
-        omissions: Vec::new(),
-        items: Vec::new(),
-    }
-}
-
-pub(super) fn phase2_context_output() -> Phase2ContextBuildOutput {
-    Phase2ContextBuildOutput {
+pub(super) fn evidence_context_output() -> EvidenceContextBuildOutput {
+    EvidenceContextBuildOutput {
         schema_version: 1,
-        profile_id: "phase2-evidence-balanced-v1".to_owned(),
+        profile_id: "evidence-balanced-v1".to_owned(),
         profile_version: 1,
         budget_estimator: "utf8_bytes_upper_bound_v1".to_owned(),
         budget_units: 4096,
         used_units: 0,
-        scope: McpPhase2ContextScope {
+        scope: McpEvidenceContextScope {
             repository_sha256: "11".repeat(32),
             connected_workspace_sha256: "22".repeat(32),
             workspace_view: 1,

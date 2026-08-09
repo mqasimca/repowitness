@@ -1,7 +1,7 @@
 #!/bin/sh
 # Run the production index, path-only topology, architecture-map, architecture-overview,
 # typed-symbol-discovery, lexical path-navigation (direct and finite-MCP-envelope),
-# context compilation through the agent-oriented MCP aliases,
+# canonical evidence-balanced context compilation,
 # exact raw syntax-target search (direct and finite-MCP-envelope), no-overlay
 # SCIP-evidence, SCIP-symbol-resolution, and SCIP-relationship-trace smoke,
 # repository-scoped test-marker, revision-pinned change-receipt, and exact
@@ -557,21 +557,60 @@ validate_context_build() {
         local $/;
         my $result = eval { decode_json(<STDIN>) };
         exit 1 if $@ || ref($result) ne q{HASH};
-        exit 1 if ($result->{schema_version} // q{}) != 2
-          || ($result->{context_profile} // q{}) != 1
-          || ($result->{reciprocal_rank_k} // q{}) != 60
+        exit 1 if ($result->{schema_version} // q{}) != 1
+          || ($result->{profile_id} // q{}) ne q{evidence-balanced-v1}
+          || ($result->{profile_version} // q{}) != 1
           || ($result->{budget_estimator} // q{}) ne q{utf8_bytes_upper_bound_v1}
           || ($result->{budget_units} // q{}) != 4096;
         exit 1 if !defined($result->{used_units}) || ref($result->{used_units})
           || $result->{used_units} !~ /\A[0-9]+\z/
           || $result->{used_units} > $result->{budget_units};
-        exit 1 if ($result->{query_sha256} // q{}) !~ /\A[0-9a-f]{64}\z/
-          || ($result->{snapshot_sha256} // q{}) !~ /\A[0-9a-f]{64}\z/
-          || !defined($result->{generation}) || ref($result->{generation})
-          || $result->{generation} !~ /\A[1-9][0-9]*\z/;
-        exit 1 if ref($result->{coverage}) ne q{HASH}
+        exit 1 if ref($result->{scope}) ne q{HASH}
+          || ($result->{scope}{repository_sha256} // q{}) !~ /\A[0-9a-f]{64}\z/
+          || ($result->{scope}{connected_workspace_sha256} // q{}) !~ /\A[0-9a-f]{64}\z/
+          || ($result->{scope}{source_slot_sha256} // q{}) !~ /\A[0-9a-f]{64}\z/
+          || ($result->{scope}{snapshot_sha256} // q{}) !~ /\A[0-9a-f]{64}\z/
+          || ($result->{scope}{manifest_sha256} // q{}) !~ /\A[0-9a-f]{64}\z/
+          || !defined($result->{scope}{workspace_view}) || ref($result->{scope}{workspace_view})
+          || $result->{scope}{workspace_view} !~ /\A[1-9][0-9]*\z/
+          || !defined($result->{scope}{source_epoch}) || ref($result->{scope}{source_epoch})
+          || $result->{scope}{source_epoch} !~ /\A[0-9]+\z/
+          || !defined($result->{scope}{generation}) || ref($result->{scope}{generation})
+          || $result->{scope}{generation} !~ /\A[1-9][0-9]*\z/;
+        exit 1 if ref($result->{provider_coverage}) ne q{ARRAY}
           || ref($result->{omissions}) ne q{ARRAY}
           || ref($result->{items}) ne q{ARRAY};
+        for my $coverage (@{$result->{provider_coverage}}) {
+            exit 1 if ref($coverage) ne q{HASH}
+              || ($coverage->{tier} // q{}) !~ /\A(?:anchor|precise_overlay|syntax|structural|references|memory|history|unresolved)\z/
+              || ($coverage->{availability} // q{}) !~ /\A(?:available|unavailable)\z/
+              || !defined($coverage->{candidate_count}) || ref($coverage->{candidate_count})
+              || $coverage->{candidate_count} !~ /\A[0-9]+\z/;
+        }
+        for my $omission (@{$result->{omissions}}) {
+            exit 1 if ref($omission) ne q{HASH}
+              || ($omission->{tier} // q{}) !~ /\A(?:anchor|precise_overlay|syntax|structural|references|memory|history|unresolved)\z/
+              || !defined($omission->{count}) || ref($omission->{count})
+              || $omission->{count} !~ /\A[0-9]+\z/;
+        }
+        for my $item (@{$result->{items}}) {
+            exit 1 if ref($item) ne q{HASH}
+              || ($item->{tier} // q{}) !~ /\A(?:anchor|precise_overlay|syntax|structural|references|memory|history|unresolved)\z/
+              || !defined($item->{provider_rank}) || ref($item->{provider_rank})
+              || $item->{provider_rank} !~ /\A[0-9]+\z/
+              || !defined($item->{estimated_units}) || ref($item->{estimated_units})
+              || $item->{estimated_units} !~ /\A[0-9]+\z/
+              || ($item->{identity_sha256} // q{}) !~ /\A[0-9a-f]{64}\z/
+              || ref($item->{providers}) ne q{ARRAY}
+              || ref($item->{payload}) ne q{HASH};
+            for my $provider (@{$item->{providers}}) {
+                exit 1 if ref($provider) ne q{HASH}
+                  || ($provider->{provider_sha256} // q{}) !~ /\A[0-9a-f]{64}\z/
+                  || ($provider->{tier} // q{}) !~ /\A(?:anchor|precise_overlay|syntax|structural|references|memory|history|unresolved)\z/
+                  || !defined($provider->{provider_rank}) || ref($provider->{provider_rank})
+                  || $provider->{provider_rank} !~ /\A[0-9]+\z/;
+            }
+        }
     '
 }
 
@@ -711,8 +750,8 @@ mcp_context_build() {
                 params => {
                     name => q{context_build},
                     arguments => {
-                        query => $query,
-                        max_chars => 4096,
+                        intent => $query,
+                        budget_units => 4096,
                         max_provider_results => 1,
                     },
                 },

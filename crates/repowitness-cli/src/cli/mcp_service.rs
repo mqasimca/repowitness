@@ -123,7 +123,7 @@ impl RepositoryService for LocalMcpRepositoryService {
                 &self.repository_identity,
                 task_id,
                 task_state,
-                "MCP Phase 2 context build",
+                "MCP evidence-balanced context build",
                 hypothesis,
                 action,
                 recorded_at,
@@ -478,35 +478,11 @@ impl RepositoryService for LocalMcpRepositoryService {
 
     fn context_build(
         &self,
-        request: ContextBuildServiceRequest,
+        request: EvidenceContextBuildServiceRequest,
         cancelled: Arc<AtomicBool>,
-    ) -> Result<ContextBuildOutput, RepositoryServiceError> {
-        let local_request = LocalContextBuildRequest::new(
-            &self.root,
-            &self.database,
-            &self.repository_identity,
-            request.intent(),
-        )
-        .with_budget_units(request.budget_units())
-        .map_err(|_| RepositoryServiceError::ContextBuild)?
-        .with_max_provider_results(request.max_provider_results())
-        .map_err(|_| RepositoryServiceError::ContextBuild)?
-        .with_configuration(&self.configuration)
-        .with_deadline(request.timeout());
-        build_local_context(local_request, cancelled)
-            .map_err(|_| RepositoryServiceError::ContextBuild)
-            .and_then(|result| {
-                mcp_context_output(result).map_err(|_| RepositoryServiceError::ContextBuild)
-            })
-    }
-
-    fn phase2_context_build(
-        &self,
-        request: Phase2ContextBuildServiceRequest,
-        cancelled: Arc<AtomicBool>,
-    ) -> Result<Phase2ContextBuildOutput, RepositoryServiceError> {
+    ) -> Result<EvidenceContextBuildOutput, RepositoryServiceError> {
         let local_request = match &self.graph_workspace {
-            GraphWorkspaceContext::SingleRepository(_) => LocalPhase2ContextBuildRequest::new(
+            GraphWorkspaceContext::SingleRepository(_) => LocalEvidenceContextBuildRequest::new(
                 &self.root,
                 &self.database,
                 &self.repository_identity,
@@ -515,7 +491,7 @@ impl RepositoryService for LocalMcpRepositoryService {
             GraphWorkspaceContext::ConnectedWorkspace {
                 connected_workspace,
                 source_slot,
-            } => LocalPhase2ContextBuildRequest::for_connected_workspace(
+            } => LocalEvidenceContextBuildRequest::for_connected_workspace(
                 &self.root,
                 &self.database,
                 &self.repository_identity,
@@ -529,15 +505,16 @@ impl RepositoryService for LocalMcpRepositoryService {
             None => local_request,
         }
         .with_budget_units(request.budget_units())
-        .map_err(|_| RepositoryServiceError::Phase2ContextBuild)?
+        .map_err(|_| RepositoryServiceError::ContextBuild)?
         .with_max_provider_results(request.max_provider_results())
-        .map_err(|_| RepositoryServiceError::Phase2ContextBuild)?
+        .map_err(|_| RepositoryServiceError::ContextBuild)?
+        .with_configuration(&self.configuration)
         .with_deadline(request.timeout());
-        build_local_phase2_context(local_request, cancelled)
-            .map_err(|_| RepositoryServiceError::Phase2ContextBuild)
+        build_local_evidence_context(local_request, cancelled)
+            .map_err(|_| RepositoryServiceError::ContextBuild)
             .and_then(|result| {
-                mcp_phase2_context_output(result)
-                    .map_err(|_| RepositoryServiceError::Phase2ContextBuild)
+                mcp_evidence_context_output(result)
+                    .map_err(|_| RepositoryServiceError::ContextBuild)
             })
     }
 

@@ -1,4 +1,4 @@
-//! Versioned Phase 2 evidence-ranking vocabulary.
+//! Versioned evidence-balanced evidence-ranking vocabulary.
 //!
 //! These values carry no storage, wire, parser, or ranking behavior. They are
 //! the stable validated vocabulary shared by provider adapters and the pure
@@ -11,24 +11,24 @@ use crate::{
     SourceSnapshotDigest,
 };
 
-/// Stable identifier for the first Phase 2 evidence-ranking profile.
-pub const PHASE2_EVIDENCE_BALANCED_PROFILE_ID: &str = "phase2-evidence-balanced-v1";
-/// Version of the first Phase 2 evidence-ranking profile.
-pub const PHASE2_EVIDENCE_BALANCED_PROFILE_VERSION: u16 = 1;
+/// Stable identifier for the first evidence-balanced evidence-ranking profile.
+pub const EVIDENCE_BALANCED_PROFILE_ID: &str = "evidence-balanced-v1";
+/// Version of the first evidence-balanced evidence-ranking profile.
+pub const EVIDENCE_BALANCED_PROFILE_VERSION: u16 = 1;
 
-/// A named immutable Phase 2 evidence-ranking profile.
+/// A named immutable evidence-balanced evidence-ranking profile.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Phase2ContextProfile {
+pub enum EvidenceContextProfile {
     /// Tiered evidence-balanced allocation defined by ADR-0036.
     EvidenceBalancedV1,
 }
 
-impl Phase2ContextProfile {
+impl EvidenceContextProfile {
     /// Returns the stable profile ID carried by requests, results, and receipts.
     #[must_use]
     pub const fn id(self) -> &'static str {
         match self {
-            Self::EvidenceBalancedV1 => PHASE2_EVIDENCE_BALANCED_PROFILE_ID,
+            Self::EvidenceBalancedV1 => EVIDENCE_BALANCED_PROFILE_ID,
         }
     }
 
@@ -36,14 +36,14 @@ impl Phase2ContextProfile {
     #[must_use]
     pub const fn version(self) -> u16 {
         match self {
-            Self::EvidenceBalancedV1 => PHASE2_EVIDENCE_BALANCED_PROFILE_VERSION,
+            Self::EvidenceBalancedV1 => EVIDENCE_BALANCED_PROFILE_VERSION,
         }
     }
 }
 
-/// Ordered evidence tiers for one Phase 2 context request.
+/// Ordered evidence tiers for one evidence-balanced context request.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub enum Phase2ContextTier {
+pub enum EvidenceContextTier {
     /// The exact user-request anchor, admitted before all evidence tiers.
     Anchor,
     /// Applicable validated immutable SCIP precision-overlay evidence.
@@ -62,39 +62,39 @@ pub enum Phase2ContextTier {
     Unresolved,
 }
 
-/// Categorical availability reported by one Phase 2 provider before allocation.
+/// Categorical availability reported by one evidence-balanced provider before allocation.
 ///
 /// Availability is intentionally distinct from a budget omission: an unavailable
 /// provider did not contribute an admissible complete candidate, while an
 /// omitted provider did and could not fit the selected context budget.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Phase2ContextProviderAvailability {
+pub enum EvidenceContextProviderAvailability {
     /// At least one bounded, source-scoped candidate was available.
     Available,
     /// The provider did not produce an admissible candidate for this request.
     Unavailable,
 }
 
-/// Complete provider-level coverage for one Phase 2 evidence tier.
+/// Complete provider-level coverage for one evidence-balanced evidence tier.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct Phase2ContextProviderCoverage {
-    tier: Phase2ContextTier,
-    availability: Phase2ContextProviderAvailability,
+pub struct EvidenceContextProviderCoverage {
+    tier: EvidenceContextTier,
+    availability: EvidenceContextProviderAvailability,
     candidate_count: u64,
 }
 
-impl Phase2ContextProviderCoverage {
+impl EvidenceContextProviderCoverage {
     /// Validates one categorical provider outcome before ranking.
     pub const fn try_new(
-        tier: Phase2ContextTier,
-        availability: Phase2ContextProviderAvailability,
+        tier: EvidenceContextTier,
+        availability: EvidenceContextProviderAvailability,
         candidate_count: u64,
-    ) -> Result<Self, Phase2ContextProviderCoverageError> {
-        if matches!(tier, Phase2ContextTier::Anchor)
-            || matches!(availability, Phase2ContextProviderAvailability::Available)
+    ) -> Result<Self, EvidenceContextProviderCoverageError> {
+        if matches!(tier, EvidenceContextTier::Anchor)
+            || matches!(availability, EvidenceContextProviderAvailability::Available)
                 != (candidate_count != 0)
         {
-            return Err(Phase2ContextProviderCoverageError::InvalidOutcome);
+            return Err(EvidenceContextProviderCoverageError::InvalidOutcome);
         }
         Ok(Self {
             tier,
@@ -105,13 +105,13 @@ impl Phase2ContextProviderCoverage {
 
     /// Returns the covered evidence tier.
     #[must_use]
-    pub const fn tier(self) -> Phase2ContextTier {
+    pub const fn tier(self) -> EvidenceContextTier {
         self.tier
     }
 
     /// Returns whether the provider yielded admissible candidates.
     #[must_use]
-    pub const fn availability(self) -> Phase2ContextProviderAvailability {
+    pub const fn availability(self) -> EvidenceContextProviderAvailability {
         self.availability
     }
 
@@ -122,26 +122,26 @@ impl Phase2ContextProviderCoverage {
     }
 }
 
-/// Invalid Phase 2 provider coverage outcome.
+/// Invalid evidence-balanced provider coverage outcome.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Phase2ContextProviderCoverageError {
+pub enum EvidenceContextProviderCoverageError {
     /// Anchor coverage or an availability/count mismatch was supplied.
     InvalidOutcome,
 }
 
-impl fmt::Display for Phase2ContextProviderCoverageError {
+impl fmt::Display for EvidenceContextProviderCoverageError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("invalid Phase 2 provider coverage outcome")
+        formatter.write_str("invalid evidence-balanced provider coverage outcome")
     }
 }
 
-impl Error for Phase2ContextProviderCoverageError {}
+impl Error for EvidenceContextProviderCoverageError {}
 
 /// Stable typed identity supplied by the selected evidence provider.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub struct Phase2ContextCandidateId([u8; 32]);
+pub struct EvidenceContextCandidateId([u8; 32]);
 
-impl Phase2ContextCandidateId {
+impl EvidenceContextCandidateId {
     /// Wraps a fixed-width canonical evidence identity.
     #[must_use]
     pub const fn new(bytes: [u8; 32]) -> Self {
@@ -157,9 +157,9 @@ impl Phase2ContextCandidateId {
 
 /// Stable typed identity for one concrete evidence provider invocation.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub struct Phase2ContextProviderId([u8; 32]);
+pub struct EvidenceContextProviderId([u8; 32]);
 
-impl Phase2ContextProviderId {
+impl EvidenceContextProviderId {
     /// Wraps a fixed-width canonical provider identity.
     #[must_use]
     pub const fn new(bytes: [u8; 32]) -> Self {
@@ -175,15 +175,15 @@ impl Phase2ContextProviderId {
 
 /// Attribution retained for every provider that proved one exact candidate.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct Phase2ContextProviderAttribution {
-    provider: Phase2ContextProviderId,
-    tier: Phase2ContextTier,
+pub struct EvidenceContextProviderAttribution {
+    provider: EvidenceContextProviderId,
+    tier: EvidenceContextTier,
     provider_rank: u32,
 }
 
 /// Exact immutable source member shared by all candidates in one context pack.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct Phase2ContextScope {
+pub struct EvidenceContextScope {
     repository: RepositoryIdentityDigest,
     connected_workspace: ConnectedWorkspaceId,
     workspace_view: i64,
@@ -194,7 +194,7 @@ pub struct Phase2ContextScope {
     manifest: SourceManifestDigest,
 }
 
-impl Phase2ContextScope {
+impl EvidenceContextScope {
     /// Constructs one fully pinned source-member scope.
     #[allow(
         clippy::too_many_arguments,
@@ -209,9 +209,9 @@ impl Phase2ContextScope {
         generation: i64,
         snapshot: SourceSnapshotDigest,
         manifest: SourceManifestDigest,
-    ) -> Result<Self, Phase2ContextScopeError> {
+    ) -> Result<Self, EvidenceContextScopeError> {
         if workspace_view <= 0 || source_epoch == 0 || generation <= 0 {
-            return Err(Phase2ContextScopeError::InvalidIdentity);
+            return Err(EvidenceContextScopeError::InvalidIdentity);
         }
         Ok(Self {
             repository,
@@ -274,27 +274,28 @@ impl Phase2ContextScope {
     }
 }
 
-/// One non-positive identity in an immutable Phase 2 source scope.
+/// One non-positive identity in an immutable evidence-balanced source scope.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Phase2ContextScopeError {
+pub enum EvidenceContextScopeError {
     /// Workspace view, source epoch, or generation was non-positive.
     InvalidIdentity,
 }
 
-impl fmt::Display for Phase2ContextScopeError {
+impl fmt::Display for EvidenceContextScopeError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("Phase 2 context scope contains an invalid immutable identity")
+        formatter
+            .write_str("evidence-balanced context scope contains an invalid immutable identity")
     }
 }
 
-impl Error for Phase2ContextScopeError {}
+impl Error for EvidenceContextScopeError {}
 
-impl Phase2ContextProviderAttribution {
+impl EvidenceContextProviderAttribution {
     /// Constructs one independently attributable provider result.
     #[must_use]
     pub const fn new(
-        provider: Phase2ContextProviderId,
-        tier: Phase2ContextTier,
+        provider: EvidenceContextProviderId,
+        tier: EvidenceContextTier,
         provider_rank: u32,
     ) -> Self {
         Self {
@@ -306,13 +307,13 @@ impl Phase2ContextProviderAttribution {
 
     /// Returns the concrete provider identity.
     #[must_use]
-    pub const fn provider(self) -> Phase2ContextProviderId {
+    pub const fn provider(self) -> EvidenceContextProviderId {
         self.provider
     }
 
     /// Returns the provider's evidence tier for this exact candidate.
     #[must_use]
-    pub const fn tier(self) -> Phase2ContextTier {
+    pub const fn tier(self) -> EvidenceContextTier {
         self.tier
     }
 
