@@ -28,6 +28,7 @@ use super::{
     index_local_rust_repository_with_hooks, local_snapshot_implementation_fingerprint_inputs,
     map_index_mutation_error, phase0_local_rust_artifact_identity,
     phase0_local_source_artifact_identities, phase0_local_source_snapshot_profile,
+    reconcile_local_repository_with_control_hooks,
 };
 
 const REPOSITORY_ID: &str = concat!(

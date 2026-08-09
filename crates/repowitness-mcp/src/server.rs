@@ -23,6 +23,7 @@ use rmcp::{
 };
 use serde::{Serialize, de::DeserializeOwned};
 use tokio::{
+    io::{AsyncRead, AsyncWrite},
     sync::{Mutex, OwnedSemaphorePermit, Semaphore},
     task::JoinHandle,
     time::Instant,
@@ -1554,12 +1555,36 @@ pub async fn serve_stdio_with_repository_catalog(
     registry: BTreeMap<String, Arc<dyn RepositoryService>>,
     default_repository_id: String,
 ) -> Result<(), McpServeError> {
-    let input = BoundedLineReader::try_new(tokio::io::stdin(), MAX_MCP_INPUT_LINE_BYTES)
+    serve_transport_with_repository_catalog(
+        registry,
+        default_repository_id,
+        tokio::io::stdin(),
+        tokio::io::stdout(),
+    )
+    .await
+}
+
+/// Serves one fixed catalog snapshot over an injected local byte transport.
+///
+/// The composition root owns admission and transport capability checks. This
+/// function preserves the same bounded line decoder and catalog selector
+/// semantics as stdio without adding a network listener to this crate.
+pub async fn serve_transport_with_repository_catalog<Read, Write>(
+    registry: BTreeMap<String, Arc<dyn RepositoryService>>,
+    default_repository_id: String,
+    input: Read,
+    output: Write,
+) -> Result<(), McpServeError>
+where
+    Read: AsyncRead + Send + Unpin + 'static,
+    Write: AsyncWrite + Send + Unpin + 'static,
+{
+    let input = BoundedLineReader::try_new(input, MAX_MCP_INPUT_LINE_BYTES)
         .expect("the fixed MCP input-line limit is positive");
     let server = RepoWitnessMcpServer::with_repository_catalog(registry, default_repository_id)
         .map_err(|_| McpServeError::Initialize)?;
     let running = server
-        .serve((input, tokio::io::stdout()))
+        .serve((input, output))
         .await
         .map_err(|_| McpServeError::Initialize)?;
     running

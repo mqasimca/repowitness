@@ -31,6 +31,7 @@ pub(crate) struct LocalPollingRunnerRequest<'a> {
     schedule: WatcherScheduleLimits,
     hints: WatcherHintLimits,
     max_runtime: Option<Duration>,
+    native_event_hints: bool,
 }
 
 impl<'a> LocalPollingRunnerRequest<'a> {
@@ -40,6 +41,7 @@ impl<'a> LocalPollingRunnerRequest<'a> {
             schedule: WatcherScheduleLimits::DEFAULT,
             hints: WatcherHintLimits::DEFAULT,
             max_runtime: None,
+            native_event_hints: false,
         }
     }
 
@@ -71,6 +73,11 @@ impl<'a> LocalPollingRunnerRequest<'a> {
         self.max_runtime = Some(max_runtime);
         self
     }
+
+    pub(crate) const fn with_native_event_hints(mut self) -> Self {
+        self.native_event_hints = true;
+        self
+    }
 }
 
 impl fmt::Debug for LocalPollingRunnerRequest<'_> {
@@ -81,6 +88,7 @@ impl fmt::Debug for LocalPollingRunnerRequest<'_> {
             .field("schedule", &self.schedule)
             .field("hints", &self.hints)
             .field("max_runtime", &self.max_runtime)
+            .field("native_event_hints", &self.native_event_hints)
             .finish()
     }
 }
@@ -144,6 +152,7 @@ impl Error for PollingRunnerControlError {}
 pub(crate) enum LocalPollingRunnerError {
     State(WatcherStateError),
     Control(PollingRunnerControlError),
+    NativeEventHints(NativeEventHintsError),
     Reconciliation(LocalIndexError),
 }
 
@@ -152,6 +161,7 @@ impl fmt::Display for LocalPollingRunnerError {
         formatter.write_str(match self {
             Self::State(_) => "polling reconciliation state failed",
             Self::Control(_) => "polling reconciliation control failed",
+            Self::NativeEventHints(_) => "native event hints failed",
             Self::Reconciliation(_) => "polling reconciliation failed",
         })
     }
@@ -162,29 +172,65 @@ impl Error for LocalPollingRunnerError {
         match self {
             Self::State(source) => Some(source),
             Self::Control(source) => Some(source),
+            Self::NativeEventHints(source) => Some(source),
             Self::Reconciliation(source) => Some(source),
         }
     }
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NativeEventHintsError {
+    #[cfg(not(target_os = "linux"))]
+    Unavailable,
+    Initialization,
+}
+
+impl fmt::Display for NativeEventHintsError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            #[cfg(not(target_os = "linux"))]
+            Self::Unavailable => "native event hints are unavailable on this host",
+            Self::Initialization => "native event hints could not be initialized",
+        })
+    }
+}
+
+impl Error for NativeEventHintsError {}
 
 pub(crate) fn run_local_polling_reconciliation(
     request: LocalPollingRunnerRequest<'_>,
     cancelled: Arc<AtomicBool>,
 ) -> Result<LocalPollingRunnerReport, LocalPollingRunnerError> {
     let started_at = WatcherMonotonicTimestamp::from_millis(0);
-    let supervisor = PollingReconciliationSupervisor::start(
-        PollingReconciliationRequest::new(started_at, request.index.configuration)
-            .with_schedule_limits(request.schedule)
-            .with_hint_limits(request.hints),
-    )
-    .map_err(LocalPollingRunnerError::State)?;
+    let reconciliation = PollingReconciliationRequest::new(started_at, request.index.configuration)
+        .with_schedule_limits(request.schedule)
+        .with_hint_limits(request.hints);
+    let reconciliation = if request.native_event_hints {
+        reconciliation.with_native_event_hints()
+    } else {
+        reconciliation
+    };
+    let supervisor = PollingReconciliationSupervisor::start(reconciliation)
+        .map_err(LocalPollingRunnerError::State)?;
     let deadline = request
         .max_runtime
         .map(duration_millis)
         .transpose()
         .map_err(LocalPollingRunnerError::Control)?
         .map(WatcherMonotonicTimestamp::from_millis);
-    let mut environment = SystemPollingEnvironment::new(request.index);
+    if cancelled.load(Ordering::Acquire) {
+        return Ok(runner_report(
+            PollingRunnerExit::Cancelled,
+            &supervisor,
+            None,
+        ));
+    }
+    let mut environment = if request.native_event_hints {
+        SystemPollingEnvironment::with_native_event_hints(request.index)
+            .map_err(LocalPollingRunnerError::NativeEventHints)?
+    } else {
+        SystemPollingEnvironment::new(request.index)
+    };
     run_with_environment(supervisor, cancelled, deadline, &mut environment).map_err(|error| {
         match error {
             PollingRunError::State(source) => LocalPollingRunnerError::State(source),

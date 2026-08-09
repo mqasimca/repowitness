@@ -203,6 +203,47 @@ fn prepare_current_worktree_mcp_catalog(
     })
 }
 
+/// Resolves the socket for an already admitted current-worktree daemon without
+/// refreshing or mutating the catalog. The caller owns the current-directory
+/// authority; MCP callers never provide this path.
+fn current_worktree_catalog_daemon_socket(
+    requested_state_root: Option<&Path>,
+) -> Result<PathBuf, ()> {
+    let selected_state_root = match requested_state_root {
+        Some(path) => path.to_owned(),
+        None => default_onboard_state_root()?,
+    };
+    let state_root = canonical_path_with_uncreated_suffix(&selected_state_root)?;
+    let current_root = resolve_current_worktree_root()?;
+    let repositories = read_catalog_repositories(&mcp_catalog_path(&state_root), &state_root)?;
+    let repository = repositories
+        .into_iter()
+        .find(|repository| repository.root == current_root)
+        .ok_or(())?;
+    Ok(catalog_daemon_socket_path(
+        &state_root,
+        &repository.repository_identity,
+    ))
+}
+
+/// Produces a short private Unix-socket pathname for one opaque repository ID.
+/// The opaque ID remains in the catalog; the socket component is an internal
+/// SHA-256 truncation solely to stay under conservative Unix path limits.
+fn catalog_daemon_socket_path(state_root: &Path, repository_id: &str) -> PathBuf {
+    use sha2::{Digest, Sha256};
+
+    let digest = Sha256::digest(repository_id.as_bytes());
+    let mut component = String::with_capacity(32);
+    for byte in &digest[..16] {
+        use std::fmt::Write as _;
+        let _ = write!(component, "{byte:02x}");
+    }
+    state_root
+        .join(ONBOARD_STATE_PRODUCT_DIRECTORY)
+        .join("daemon-v1")
+        .join(format!("{component}.sock"))
+}
+
 fn mcp_catalog_path(state_root: &Path) -> PathBuf {
     state_root
         .join(ONBOARD_STATE_PRODUCT_DIRECTORY)

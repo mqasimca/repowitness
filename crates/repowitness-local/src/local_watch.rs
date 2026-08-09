@@ -25,6 +25,7 @@ pub const MAX_LOCAL_WATCH_RUNTIME: Duration = Duration::from_millis(86_400_000);
 pub struct LocalWatchRequest<'a> {
     index: LocalIndexRequest<'a>,
     max_runtime: Option<Duration>,
+    native_event_hints: bool,
 }
 
 impl<'a> LocalWatchRequest<'a> {
@@ -34,6 +35,7 @@ impl<'a> LocalWatchRequest<'a> {
         Self {
             index,
             max_runtime: None,
+            native_event_hints: false,
         }
     }
 
@@ -48,6 +50,14 @@ impl<'a> LocalWatchRequest<'a> {
         self.max_runtime = Some(max_runtime);
         Ok(self)
     }
+
+    /// Uses supported native filesystem events as bounded reconciliation hints.
+    /// Complete source capture and final fencing remain authoritative.
+    #[must_use]
+    pub const fn with_native_event_hints(mut self) -> Self {
+        self.native_event_hints = true;
+        self
+    }
 }
 
 impl fmt::Debug for LocalWatchRequest<'_> {
@@ -56,6 +66,7 @@ impl fmt::Debug for LocalWatchRequest<'_> {
             .debug_struct("LocalWatchRequest")
             .field("index", &self.index)
             .field("max_runtime", &self.max_runtime)
+            .field("native_event_hints", &self.native_event_hints)
             .finish()
     }
 }
@@ -164,6 +175,9 @@ pub fn watch_local_repository(
     cancelled: Arc<AtomicBool>,
 ) -> Result<LocalWatchReport, LocalWatchError> {
     let mut runner = LocalPollingRunnerRequest::new(request.index);
+    if request.native_event_hints {
+        runner = runner.with_native_event_hints();
+    }
     if let Some(max_runtime) = request.max_runtime {
         runner = runner.with_max_runtime(max_runtime);
     }

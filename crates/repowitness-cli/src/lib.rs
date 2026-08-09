@@ -163,7 +163,8 @@ const MAX_SYMBOL_GET_ARGUMENTS: usize = 18;
 const MAX_OUTBOUND_SITES_ARGUMENTS: usize = 18;
 const MAX_SYNTAX_SITE_SEARCH_ARGUMENTS: usize = 8;
 const MAX_TEST_MARKERS_ARGUMENTS: usize = 10;
-const MAX_MCP_SERVE_ARGUMENTS: usize = 14 + CONFIGURATION_LAYER_ARGUMENTS;
+const MAX_MCP_SERVE_ARGUMENTS: usize = 15 + CONFIGURATION_LAYER_ARGUMENTS;
+const MAX_DAEMON_ARGUMENTS: usize = 3 + CONFIGURATION_LAYER_ARGUMENTS;
 const MAX_CLI_CONTEXT_OUTPUT_BYTES: usize = 24 * 1024 * 1024;
 const MAX_CLI_CONFIGURATION_OUTPUT_BYTES: usize = 32 * 1024;
 const MAX_CLI_DIAGNOSTICS_OUTPUT_BYTES: usize = 256 * 1024;
@@ -199,6 +200,7 @@ const HELP: &str = concat!(
     "  repowitness index --repository-id <id> --database <path> [configuration layer options] [--] <repository>\n",
     "  repowitness workspace index --manifest <path> --database <path> [configuration layer options]\n",
     "  repowitness watch --repository-id <id> --database <path> [configuration layer options] [--] <repository>\n",
+    "  repowitness daemon --catalog [--catalog-state-dir <path>] [configuration layer options]\n",
     "  repowitness gc <plan|apply> --database <path> [retention options]\n",
     "  repowitness context-build --repository-id <id> --database <path> --root <path> --intent <text> [context options]\n",
     "  repowitness verify --repository-id <id> --database <path> --root <path> --base <object-id> --intent <text>\n",
@@ -319,7 +321,7 @@ const MCP_SERVE_HELP: &str = concat!(
     "      [--enable-native-tasks]\n\n",
     "  repowitness mcp-serve --registry <path>\n",
     "      [--user-config <path>] [--workspace-config <path>]\n\n",
-    "  repowitness mcp-serve --catalog [--catalog-state-dir <path>]\n",
+    "  repowitness mcp-serve --catalog [--daemon] [--catalog-state-dir <path>]\n",
     "      [--user-config <path>] [--workspace-config <path>]\n\n",
     "Stdout is reserved exclusively for newline-delimited MCP JSON-RPC. The\n",
     "configured repository, database, identities, and optional graph source slot are fixed for the process;\n",
@@ -346,6 +348,9 @@ const MCP_SERVE_HELP: &str = concat!(
     "worktree before startup, keeps no caller-selected paths, and defaults tool\n",
     "calls only to that process-fixed repository. Supply repository_id to select\n",
     "another repository admitted by the loaded catalog snapshot.\n",
+    "With --daemon, catalog stdio becomes a local Unix proxy to the already\n",
+    "running daemon admitted for this process-current worktree; it does not\n",
+    "index or create catalog state and fails before protocol startup when absent.\n",
 );
 
 const DIAGNOSTICS_HELP: &str = concat!(
@@ -673,6 +678,7 @@ include!("cli/personal_memory_commands.rs");
 include!("cli/mcp_registry.rs");
 include!("cli/mcp_commands.rs");
 include!("cli/mcp_memory_manage.rs");
+include!("cli/daemon_commands.rs");
 include!("cli/watch_commands.rs");
 include!("cli/watch_output.rs");
 include!("cli/workspace_commands.rs");

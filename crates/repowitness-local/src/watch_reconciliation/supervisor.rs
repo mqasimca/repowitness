@@ -33,6 +33,7 @@ pub struct PollingReconciliationRequest<'a> {
     schedule_limits: WatcherScheduleLimits,
     hint_limits: WatcherHintLimits,
     configuration: Option<&'a ResolvedConfiguration>,
+    native_event_hints: bool,
 }
 
 impl<'a> PollingReconciliationRequest<'a> {
@@ -47,6 +48,7 @@ impl<'a> PollingReconciliationRequest<'a> {
             schedule_limits: WatcherScheduleLimits::DEFAULT,
             hint_limits: WatcherHintLimits::DEFAULT,
             configuration,
+            native_event_hints: false,
         }
     }
 
@@ -64,12 +66,23 @@ impl<'a> PollingReconciliationRequest<'a> {
         self
     }
 
+    /// Uses the periodic complete reconciliation limit as the source-poll
+    /// fallback when a native backend supplies event hints between runs.
+    #[must_use]
+    pub const fn with_native_event_hints(mut self) -> Self {
+        self.native_event_hints = true;
+        self
+    }
+
     /// Returns the effective source-poll interval.
     ///
     /// A slower repository preference cannot postpone mandatory complete
     /// reconciliation beyond the compiled or caller-tightened periodic bound.
     #[must_use]
     pub fn effective_poll_interval(&self) -> WatcherPollIntervalMillis {
+        if self.native_event_hints {
+            return WatcherPollIntervalMillis(self.schedule_limits.periodic().get());
+        }
         let configured =
             self.configuration
                 .map_or(DEFAULT_WATCHER_POLL_INTERVAL_MS, |configuration| {

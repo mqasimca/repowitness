@@ -78,6 +78,18 @@ fn resolved_poll_interval_cannot_weaken_mandatory_periodic_or_retry_bounds() {
 }
 
 #[test]
+fn native_event_hints_replace_fast_polling_with_the_complete_periodic_fallback() {
+    let configuration = configured_poll_interval(2_000);
+    let request = PollingReconciliationRequest::new(timestamp(0), Some(&configuration))
+        .with_native_event_hints();
+
+    assert_eq!(
+        request.effective_poll_interval().get(),
+        crate::DEFAULT_WATCHER_PERIODIC_MS
+    );
+}
+
+#[test]
 fn different_hint_order_and_duplicates_admit_identical_path_free_work() {
     let schedule = WatcherScheduleLimits::try_new(5, 100, 10, 2).expect("valid schedule");
     let hints = WatcherHintLimits::try_new(8, 512).expect("valid hint limits");

@@ -10,9 +10,13 @@ pub fn run(args: impl IntoIterator<Item = OsString>, stdout: impl Write, stderr:
     let command = arguments.next();
     let is_watch = command.as_deref() == Some(OsStr::new("watch"));
     let is_gc = command.as_deref() == Some(OsStr::new("gc"));
+    let is_daemon = command.as_deref() == Some(OsStr::new("daemon"));
     let arguments = program.into_iter().chain(command).chain(arguments);
     if is_watch {
         return run_watch(arguments, stdout, stderr);
+    }
+    if is_daemon {
+        return run_daemon(arguments, stdout, stderr);
     }
     if is_gc {
         return run_gc(arguments, stdout, stderr);

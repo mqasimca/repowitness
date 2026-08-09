@@ -1,4 +1,5 @@
 use std::{
+    path::Path,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -7,6 +8,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(target_os = "linux")]
+use std::{fs, mem::MaybeUninit, path::PathBuf};
+
 use crate::{
     LocalIndexError, LocalIndexRequest, LocalRustIndexError, LocalRustIndexLimits,
     LocalSourceSnapshotFenceError, SqliteStoreError, WatcherMonotonicTimestamp,
@@ -14,7 +18,8 @@ use crate::{
 };
 
 use super::{
-    PollingAttempt, PollingRunnerControlError, PollingRunnerEnvironment, RunnerObservation,
+    NativeEventHintsError, PollingAttempt, PollingRunnerControlError, PollingRunnerEnvironment,
+    RunnerObservation,
 };
 
 const CANCELLATION_CHECK_INTERVAL: Duration = Duration::from_millis(10);
@@ -22,6 +27,7 @@ const CANCELLATION_CHECK_INTERVAL: Duration = Duration::from_millis(10);
 pub(super) struct SystemPollingEnvironment<'a> {
     origin: Instant,
     index: LocalIndexRequest<'a>,
+    native_event_hints: Option<NativeEventHints>,
 }
 
 impl<'a> SystemPollingEnvironment<'a> {
@@ -29,7 +35,19 @@ impl<'a> SystemPollingEnvironment<'a> {
         Self {
             origin: Instant::now(),
             index,
+            native_event_hints: None,
         }
+    }
+
+    pub(super) fn with_native_event_hints(
+        index: LocalIndexRequest<'a>,
+    ) -> Result<Self, NativeEventHintsError> {
+        let native_event_hints = NativeEventHints::new(index.repository_root)?;
+        Ok(Self {
+            origin: Instant::now(),
+            index,
+            native_event_hints: Some(native_event_hints),
+        })
     }
 }
 
@@ -66,7 +84,9 @@ impl PollingRunnerEnvironment for SystemPollingEnvironment<'_> {
     }
 
     fn next_observation(&mut self) -> Option<RunnerObservation> {
-        None
+        self.native_event_hints
+            .as_mut()
+            .and_then(NativeEventHints::next_observation)
     }
 
     fn reconcile(
@@ -90,6 +110,86 @@ impl PollingRunnerEnvironment for SystemPollingEnvironment<'_> {
             }
             Err(error) => PollingAttempt::Fatal(error),
         }
+    }
+}
+
+const MAX_NATIVE_HINT_DIRECTORIES: usize = 8_192;
+
+#[cfg(target_os = "linux")]
+struct NativeEventHints {
+    root: PathBuf,
+    descriptor: rustix::fd::OwnedFd,
+}
+
+#[cfg(not(target_os = "linux"))]
+struct NativeEventHints;
+
+impl NativeEventHints {
+    #[cfg(target_os = "linux")]
+    fn new(root: &Path) -> Result<Self, NativeEventHintsError> {
+        use rustix::fs::inotify;
+
+        let descriptor =
+            inotify::init(inotify::CreateFlags::CLOEXEC | inotify::CreateFlags::NONBLOCK)
+                .map_err(|_| NativeEventHintsError::Initialization)?;
+        let mut directories = vec![root.to_owned()];
+        let mut cursor = 0_usize;
+        while cursor < directories.len() && directories.len() < MAX_NATIVE_HINT_DIRECTORIES {
+            let directory = &directories[cursor];
+            if inotify::add_watch(&descriptor, directory, inotify::WatchFlags::ALL_EVENTS).is_err()
+                && cursor == 0
+            {
+                return Err(NativeEventHintsError::Initialization);
+            }
+            if let Ok(entries) = fs::read_dir(directory) {
+                for entry in entries.flatten() {
+                    if entry
+                        .file_type()
+                        .is_ok_and(|kind| kind.is_dir() && !kind.is_symlink())
+                        && directories.len() < MAX_NATIVE_HINT_DIRECTORIES
+                    {
+                        directories.push(entry.path());
+                    }
+                }
+            }
+            cursor += 1;
+        }
+        Ok(Self {
+            root: root.to_owned(),
+            descriptor,
+        })
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn new(_root: &Path) -> Result<Self, NativeEventHintsError> {
+        Err(NativeEventHintsError::Unavailable)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn next_observation(&mut self) -> Option<RunnerObservation> {
+        use rustix::{fs::inotify, io::Errno};
+
+        let mut buffer = [MaybeUninit::uninit(); 4_096];
+        let mut reader = inotify::Reader::new(&self.descriptor, &mut buffer);
+        match reader.next() {
+            Ok(_event) => {
+                // Rebuild after each observed event so newly created
+                // directories can contribute future hints. The bounded
+                // watcher is still only an optimization; periodic complete
+                // reconciliation remains the correctness fallback.
+                if let Ok(replacement) = Self::new(&self.root) {
+                    *self = replacement;
+                }
+                Some(RunnerObservation::Unsupported)
+            }
+            Err(Errno::AGAIN) => None,
+            Err(_) => Some(RunnerObservation::Unsupported),
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn next_observation(&mut self) -> Option<RunnerObservation> {
+        None
     }
 }
 

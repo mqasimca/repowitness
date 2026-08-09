@@ -364,6 +364,13 @@ struct PreparedLocalIndexPublication {
     coverage: RustIndexCoverage,
 }
 
+struct PreparedLocalIndexSource {
+    identity: RustSourceSnapshotIdentity,
+    preparation: crate::LocalRustIndexPreparation,
+    coverage: RustIndexCoverage,
+    report_input: ReportInput,
+}
+
 #[cfg(test)]
 fn index_local_rust_repository_with_hook(
     request: LocalIndexRequest<'_>,
@@ -396,7 +403,9 @@ fn index_local_rust_repository_with_hooks(
                     hook();
                 }
             }
-            LocalIndexPhase::WriterStarted | LocalIndexPhase::PublicationCommitted => {}
+            LocalIndexPhase::WriterStarted
+            | LocalIndexPhase::GraphProjectionPreparing
+            | LocalIndexPhase::PublicationCommitted => {}
         },
         |_, deadline| deadline,
     )? {
@@ -426,6 +435,21 @@ fn index_local_rust_repository_with_control_hooks(
             unreachable!("one-shot indexing always publishes a fresh generation")
         }
     }
+}
+
+#[cfg(test)]
+fn reconcile_local_repository_with_control_hooks(
+    request: LocalIndexRequest<'_>,
+    cancelled: Arc<AtomicBool>,
+    after_phase: impl FnMut(LocalIndexPhase),
+) -> Result<LocalReconciliationOutcome, LocalIndexError> {
+    index_local_repository_with_mode_and_control(
+        request,
+        cancelled,
+        true,
+        after_phase,
+        |_, deadline| deadline,
+    )
 }
 
 fn publish_prepared_local_index(

@@ -36,6 +36,28 @@ fn watched_reconciliation_skips_unchanged_source_and_publishes_changes() {
 }
 
 #[test]
+fn unchanged_reconciliation_skips_generation_graph_preparation() {
+    let directory = TempDirectory::new();
+    let repository = fixture_repository(&directory);
+    let database = directory.database();
+    let request = LocalIndexRequest::new(&repository, &database, REPOSITORY_ID, 0);
+
+    let first = reconcile_local_repository(request, Arc::new(AtomicBool::new(false)))
+        .expect("startup reconciliation should publish");
+    assert!(matches!(first, LocalReconciliationOutcome::Published(_)));
+
+    let mut phases = Vec::new();
+    let unchanged = reconcile_local_repository_with_control_hooks(
+        request,
+        Arc::new(AtomicBool::new(false)),
+        |phase| phases.push(phase),
+    )
+    .expect("quiet reconciliation should succeed");
+    assert!(matches!(unchanged, LocalReconciliationOutcome::Unchanged(_)));
+    assert!(!phases.contains(&super::LocalIndexPhase::GraphProjectionPreparing));
+}
+
+#[test]
 fn cancelled_watched_reconciliation_preserves_the_active_generation() {
     let directory = TempDirectory::new();
     let repository = fixture_repository(&directory);

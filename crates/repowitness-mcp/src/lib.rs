@@ -15,6 +15,7 @@ pub use server::{
     serve_stdio_with_memory_writes, serve_stdio_with_repository_catalog,
     serve_stdio_with_repository_registry, serve_stdio_with_surface,
     serve_stdio_with_surface_and_native_tasks, serve_stdio_with_surface_tasks_and_personal_memory,
+    serve_transport_with_repository_catalog,
 };
 pub use transport::{BoundedLineReader, BoundedLineReaderLimitError, MAX_MCP_INPUT_LINE_BYTES};
 pub use wire::{

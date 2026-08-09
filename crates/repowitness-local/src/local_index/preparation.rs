@@ -116,9 +116,9 @@ struct LocalIndexPublicationPreparationContext<'a> {
     deadline: Instant,
 }
 
-fn prepare_local_index_publication(
+fn prepare_local_index_source(
     context: LocalIndexPublicationPreparationContext<'_>,
-) -> Result<(PreparedLocalIndexPublication, ReportInput), LocalIndexError> {
+) -> Result<PreparedLocalIndexSource, LocalIndexError> {
     let artifacts = phase0_local_source_artifact_identities();
     let preparation = prepare_with_artifact_reuse(ArtifactReusePreparationContext {
         worktree: context.worktree,
@@ -155,39 +155,50 @@ fn prepare_local_index_publication(
         return Err(LocalIndexError::DatabaseChangedDuringIndexing);
     }
 
+    Ok(PreparedLocalIndexSource {
+        identity,
+        preparation,
+        coverage,
+        report_input,
+    })
+}
+
+fn prepare_local_index_publication(
+    source: PreparedLocalIndexSource,
+    repository: repowitness_domain::RepositoryIdentityDigest,
+    cancelled: &AtomicBool,
+    deadline: Instant,
+) -> Result<PreparedLocalIndexPublication, LocalIndexError> {
     let (prepared, graph_artifacts, raw_syntax_artifacts, topology_paths) =
-        preparation.into_prepared_parts();
+        source.preparation.into_prepared_parts();
     let graph = prepare_local_rust_graph_projection(
-        context.repository,
+        repository,
         &prepared,
         graph_artifacts,
-        context.cancelled.as_ref(),
-        context.deadline,
+        cancelled,
+        deadline,
     )
     .map_err(|source| LocalIndexError::GraphPreparation { source })?;
     let raw_syntax = prepare_local_raw_syntax_projection(
         raw_syntax_artifacts,
-        context.cancelled.as_ref(),
-        context.deadline,
+        cancelled,
+        deadline,
     )
     .map_err(|source| LocalIndexError::RawSyntaxPreparation { source })?;
     let topology = topology_paths
         .map(|paths| {
-            crate::prepare_repository_topology(paths, context.cancelled.as_ref(), context.deadline)
+            crate::prepare_repository_topology(paths, cancelled, deadline)
         })
         .transpose()
         .map_err(|source| LocalIndexError::RepositoryTopologyPreparation { source })?;
-    Ok((
-        PreparedLocalIndexPublication {
-            identity,
-            prepared,
-            graph,
-            raw_syntax,
-            topology,
-            coverage,
-        },
-        report_input,
-    ))
+    Ok(PreparedLocalIndexPublication {
+        identity: source.identity,
+        prepared,
+        graph,
+        raw_syntax,
+        topology,
+        coverage: source.coverage,
+    })
 }
 
 struct ScopedLocalIndexPublicationPreparationContext<'a> {
@@ -562,6 +573,7 @@ fn update_length_prefixed(hasher: &mut Sha256, value: &[u8]) {
     hasher.update(value);
 }
 
+#[derive(Clone, Copy)]
 struct ReportInput {
     discovered_paths: u64,
     indexed_files: u64,

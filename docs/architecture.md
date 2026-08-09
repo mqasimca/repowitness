@@ -488,8 +488,9 @@ aware lexical search, relevant paths, typed declarations, architecture maps,
 graph/SCIP reads, and evidence-balanced context to its exact slot. Membership is not a cross-repository
 relationship claim, and tools without a source-view receipt contract stay out
 of this mode until they have one. Catalog membership mutation, reload,
-watchers, daemons, root scanning, and generic cross-repository queries remain
-excluded.
+root scanning, and generic cross-repository queries remain excluded. The
+separate proposed ADR-0056 local-daemon option applies only to one Linux
+single-repository catalog entry; it does not extend connected workspaces.
 transport rejects a protocol line over 3 MiB; every result envelope has a
 bounded encoded size.
 A version-1 `memory_manage` request produces a version-2 receipt. The output

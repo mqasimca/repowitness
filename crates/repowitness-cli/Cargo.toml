@@ -16,6 +16,7 @@ repowitness-mcp.workspace = true
 rustix.workspace = true
 serde_json.workspace = true
 serde.workspace = true
+sha2.workspace = true
 tokio.workspace = true
 
 [lints]

@@ -148,7 +148,7 @@ implemented. Its local memory-management base is also implemented:
 - `index`, `onboard`, `architecture-map`, `architecture-overview`, `repository-topology`, `search`, `locate-relevant-paths`, `symbol-search`, `outbound-sites`, `syntax-site-search`, `test-markers`,
   `symbol-get`, `scip-import`, proposed `scip-rust-import`, proposed `scip-go-import`, `scip-symbol-resolve`, `scip-relationship-trace`, `graph`, `memory-manage`, `memory-revalidate`, `memory-recall`,
   the evidence-balanced `context-build` command, `verify`, `diagnostics`,
-  `mcp-serve`, `codex`, and `inspect-paths` CLI commands,
+  `mcp-serve`, `daemon`, `codex`, and `inspect-paths` CLI commands,
   plus path-free `config explain` and read-only `doctor`; explicit bounded
   user/workspace/repository configuration is
   resolved once and enforced by indexing, retrieval, graph reads, context,
@@ -163,7 +163,11 @@ implemented. Its local memory-management base is also implemented:
   one global local MCP connection admits and refreshes only the current Git
   worktree at process startup, keeps its bounded private catalog path-free to
   callers, and defaults only that process-fixed repository without adding a
-  daemon, watcher, home/sibling scan, remote service, or MCP mutation;
+  default daemon, watcher, home/sibling scan, remote service, or MCP mutation;
+- a proposed explicit Linux local catalog-daemon option under ADR-0056: one
+  foreground-supervised current-worktree daemon serves a private Unix socket,
+  uses native events only as bounded reconciliation hints plus periodic complete
+  reconciliation, and is reached by an opt-in stdio MCP proxy;
 - a proposed explicit Codex connected-workspace catalog: an operator may name
   two through thirty-two supplied worktrees as one product stack; starting in
   any member refreshes and atomically publishes that full source-slot view,

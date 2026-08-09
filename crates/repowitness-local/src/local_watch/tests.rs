@@ -56,3 +56,23 @@ fn preexisting_cancellation_returns_without_filesystem_or_database_access() {
     assert_eq!(report.last_reconciliation(), None);
     assert_eq!(report.last_index(), None);
 }
+
+#[test]
+fn native_event_hint_request_retains_preexisting_cancellation_behavior() {
+    let index = LocalIndexRequest::new(
+        Path::new("/must/not/be/read"),
+        Path::new("/must/not/be/created.sqlite3"),
+        "invalid-identity-that-must-not-be-decoded",
+        0,
+    );
+    let cancelled = Arc::new(AtomicBool::new(true));
+
+    let report = watch_local_repository(
+        LocalWatchRequest::new(index).with_native_event_hints(),
+        cancelled,
+    )
+    .expect("pre-cancelled native-hint watch exits normally");
+
+    assert_eq!(report.exit(), LocalWatchExit::Cancelled);
+    assert_eq!(report.state_counters(), WatcherStateCounters::default());
+}

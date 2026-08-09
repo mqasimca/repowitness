@@ -343,8 +343,11 @@ private isolated index, and defaults only that fixed entry. The acceptance gate
 requires no parent/sibling/home discovery, no catalog mutation before complete
 activation, exact cross-catalog selectors, path-free errors, repeat-session
 coverage, reversible config ownership, and an explicitly reviewed non-mutating
-Codex hook. Daemons, automatic watchers, remote/team catalog state, general
-cross-repository queries, and MCP write tools remain deferred.
+Codex hook. The separately proposed ADR-0056 permits one explicit Linux
+per-worktree local daemon with a private Unix socket and event-hinted complete
+reconciliation; daemon installation, connected-workspace coordination,
+remote/team catalog state, general cross-repository queries, and MCP write
+tools remain deferred.
 
 ## Proposed explicit Codex connected-workspace catalog
 

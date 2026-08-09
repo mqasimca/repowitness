@@ -9,6 +9,7 @@ pub(crate) enum LocalReconciliationOutcome {
 enum LocalIndexPhase {
     MutationLeaseAcquired,
     WriterStarted,
+    GraphProjectionPreparing,
     GraphStaged,
     PublicationCommitted,
 }
@@ -37,7 +38,9 @@ fn index_local_repository_with_mode(
                     hook();
                 }
             }
-            LocalIndexPhase::WriterStarted | LocalIndexPhase::PublicationCommitted => {}
+            LocalIndexPhase::WriterStarted
+            | LocalIndexPhase::GraphProjectionPreparing
+            | LocalIndexPhase::PublicationCommitted => {}
         },
         |_, deadline| deadline,
     )
@@ -83,8 +86,7 @@ fn index_local_repository_with_mode_and_control(
     }
     drop(identity_after_lease);
 
-    let (publication, report_input) =
-        prepare_local_index_publication(LocalIndexPublicationPreparationContext {
+    let source = prepare_local_index_source(LocalIndexPublicationPreparationContext {
             worktree: &worktree,
             database: &database,
             database_identity: database_identity.as_ref(),
@@ -114,23 +116,59 @@ fn index_local_repository_with_mode_and_control(
             &worktree,
             &database,
             Some(writer.opened_database_identity()),
-            publication.identity,
+            source.identity,
             languages,
             configured_limits,
         );
         let publication = if skip_unchanged {
-            reconcile_prepared_local_index(
+            match reconcile_prepared_local_source(
                 &writer,
                 repository,
-                publication,
+                &source,
                 &final_fence,
-                || after_phase(LocalIndexPhase::GraphStaged),
                 &cancelled,
                 deadline,
                 startup.recovered_generations(),
-                report_input,
-            )?
+            )? {
+                ReconciliationDecision::Complete(outcome) => outcome,
+                ReconciliationDecision::PublishAt(source_epoch) => {
+                    after_phase(LocalIndexPhase::GraphProjectionPreparing);
+                    let report_input = source.report_input;
+                    let publication = prepare_local_index_publication(
+                        source,
+                        repository,
+                        cancelled.as_ref(),
+                        deadline,
+                    )?;
+                    publish_prepared_local_index_at_epoch(
+                        &writer,
+                        repository,
+                        source_epoch,
+                        publication,
+                        &final_fence,
+                        || after_phase(LocalIndexPhase::GraphStaged),
+                        &cancelled,
+                        deadline,
+                    )
+                    .map(|(generation, source_epoch)| {
+                        LocalReconciliationOutcome::Published(activated_report(
+                            generation,
+                            source_epoch.get(),
+                            startup.recovered_generations(),
+                            report_input,
+                        ))
+                    })?
+                }
+            }
         } else {
+            after_phase(LocalIndexPhase::GraphProjectionPreparing);
+            let report_input = source.report_input;
+            let publication = prepare_local_index_publication(
+                source,
+                repository,
+                cancelled.as_ref(),
+                deadline,
+            )?;
             publish_prepared_local_index(
                 &writer,
                 repository,
@@ -167,17 +205,20 @@ fn index_local_repository_with_mode_and_control(
     clippy::too_many_arguments,
     reason = "the provisional watched seam keeps publication, fencing, control, and reports explicit"
 )]
-fn reconcile_prepared_local_index(
+enum ReconciliationDecision {
+    Complete(LocalReconciliationOutcome),
+    PublishAt(SourceSlotEpoch),
+}
+
+fn reconcile_prepared_local_source(
     writer: &OwnedSqliteIndex,
     repository: repowitness_domain::RepositoryIdentityDigest,
-    publication: PreparedLocalIndexPublication,
+    source: &PreparedLocalIndexSource,
     final_fence: &LocalSourceSlotFinalFence<'_>,
-    after_graph_staging: impl FnOnce(),
     cancelled: &Arc<AtomicBool>,
     deadline: Instant,
     recovered_generations: u64,
-    report_input: ReportInput,
-) -> Result<LocalReconciliationOutcome, LocalIndexError> {
+) -> Result<ReconciliationDecision, LocalIndexError> {
     let persisted_epoch = writer
         .ensure_workspace(repository, INITIAL_SOURCE_EPOCH, deadline)
         .map_err(|source| {
@@ -198,8 +239,10 @@ fn reconcile_prepared_local_index(
             deadline,
         )
         .map_err(|source| LocalIndexError::WorkspaceRegistration { source })?;
-    let candidate =
-        hash_source_snapshot(publication.identity, publication.prepared.manifest_digest());
+    let candidate = hash_source_snapshot(
+        source.identity,
+        source.preparation.prepared().manifest_digest(),
+    );
 
     if let Some(active) = state
         .active()
@@ -208,12 +251,14 @@ fn reconcile_prepared_local_index(
         final_fence
             .confirm_source_snapshot(candidate, Arc::clone(cancelled), deadline)
             .map_err(|source| LocalIndexError::FinalSourceFence { source })?;
-        return Ok(LocalReconciliationOutcome::Unchanged(activated_report(
+        return Ok(ReconciliationDecision::Complete(
+            LocalReconciliationOutcome::Unchanged(activated_report(
             active.generation(),
             active.source_epoch().get(),
             recovered_generations,
-            report_input,
-        )));
+            source.report_input,
+        )),
+        ));
     }
 
     if let Some(completion) = state
@@ -236,28 +281,15 @@ fn reconcile_prepared_local_index(
                     |source| LocalIndexError::PublicationActivation { source },
                 )
             })?;
-        return Ok(LocalReconciliationOutcome::Resumed(activated_report(
+        return Ok(ReconciliationDecision::Complete(
+            LocalReconciliationOutcome::Resumed(activated_report(
             completion.generation(),
             completion.source_epoch().get(),
             recovered_generations,
-            report_input,
-        )));
+            source.report_input,
+        )),
+        ));
     }
 
-    let (generation, source_epoch) = publish_prepared_local_index_at_epoch(
-        writer,
-        repository,
-        persisted_epoch,
-        publication,
-        final_fence,
-        after_graph_staging,
-        cancelled,
-        deadline,
-    )?;
-    Ok(LocalReconciliationOutcome::Published(activated_report(
-        generation,
-        source_epoch.get(),
-        recovered_generations,
-        report_input,
-    )))
+    Ok(ReconciliationDecision::PublishAt(persisted_epoch))
 }

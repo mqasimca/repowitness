@@ -451,6 +451,27 @@ deadline. It does not detach or start a daemon. Shutdown is cooperative and
 bounded; interruption or failure leaves the prior active generation readable.
 Like `index`, it never runs garbage collection automatically.
 
+### Optional: keep one Linux worktree warm with a local daemon
+
+For a long-lived Linux worktree, start the daemon from that worktree under a
+user service manager or terminal multiplexer:
+
+```text
+repowitness daemon --catalog --catalog-state-dir "$HOME/.codex/repowitness-state"
+```
+
+It owns one private Unix socket for that worktree. Linux inotify events only
+schedule reconciliation; every activated generation still passes complete
+source capture and the final source fence. The daemon also performs a complete
+periodic reconciliation, so dropped events cannot make the index look current.
+
+To let Codex use the warm daemon, change the managed MCP arguments from
+`["mcp-serve", "--catalog", ...]` to
+`["mcp-serve", "--catalog", "--daemon", ...]`. The stdio process is then a
+small proxy: it attaches only to the daemon already admitted for its current
+worktree and fails before MCP startup if no such daemon is running. The normal
+catalog installation remains the default and continues to refresh at startup.
+
 Atomically index an explicitly authorized connected workspace with a separately
 selected manifest:
 
@@ -885,11 +906,14 @@ process: it indexes or incrementally refreshes only that containing worktree
 into a private Codex-owned state directory before serving MCP, and makes that
 one repository the default. Other catalog entries, if any, still require their exact opaque
 `repository_id`; callers never receive roots, databases, or a catalog listing.
-The catalog has no daemon, watcher, parent/sibling/home scan, remote service,
-or mutation surface. Use `repowitness codex remove` to delete only the marked
-integration records. See the [catalog format](docs/schemas/mcp-catalog-v1.md)
-and [ADR-0050](docs/adr/0050-opt-in-codex-catalog-onboarding.md) for the
-complete boundary.
+The normal catalog has no daemon, watcher, parent/sibling/home scan, remote
+service, or mutation surface. Linux users may separately opt into the local
+per-worktree daemon described above; it adds no TCP service or MCP mutation.
+Use `repowitness codex remove` to delete only the marked integration records.
+See the [catalog format](docs/schemas/mcp-catalog-v1.md),
+[ADR-0050](docs/adr/0050-opt-in-codex-catalog-onboarding.md), and
+[ADR-0056](docs/adr/0056-opt-in-local-catalog-daemon.md) for the complete
+boundary.
 
 The private-state catalog currently requires a Unix host. On Windows it fails
 closed until RepoWitness has an equivalent private-state ACL boundary; use the

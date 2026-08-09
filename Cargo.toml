@@ -40,7 +40,7 @@ serde_json = { version = "=1.0.151", default-features = false, features = ["std"
 serde_json_canonicalizer = { version = "=0.3.2" }
 sha2 = { version = "=0.11.0", default-features = false }
 toml = { version = "=1.1.4", default-features = false, features = ["parse", "serde", "std"] }
-tokio = { version = "=1.53.1", default-features = false, features = ["io-std", "io-util", "rt-multi-thread", "signal", "sync", "time"] }
+tokio = { version = "=1.53.1", default-features = false, features = ["io-std", "io-util", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tree-sitter = { version = "=0.26.11", default-features = false, features = ["std"] }
 tree-sitter-go = { version = "=0.25.0" }
 tree-sitter-python = { version = "=0.25.0" }

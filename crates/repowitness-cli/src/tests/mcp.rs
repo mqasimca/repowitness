@@ -160,7 +160,7 @@ fn mcp_catalog_startup_is_exclusive_and_read_only() {
     .expect("catalog startup is valid");
     assert!(matches!(
         invocation.target,
-        McpServeTarget::Catalog { state_dir: Some(path) } if path == state_dir
+        McpServeTarget::Catalog { state_dir: Some(path), daemon_proxy: false } if path == state_dir
     ));
     assert!(!invocation.memory_writes_enabled);
     assert!(!invocation.native_tasks_enabled);
@@ -184,6 +184,97 @@ fn mcp_catalog_startup_is_exclusive_and_read_only() {
             .is_err()
         );
     }
+}
+
+#[test]
+fn mcp_catalog_daemon_proxy_is_explicit_and_keeps_catalog_restrictions() {
+    let invocation = parse_mcp_serve_arguments(&[
+        OsString::from("--catalog"),
+        OsString::from("--daemon"),
+        OsString::from("--catalog-state-dir"),
+        OsString::from("/absolute/private-state"),
+    ])
+    .expect("explicit catalog daemon proxy is valid");
+    assert!(matches!(
+        invocation.target,
+        McpServeTarget::Catalog {
+            daemon_proxy: true,
+            ..
+        }
+    ));
+
+    for arguments in [
+        vec!["--daemon"],
+        vec!["--registry", "/registry.json", "--daemon"],
+        vec!["--root", "/repository", "--daemon"],
+        vec!["--catalog", "--daemon", "--daemon"],
+    ] {
+        assert!(
+            parse_mcp_serve_arguments(
+                &arguments
+                    .into_iter()
+                    .map(OsString::from)
+                    .collect::<Vec<_>>(),
+            )
+            .is_err()
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn daemon_requires_exact_catalog_mode_and_rejects_ambiguous_startup_flags() {
+    let directory = PathBuf::from("/absolute/private-state");
+    assert_eq!(
+        parse_daemon_arguments(&[
+            OsString::from("--catalog"),
+            OsString::from("--catalog-state-dir"),
+            directory.clone().into_os_string(),
+        ])
+        .expect("valid daemon invocation"),
+        Some(directory),
+    );
+    for arguments in [
+        vec!["--catalog", "--catalog"],
+        vec!["--catalog-state-dir", "/private-state"],
+        vec!["--catalog", "--unknown"],
+        vec!["--catalog", "--catalog-state-dir"],
+    ] {
+        assert!(
+            parse_daemon_arguments(
+                &arguments
+                    .into_iter()
+                    .map(OsString::from)
+                    .collect::<Vec<_>>(),
+            )
+            .is_err()
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn daemon_socket_refuses_to_replace_a_regular_file() {
+    let directory = std::env::temp_dir().join(format!(
+        "repowitness-daemon-socket-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time after epoch")
+            .as_nanos(),
+    ));
+    std::fs::create_dir(&directory).expect("temporary directory");
+    let socket = directory.join("daemon.sock");
+    std::fs::write(&socket, b"must-survive").expect("regular sentinel file");
+
+    assert!(bind_catalog_daemon_socket(&socket).is_err());
+    assert_eq!(
+        std::fs::read(&socket).expect("sentinel remains readable"),
+        b"must-survive"
+    );
+
+    std::fs::remove_file(&socket).expect("remove fixture sentinel");
+    std::fs::remove_dir(&directory).expect("remove fixture directory");
 }
 
 #[test]

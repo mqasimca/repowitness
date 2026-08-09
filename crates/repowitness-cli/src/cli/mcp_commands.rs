@@ -46,6 +46,7 @@ fn run_mcp_server_with_adapters(
         &arguments,
         &[
             "--catalog",
+            "--daemon",
             "--enable-memory-writes",
             "--enable-native-tasks",
             "--enable-personal-memory",
@@ -96,6 +97,11 @@ fn run_mcp_server_with_adapters(
             EXIT_SOFTWARE,
             "error: MCP catalog admission failed\n",
         ),
+        Err(McpLaunchError::DaemonUnavailable) => emit_error(
+            stderr,
+            EXIT_SOFTWARE,
+            "error: MCP catalog daemon is unavailable\n",
+        ),
         Err(McpLaunchError::Serve(error)) => {
             if writeln!(stderr, "error: {error}").is_ok() {
                 EXIT_SOFTWARE
@@ -142,6 +148,10 @@ trait McpServerLauncher {
 struct TokioMcpServerLauncher;
 
 impl McpServerLauncher for TokioMcpServerLauncher {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the process startup modes share one auditable capability and runtime boundary"
+    )]
     fn launch(
         &self,
         invocation: McpServeInvocation,
@@ -149,14 +159,14 @@ impl McpServerLauncher for TokioMcpServerLauncher {
         surface: McpToolSurface,
     ) -> Result<(), McpLaunchError> {
         let registry = match &invocation.target {
-            McpServeTarget::Single { .. } | McpServeTarget::Catalog { .. } => None,
+        McpServeTarget::Single { .. } | McpServeTarget::Catalog { .. } => None,
             McpServeTarget::Registry { path } => Some(
                 build_mcp_registry_services(path, &configuration)
                     .map_err(|_| McpLaunchError::Registry)?,
             ),
         };
         let catalog = match &invocation.target {
-            McpServeTarget::Catalog { state_dir } => Some(
+            McpServeTarget::Catalog { state_dir, daemon_proxy: false } => Some(
                 prepare_current_worktree_mcp_catalog(state_dir.as_deref(), &configuration)
                     .and_then(|catalog| {
                         let default_repository_identity = catalog.default_repository_identity;
@@ -165,28 +175,48 @@ impl McpServerLauncher for TokioMcpServerLauncher {
                     })
                     .map_err(|_| McpLaunchError::Catalog)?,
             ),
-            McpServeTarget::Single { .. } | McpServeTarget::Registry { .. } => None,
+            McpServeTarget::Catalog { daemon_proxy: true, .. }
+            | McpServeTarget::Single { .. }
+            | McpServeTarget::Registry { .. } => None,
+        };
+        let daemon_socket = match &invocation.target {
+            McpServeTarget::Catalog { state_dir, daemon_proxy: true } => {
+                Some(
+                    current_worktree_catalog_daemon_socket(state_dir.as_deref())
+                        .map_err(|_| McpLaunchError::DaemonUnavailable)?,
+                )
+            }
+            McpServeTarget::Catalog { daemon_proxy: false, .. }
+            | McpServeTarget::Single { .. }
+            | McpServeTarget::Registry { .. } => None,
         };
         let runtime = match tokio::runtime::Builder::new_multi_thread()
             .worker_threads(MCP_RUNTIME_WORKER_THREADS)
             .max_blocking_threads(MCP_RUNTIME_BLOCKING_THREADS)
-            .enable_time()
+            .enable_all()
             .build()
         {
             Ok(runtime) => runtime,
             Err(_) => return Err(McpLaunchError::RuntimeInitialization),
         };
-        let result = match (invocation.target, registry, catalog) {
+        match (invocation.target, registry, catalog) {
             (
-                McpServeTarget::Catalog { .. },
+                McpServeTarget::Catalog { daemon_proxy: false, .. },
                 None,
                 Some((catalog, default_repository_identity)),
             ) => runtime.block_on(serve_stdio_with_repository_catalog(
                 catalog,
                 default_repository_identity,
-            )),
+            ))
+            .map_err(McpLaunchError::Serve),
+            (McpServeTarget::Catalog { daemon_proxy: true, .. }, None, None) => {
+                runtime.block_on(proxy_catalog_daemon(
+                    daemon_socket.ok_or(McpLaunchError::DaemonUnavailable)?,
+                ))
+            }
             (McpServeTarget::Registry { .. }, Some(registry), None) => {
                 runtime.block_on(serve_stdio_with_repository_registry(registry))
+                    .map_err(McpLaunchError::Serve)
             }
             (
                 McpServeTarget::Single {
@@ -226,10 +256,10 @@ impl McpServerLauncher for TokioMcpServerLauncher {
                         .await
                     }
                 })
+                .map_err(McpLaunchError::Serve)
             }
-            _ => return Err(McpLaunchError::Registry),
-        };
-        result.map_err(McpLaunchError::Serve)
+            _ => Err(McpLaunchError::Registry),
+        }
     }
 }
 
@@ -237,6 +267,7 @@ enum McpLaunchError {
     RuntimeInitialization,
     Registry,
     Catalog,
+    DaemonUnavailable,
     Serve(repowitness_mcp::McpServeError),
 }
 
@@ -260,6 +291,7 @@ enum McpServeTarget {
     },
     Catalog {
         state_dir: Option<PathBuf>,
+        daemon_proxy: bool,
     },
 }
 
@@ -312,6 +344,7 @@ fn parse_mcp_serve_arguments(arguments: &[OsString]) -> Result<McpServeInvocatio
     let mut repository_identity = None;
     let mut registry = None;
     let mut catalog = false;
+    let mut daemon_proxy = false;
     let mut catalog_state_dir = None;
     let mut connected_workspace = None;
     let mut source_slot = None;
@@ -328,6 +361,14 @@ fn parse_mcp_serve_arguments(arguments: &[OsString]) -> Result<McpServeInvocatio
                 return Err("error: mcp-serve accepts --catalog only once\n");
             }
             catalog = true;
+            index += 1;
+            continue;
+        }
+        if option == OsStr::new("--daemon") {
+            if daemon_proxy {
+                return Err("error: mcp-serve accepts --daemon only once\n");
+            }
+            daemon_proxy = true;
             index += 1;
             continue;
         }
@@ -423,8 +464,12 @@ fn parse_mcp_serve_arguments(arguments: &[OsString]) -> Result<McpServeInvocatio
         }
         McpServeTarget::Catalog {
             state_dir: catalog_state_dir,
+            daemon_proxy,
         }
     } else if let Some(path) = registry {
+        if daemon_proxy {
+            return Err("error: --daemon requires --catalog\n");
+        }
         if catalog_state_dir.is_some() {
             return Err("error: --catalog-state-dir requires --catalog\n");
         }
@@ -444,6 +489,9 @@ fn parse_mcp_serve_arguments(arguments: &[OsString]) -> Result<McpServeInvocatio
         }
         McpServeTarget::Registry { path }
     } else {
+        if daemon_proxy {
+            return Err("error: --daemon requires --catalog\n");
+        }
         if catalog_state_dir.is_some() {
             return Err("error: --catalog-state-dir requires --catalog\n");
         }
@@ -486,6 +534,42 @@ fn parse_mcp_serve_arguments(arguments: &[OsString]) -> Result<McpServeInvocatio
         memory_actor,
         personal_memory_profile,
     })
+}
+
+#[cfg(unix)]
+async fn proxy_catalog_daemon(socket: PathBuf) -> Result<(), McpLaunchError> {
+    let stream = tokio::net::UnixStream::connect(socket)
+        .await
+        .map_err(|_| McpLaunchError::DaemonUnavailable)?;
+    let (mut daemon_read, mut daemon_write) = stream.into_split();
+    let mut client_read = tokio::io::stdin();
+    let mut client_write = tokio::io::stdout();
+    let client_to_daemon = async {
+        tokio::io::copy(&mut client_read, &mut daemon_write)
+            .await
+            .map_err(|_| McpLaunchError::DaemonUnavailable)?;
+        tokio::io::AsyncWriteExt::shutdown(&mut daemon_write)
+            .await
+            .map_err(|_| McpLaunchError::DaemonUnavailable)
+    };
+    let daemon_to_client = tokio::io::copy(&mut daemon_read, &mut client_write);
+    tokio::pin!(client_to_daemon);
+    tokio::pin!(daemon_to_client);
+    tokio::select! {
+        client_result = &mut client_to_daemon => {
+            client_result?;
+            daemon_to_client.await.map_err(|_| McpLaunchError::DaemonUnavailable)?;
+        }
+        daemon_result = &mut daemon_to_client => {
+            daemon_result.map_err(|_| McpLaunchError::DaemonUnavailable)?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+async fn proxy_catalog_daemon(_socket: PathBuf) -> Result<(), McpLaunchError> {
+    Err(McpLaunchError::DaemonUnavailable)
 }
 
 fn resolve_mcp_personal_memory_profile(
