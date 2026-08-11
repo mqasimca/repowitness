@@ -1,4 +1,5 @@
 use std::cell::{Cell, RefCell};
+use std::sync::{Arc, Barrier, Mutex};
 
 use repowitness_local::{ConfigurationPolicyOverrides, ConfigurationPreferenceOverrides};
 
@@ -275,6 +276,93 @@ fn daemon_socket_refuses_to_replace_a_regular_file() {
 
     std::fs::remove_file(&socket).expect("remove fixture sentinel");
     std::fs::remove_dir(&directory).expect("remove fixture directory");
+}
+
+#[cfg(unix)]
+#[test]
+fn catalog_mutation_lock_serializes_cross_thread_updates() {
+    let directory = std::fs::canonicalize(std::env::temp_dir())
+        .expect("canonicalize temporary directory")
+        .join(format!(
+            "repowitness-catalog-lock-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time after epoch")
+                .as_nanos(),
+        ));
+    std::fs::create_dir(&directory).expect("temporary lock directory");
+    let state_root = directory.join("state");
+    let order = Arc::new(Mutex::new(Vec::new()));
+    let first_locked = Arc::new(Barrier::new(2));
+    let second_started = Arc::new(Barrier::new(2));
+    let release_first = Arc::new(Barrier::new(2));
+
+    let first_order = Arc::clone(&order);
+    let first_locked_for_thread = Arc::clone(&first_locked);
+    let release_first_for_thread = Arc::clone(&release_first);
+    let first_state_root = state_root.clone();
+    let first = std::thread::spawn(move || {
+        with_catalog_mutation_lock(&first_state_root, None, || {
+            first_order.lock().expect("order mutex").push(1_u8);
+            first_locked_for_thread.wait();
+            release_first_for_thread.wait();
+            Ok(())
+        })
+    });
+    first_locked.wait();
+
+    let second_order = Arc::clone(&order);
+    let second_started_for_thread = Arc::clone(&second_started);
+    let second_state_root = state_root.clone();
+    let second = std::thread::spawn(move || {
+        second_started_for_thread.wait();
+        with_catalog_mutation_lock(&second_state_root, None, || {
+            second_order.lock().expect("order mutex").push(2_u8);
+            Ok(())
+        })
+    });
+    second_started.wait();
+    release_first.wait();
+
+    first
+        .join()
+        .expect("first lock holder should not panic")
+        .expect("first update");
+    second
+        .join()
+        .expect("second lock waiter should not panic")
+        .expect("second update");
+    assert_eq!(*order.lock().expect("order mutex"), vec![1, 2]);
+    std::fs::remove_dir_all(&directory).expect("remove temporary lock directory");
+}
+
+#[cfg(unix)]
+#[test]
+fn catalog_daemon_lock_allows_one_process_per_repository() {
+    let directory = std::fs::canonicalize(std::env::temp_dir())
+        .expect("canonicalize temporary directory")
+        .join(format!(
+            "repowitness-daemon-lock-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time after epoch")
+                .as_nanos(),
+        ));
+    std::fs::create_dir(&directory).expect("temporary daemon lock directory");
+    let state_root = directory.join("state");
+    let repository_id = "rwi1:h:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+
+    let first =
+        acquire_catalog_daemon_lock(Some(&state_root), repository_id).expect("first daemon lock");
+    assert!(acquire_catalog_daemon_lock(Some(&state_root), repository_id).is_err());
+    drop(first);
+    let released = acquire_catalog_daemon_lock(Some(&state_root), repository_id)
+        .expect("lock is released when the daemon exits");
+    drop(released);
+
+    std::fs::remove_dir_all(&directory).expect("remove temporary daemon lock directory");
 }
 
 #[test]

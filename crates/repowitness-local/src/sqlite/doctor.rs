@@ -12,7 +12,10 @@ use super::{
 };
 
 const DOCTOR_PROGRESS_INSTRUCTIONS: i32 = 1_000;
-const DOCTOR_SCHEMA_DEADLINE: Duration = Duration::from_millis(250);
+// Schema validation is read-only but may briefly contend with a busy WAL or
+// cold storage. Keep it bounded without making a valid database fail merely
+// because the whole workspace test/process set is active.
+const DOCTOR_SCHEMA_DEADLINE: Duration = Duration::from_secs(1);
 const MAX_MIGRATION_NAME_BYTES: i64 = 64;
 const MAX_MIGRATION_LEDGER_ROWS: i64 = SCHEMA_VERSION + 1;
 const REQUIRED_COMPILE_OPTION_COUNT: i64 = 2;

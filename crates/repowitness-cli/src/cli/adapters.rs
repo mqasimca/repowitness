@@ -32,6 +32,16 @@ trait RepositoryIndexer {
     ) -> Result<CliIndexReport, String> {
         self.index(invocation, configuration)
     }
+
+    fn reconcile_with_cancel(
+        &self,
+        invocation: &IndexInvocation,
+        configuration: &ResolvedConfiguration,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<CliIndexReport, String> {
+        let _ = cancelled;
+        self.reconcile(invocation, configuration)
+    }
 }
 
 struct LocalRepositoryIndexer;
@@ -70,6 +80,19 @@ impl RepositoryIndexer for LocalRepositoryIndexer {
         invocation: &IndexInvocation,
         configuration: &ResolvedConfiguration,
     ) -> Result<CliIndexReport, String> {
+        self.reconcile_with_cancel(
+            invocation,
+            configuration,
+            Arc::new(AtomicBool::new(false)),
+        )
+    }
+
+    fn reconcile_with_cancel(
+        &self,
+        invocation: &IndexInvocation,
+        configuration: &ResolvedConfiguration,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<CliIndexReport, String> {
         let repository_identity = invocation
             .repository_identity
             .to_str()
@@ -87,7 +110,7 @@ impl RepositoryIndexer for LocalRepositoryIndexer {
                 applied_at_unix_ms,
             )
             .with_configuration(configuration),
-            Arc::new(AtomicBool::new(false)),
+            cancelled,
         )
         .map(CliIndexReport::from)
         .map_err(|error| error.to_string())

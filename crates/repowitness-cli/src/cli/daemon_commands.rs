@@ -104,64 +104,122 @@ fn launch_catalog_daemon(
     if !cfg!(target_os = "linux") {
         return Err(DaemonLaunchError::Unavailable);
     }
-    let catalog = prepare_current_worktree_mcp_catalog(requested_state_root, &configuration)
-        .map_err(|_| DaemonLaunchError::Unavailable)?;
-    let default_repository = catalog.repositories.iter()
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(MCP_RUNTIME_WORKER_THREADS)
+        .max_blocking_threads(MCP_RUNTIME_BLOCKING_THREADS)
+        .enable_all()
+        .build()
+        .map_err(|_| DaemonLaunchError::Runtime)?;
+    let state_root = requested_state_root.map(Path::to_owned);
+    let result = runtime.block_on(run_catalog_daemon(state_root, configuration));
+    runtime.shutdown_timeout(Duration::from_millis(250));
+    result
+}
+
+#[cfg(unix)]
+async fn run_catalog_daemon(
+    requested_state_root: Option<PathBuf>,
+    configuration: ResolvedConfiguration,
+) -> Result<(), DaemonLaunchError> {
+    let startup_cancelled = Arc::new(AtomicBool::new(false));
+    let startup_state_root = requested_state_root.clone();
+    let startup_configuration = configuration.clone();
+    let startup_task_cancelled = Arc::clone(&startup_cancelled);
+    let mut startup_task = tokio::task::spawn_blocking(move || {
+        prepare_current_worktree_mcp_catalog_with_cancel(
+            startup_state_root.as_deref(),
+            &startup_configuration,
+            startup_task_cancelled,
+        )
+    });
+    let mut signal_task = tokio::spawn(first_shutdown_signal());
+    let catalog = tokio::select! {
+        signal_result = &mut signal_task => {
+            startup_cancelled.store(true, std::sync::atomic::Ordering::Release);
+            let _ = startup_task.await;
+            let _ = signal_result;
+            return Err(DaemonLaunchError::Runtime);
+        }
+        startup_result = &mut startup_task => startup_result
+            .map_err(|_| DaemonLaunchError::Runtime)?
+            .map_err(|_| DaemonLaunchError::Unavailable)?,
+    };
+    let default_repository = catalog
+        .repositories
+        .iter()
         .find(|repository| repository.repository_identity == catalog.default_repository_identity)
         .ok_or(DaemonLaunchError::Unavailable)?;
-    if !matches!(default_repository.graph_workspace, GraphWorkspaceContext::SingleRepository(_)) {
+    if !matches!(
+        default_repository.graph_workspace,
+        GraphWorkspaceContext::SingleRepository(_)
+    ) {
         return Err(DaemonLaunchError::Unavailable);
     }
     let root = default_repository.root.clone();
     let database = default_repository.database.clone();
     let repository_identity = default_repository.repository_identity.clone();
-    let socket = current_worktree_catalog_daemon_socket(requested_state_root)
+    let socket = current_worktree_catalog_daemon_socket(requested_state_root.as_deref())
         .map_err(|_| DaemonLaunchError::Unavailable)?;
-    let listener = bind_catalog_daemon_socket(&socket)?;
+    // Complete service construction before binding. The daemon lock then
+    // covers stale-socket replacement, listener lifetime, and cleanup.
     let services = build_mcp_repository_services(catalog.repositories, &configuration)
         .map_err(|_| DaemonLaunchError::Unavailable)?;
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(MCP_RUNTIME_WORKER_THREADS)
-        .max_blocking_threads(MCP_RUNTIME_BLOCKING_THREADS)
-        .enable_all().build().map_err(|_| DaemonLaunchError::Runtime)?;
+    let daemon_lock = acquire_catalog_daemon_lock(
+        requested_state_root.as_deref(),
+        &catalog.default_repository_identity,
+    )?;
+    let selected_state_root = match requested_state_root.as_deref() {
+        Some(path) => path.to_owned(),
+        None => default_onboard_state_root().map_err(|_| DaemonLaunchError::Unavailable)?,
+    };
+    let state_root = canonical_path_with_uncreated_suffix(&selected_state_root)
+        .map_err(|_| DaemonLaunchError::Unavailable)?;
+    prepare_catalog_daemon_socket_directory(&state_root)
+        .map_err(|_| DaemonLaunchError::Unavailable)?;
+    let listener = bind_catalog_daemon_socket(&socket)?;
+    let listener = match tokio::net::UnixListener::from_std(listener) {
+        Ok(listener) => listener,
+        Err(_) => {
+            remove_catalog_daemon_socket(&socket);
+            drop(daemon_lock);
+            return Err(DaemonLaunchError::Runtime);
+        }
+    };
     let default_repository_identity = catalog.default_repository_identity;
-    let result = runtime.block_on(async move {
-        let listener = tokio::net::UnixListener::from_std(listener)
-            .map_err(|_| DaemonLaunchError::Runtime)?;
-        let cancelled = Arc::new(AtomicBool::new(false));
-        let watch_cancelled = Arc::clone(&cancelled);
-        let watch_configuration = configuration.clone();
-        let watcher = tokio::task::spawn_blocking(move || {
-            let applied_at_unix_ms = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .ok()
-                .and_then(|elapsed| u64::try_from(elapsed.as_millis()).ok())
-                .ok_or(())?;
-            let index = LocalIndexRequest::new(
-                &root,
-                &database,
-                &repository_identity,
-                applied_at_unix_ms,
-            )
-            .with_configuration(&watch_configuration);
-            watch_local_repository(
-                LocalWatchRequest::new(index).with_native_event_hints(),
-                watch_cancelled,
-            )
-            .map(|_| ())
-            .map_err(|_| ())
-        });
-        run_catalog_daemon_listener(
-            listener,
-            services,
-            default_repository_identity,
-            cancelled,
-            watcher,
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let watch_cancelled = Arc::clone(&cancelled);
+    let watch_configuration = configuration.clone();
+    let watcher = tokio::task::spawn_blocking(move || {
+        let applied_at_unix_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .ok()
+            .and_then(|elapsed| u64::try_from(elapsed.as_millis()).ok())
+            .ok_or(())?;
+        let index = LocalIndexRequest::new(
+            &root,
+            &database,
+            &repository_identity,
+            applied_at_unix_ms,
         )
-        .await
+        .with_configuration(&watch_configuration);
+        watch_local_repository(
+            LocalWatchRequest::new(index).with_native_event_hints(),
+            watch_cancelled,
+        )
+        .map(|_| ())
+        .map_err(|_| ())
     });
-    runtime.shutdown_timeout(Duration::from_millis(250));
+    let result = run_catalog_daemon_listener(
+        listener,
+        services,
+        default_repository_identity,
+        cancelled,
+        watcher,
+        signal_task,
+    )
+    .await;
     remove_catalog_daemon_socket(&socket);
+    drop(daemon_lock);
     result
 }
 
@@ -171,7 +229,12 @@ fn bind_catalog_daemon_socket(
 ) -> Result<std::os::unix::net::UnixListener, DaemonLaunchError> {
     use std::os::unix::{fs::FileTypeExt, net::UnixStream};
     let parent = socket.parent().ok_or(DaemonLaunchError::Unavailable)?;
-    std::fs::create_dir_all(parent).map_err(|_| DaemonLaunchError::Unavailable)?;
+    if !std::fs::symlink_metadata(parent)
+        .map(|metadata| metadata.file_type().is_dir() && !metadata.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        return Err(DaemonLaunchError::Unavailable);
+    }
     if let Ok(metadata) = std::fs::symlink_metadata(socket) {
         if !metadata.file_type().is_socket() { return Err(DaemonLaunchError::Unavailable); }
         match UnixStream::connect(socket) {
@@ -182,8 +245,13 @@ fn bind_catalog_daemon_socket(
             Err(_) => return Err(DaemonLaunchError::Unavailable),
         }
     }
-    let listener = std::os::unix::net::UnixListener::bind(socket).map_err(|_| DaemonLaunchError::Unavailable)?;
-    listener.set_nonblocking(true).map_err(|_| DaemonLaunchError::Unavailable)?;
+    let listener = std::os::unix::net::UnixListener::bind(socket)
+        .map_err(|_| DaemonLaunchError::Unavailable)?;
+    if listener.set_nonblocking(true).is_err() {
+        drop(listener);
+        let _ = std::fs::remove_file(socket);
+        return Err(DaemonLaunchError::Unavailable);
+    }
     Ok(listener)
 }
 
@@ -202,19 +270,20 @@ async fn run_catalog_daemon_listener(
     default_repository_identity: String,
     cancelled: Arc<AtomicBool>,
     mut watcher: tokio::task::JoinHandle<Result<(), ()>>,
+    mut signal_task: tokio::task::JoinHandle<Result<(), WatchSignalError>>,
 ) -> Result<(), DaemonLaunchError> {
     let permits = Arc::new(tokio::sync::Semaphore::new(4));
-    let signal = first_shutdown_signal();
-    tokio::pin!(signal);
     loop {
         tokio::select! {
-            signal = &mut signal => {
-                if signal.is_err() { return Err(DaemonLaunchError::Runtime); }
+            signal_result = &mut signal_task => {
                 cancelled.store(true, std::sync::atomic::Ordering::Release);
-                return tokio::time::timeout(Duration::from_secs(5), &mut watcher).await
-                    .map_err(|_| DaemonLaunchError::Runtime)?
+                let watcher_result = watcher.await
                     .map_err(|_| DaemonLaunchError::Runtime)?
                     .map_err(|_| DaemonLaunchError::Runtime);
+                if !matches!(signal_result, Ok(Ok(()))) {
+                    return Err(DaemonLaunchError::Runtime);
+                }
+                return watcher_result;
             }
             watcher_result = &mut watcher => {
                 return watcher_result.map_err(|_| DaemonLaunchError::Runtime)?

@@ -871,6 +871,24 @@ fn mcp_catalog_rejects_a_non_worktree_before_transport_startup_without_path_disc
     assert!(!state_directory.exists());
 }
 
+#[cfg(unix)]
+#[test]
+fn mcp_catalog_rejects_state_inside_the_worktree_before_writing_private_state() {
+    let directory = TempDirectory::new();
+    let repository = fixture_repository(&directory);
+    let state_directory = repository.join("private-state");
+    let result = Command::new(env!("CARGO_BIN_EXE_repowitness"))
+        .current_dir(&repository)
+        .args(["mcp-serve", "--catalog", "--catalog-state-dir"])
+        .arg(&state_directory)
+        .output()
+        .expect("catalog startup should return");
+    assert_eq!(result.status.code(), Some(70));
+    assert!(result.stdout.is_empty());
+    assert_eq!(result.stderr, b"error: MCP catalog admission failed\n");
+    assert!(!state_directory.exists());
+}
+
 #[test]
 fn mcp_configuration_policy_fails_before_transport_startup() {
     let directory = TempDirectory::new();

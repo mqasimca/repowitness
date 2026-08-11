@@ -119,88 +119,221 @@ fn prepare_current_worktree_mcp_catalog(
     requested_state_root: Option<&Path>,
     configuration: &ResolvedConfiguration,
 ) -> Result<PreparedMcpRepositoryCatalog, ()> {
+    prepare_current_worktree_mcp_catalog_with_cancel(
+        requested_state_root,
+        configuration,
+        Arc::new(AtomicBool::new(false)),
+    )
+}
+
+fn prepare_current_worktree_mcp_catalog_with_cancel(
+    requested_state_root: Option<&Path>,
+    configuration: &ResolvedConfiguration,
+    cancelled: Arc<AtomicBool>,
+) -> Result<PreparedMcpRepositoryCatalog, ()> {
+    // Resolve the caller-owned worktree before opening or creating any
+    // catalog state. Invalid catalog invocations must remain mutation-free.
+    let current_root = resolve_current_worktree_root()?;
     let selected_state_root = match requested_state_root {
         Some(path) => path.to_owned(),
         None => default_onboard_state_root()?,
     };
     let state_root = canonical_path_with_uncreated_suffix(&selected_state_root)?;
-    let catalog_path = mcp_catalog_path(&state_root);
-    let current_root = resolve_current_worktree_root()?;
-    let connected_workspaces = read_codex_connected_workspaces(
-        &codex_connected_workspace_catalog_path(&state_root),
-        &state_root,
-    )?;
-    let matching_workspaces = connected_workspaces
-        .iter()
-        .filter(|workspace| {
-            workspace
-                .members
-                .iter()
-                .any(|member| member.root == current_root)
-        })
-        .collect::<Vec<_>>();
-    if matching_workspaces.len() > 1 {
-        return Err(());
-    }
-    if let Some(workspace) = matching_workspaces.first() {
-        return prepare_connected_workspace_mcp_catalog(
-            workspace,
+    // Authorize the entire requested state root before the lock helper opens
+    // or creates any private-state component. The later database-path check
+    // remains defense in depth for the repository-specific location.
+    ensure_outside_repository(&current_root, &state_root)?;
+    let lock_cancelled = Arc::clone(&cancelled);
+    let operation_state_root = state_root.clone();
+    with_catalog_mutation_lock(&state_root, Some(lock_cancelled.as_ref()), move || {
+        let catalog_path = mcp_catalog_path(&operation_state_root);
+        let connected_workspaces = read_codex_connected_workspaces(
+            &codex_connected_workspace_catalog_path(&operation_state_root),
+            &operation_state_root,
+        )?;
+        let matching_workspaces = connected_workspaces
+            .iter()
+            .filter(|workspace| {
+                workspace
+                    .members
+                    .iter()
+                    .any(|member| member.root == current_root)
+            })
+            .collect::<Vec<_>>();
+        if matching_workspaces.len() > 1 {
+            return Err(());
+        }
+        if let Some(workspace) = matching_workspaces.first() {
+            return prepare_connected_workspace_mcp_catalog(
+                workspace,
+                &current_root,
+                &operation_state_root,
+                configuration,
+                cancelled,
+            );
+        }
+        let mut repositories = read_catalog_repositories(&catalog_path, &operation_state_root)?;
+        let current_index = repositories
+            .iter()
+            .position(|repository| repository.root == current_root);
+        let default_repository_identity = match current_index {
+            Some(index) => repositories[index].repository_identity.clone(),
+            None => {
+                if repositories.len() >= repowitness_mcp::MAX_MCP_REGISTERED_REPOSITORIES {
+                    return Err(());
+                }
+                OsIdentityGenerator
+                    .generate(LocalIdentityKind::Repository)
+                    .map_err(|_| ())?
+            }
+        };
+
+        let prepared_database = PrivateOnboardStateDirectory.prepare_database(
             &current_root,
-            &state_root,
+            Some(&operation_state_root),
+            &default_repository_identity,
+        )?;
+        if let Some(index) = current_index
+            && repositories[index].database != prepared_database.database
+        {
+            return Err(());
+        }
+        LocalRepositoryIndexer.reconcile_with_cancel(
+            &IndexInvocation {
+                repository_root: current_root.clone(),
+                database: prepared_database.database.clone(),
+                repository_identity: OsString::from(&default_repository_identity),
+            },
             configuration,
-        );
-    }
-    let mut repositories = read_catalog_repositories(&catalog_path, &state_root)?;
-    let current_index = repositories
-        .iter()
-        .position(|repository| repository.root == current_root);
-    let default_repository_identity = match current_index {
-        Some(index) => repositories[index].repository_identity.clone(),
-        None => {
-            if repositories.len() >= repowitness_mcp::MAX_MCP_REGISTERED_REPOSITORIES {
+            Arc::clone(&cancelled),
+        )
+        .map_err(|_| ())?;
+
+        if cancelled.load(Ordering::Acquire) {
+            return Err(());
+        }
+
+        if current_index.is_none() {
+            repositories.push(RegisteredMcpRepository {
+                repository_identity: default_repository_identity.clone(),
+                root: current_root,
+                database: prepared_database.database,
+                graph_workspace: GraphWorkspaceContext::SingleRepository(
+                    default_repository_identity.clone(),
+                ),
+            });
+            write_catalog_repositories(&catalog_path, &repositories)?;
+        }
+        if cancelled.load(Ordering::Acquire) {
+            return Err(());
+        }
+        Ok(PreparedMcpRepositoryCatalog {
+            repositories,
+            default_repository_identity,
+        })
+    })
+}
+
+const CATALOG_MUTATION_LOCK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
+#[cfg(unix)]
+struct CatalogMutationLock {
+    file: rustix::fd::OwnedFd,
+}
+
+#[cfg(unix)]
+impl CatalogMutationLock {
+    fn acquire(
+        state_root: &Path,
+        name: &OsStr,
+        cancelled: Option<&AtomicBool>,
+        wait: bool,
+    ) -> Result<Self, ()> {
+        let state_root_directory = open_private_state_root(state_root)?;
+        let product = open_or_create_private_directory(
+            &state_root_directory,
+            OsStr::new(ONBOARD_STATE_PRODUCT_DIRECTORY),
+        )?;
+        let file = rustix::fs::openat(
+            &product,
+            name,
+            rustix::fs::OFlags::CREATE
+                | rustix::fs::OFlags::RDWR
+                | rustix::fs::OFlags::NOFOLLOW
+                | rustix::fs::OFlags::CLOEXEC,
+            rustix::fs::Mode::from_raw_mode(0o600),
+        )
+        .map_err(|_| ())?;
+        let deadline = std::time::Instant::now()
+            .checked_add(CATALOG_MUTATION_LOCK_TIMEOUT)
+            .ok_or(())?;
+        loop {
+            if cancelled.is_some_and(|flag| flag.load(Ordering::Acquire)) {
                 return Err(());
             }
-            OsIdentityGenerator
-                .generate(LocalIdentityKind::Repository)
-                .map_err(|_| ())?
+            match rustix::fs::flock(&file, rustix::fs::FlockOperation::NonBlockingLockExclusive) {
+                Ok(()) => return Ok(Self { file }),
+                Err(_) if !wait => return Err(()),
+                Err(error)
+                    if (error == rustix::io::Errno::AGAIN
+                        || error == rustix::io::Errno::WOULDBLOCK)
+                        && std::time::Instant::now() < deadline =>
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Err(_) => return Err(()),
+            }
         }
-    };
+    }
+}
 
-    let prepared_database = PrivateOnboardStateDirectory.prepare_database(
-        &current_root,
-        Some(&state_root),
-        &default_repository_identity,
-    )?;
-    if let Some(index) = current_index
-        && repositories[index].database != prepared_database.database
+#[cfg(unix)]
+impl Drop for CatalogMutationLock {
+    fn drop(&mut self) {
+        let _ = rustix::fs::flock(&self.file, rustix::fs::FlockOperation::Unlock);
+    }
+}
+
+fn with_catalog_mutation_lock<T>(
+    state_root: &Path,
+    cancelled: Option<&AtomicBool>,
+    operation: impl FnOnce() -> Result<T, ()>,
+) -> Result<T, ()> {
+    #[cfg(unix)]
     {
-        return Err(());
+        let _lock = CatalogMutationLock::acquire(
+            state_root,
+            OsStr::new(".catalog-v1.lock"),
+            cancelled,
+            true,
+        )?;
+        if cancelled.is_some_and(|flag| flag.load(Ordering::Acquire)) {
+            return Err(());
+        }
+        operation()
     }
-    LocalRepositoryIndexer.reconcile(
-        &IndexInvocation {
-            repository_root: current_root.clone(),
-            database: prepared_database.database.clone(),
-            repository_identity: OsString::from(&default_repository_identity),
-        },
-        configuration,
-    )
-    .map_err(|_| ())?;
+    #[cfg(not(unix))]
+    {
+        let _ = state_root;
+        operation()
+    }
+}
 
-    if current_index.is_none() {
-        repositories.push(RegisteredMcpRepository {
-            repository_identity: default_repository_identity.clone(),
-            root: current_root,
-            database: prepared_database.database,
-            graph_workspace: GraphWorkspaceContext::SingleRepository(
-                default_repository_identity.clone(),
-            ),
-        });
-        write_catalog_repositories(&catalog_path, &repositories)?;
-    }
-    Ok(PreparedMcpRepositoryCatalog {
-        repositories,
-        default_repository_identity,
-    })
+#[cfg(unix)]
+fn acquire_catalog_daemon_lock(
+    requested_state_root: Option<&Path>,
+    repository_identity: &str,
+) -> Result<CatalogMutationLock, DaemonLaunchError> {
+    let selected_state_root = match requested_state_root {
+        Some(path) => path.to_owned(),
+        None => default_onboard_state_root().map_err(|_| DaemonLaunchError::Unavailable)?,
+    };
+    let state_root = canonical_path_with_uncreated_suffix(&selected_state_root)
+        .map_err(|_| DaemonLaunchError::Unavailable)?;
+    let component = catalog_daemon_component(repository_identity);
+    let name = format!(".catalog-daemon-{component}.lock");
+    CatalogMutationLock::acquire(&state_root, OsStr::new(&name), None, false)
+        .map_err(|_| DaemonLaunchError::Unavailable)
 }
 
 /// Resolves the socket for an already admitted current-worktree daemon without
@@ -230,6 +363,25 @@ fn current_worktree_catalog_daemon_socket(
 /// The opaque ID remains in the catalog; the socket component is an internal
 /// SHA-256 truncation solely to stay under conservative Unix path limits.
 fn catalog_daemon_socket_path(state_root: &Path, repository_id: &str) -> PathBuf {
+    let component = catalog_daemon_component(repository_id);
+    state_root
+        .join(ONBOARD_STATE_PRODUCT_DIRECTORY)
+        .join("daemon-v1")
+        .join(format!("{component}.sock"))
+}
+
+#[cfg(unix)]
+fn prepare_catalog_daemon_socket_directory(state_root: &Path) -> Result<(), ()> {
+    let state_root_directory = open_private_state_root(state_root)?;
+    let product = open_or_create_private_directory(
+        &state_root_directory,
+        OsStr::new(ONBOARD_STATE_PRODUCT_DIRECTORY),
+    )?;
+    let _daemon = open_or_create_private_directory(&product, OsStr::new("daemon-v1"))?;
+    Ok(())
+}
+
+fn catalog_daemon_component(repository_id: &str) -> String {
     use sha2::{Digest, Sha256};
 
     let digest = Sha256::digest(repository_id.as_bytes());
@@ -238,10 +390,7 @@ fn catalog_daemon_socket_path(state_root: &Path, repository_id: &str) -> PathBuf
         use std::fmt::Write as _;
         let _ = write!(component, "{byte:02x}");
     }
-    state_root
-        .join(ONBOARD_STATE_PRODUCT_DIRECTORY)
-        .join("daemon-v1")
-        .join(format!("{component}.sock"))
+    component
 }
 
 fn mcp_catalog_path(state_root: &Path) -> PathBuf {
@@ -276,6 +425,7 @@ fn prepare_connected_workspace_mcp_catalog(
     current_root: &Path,
     state_root: &Path,
     configuration: &ResolvedConfiguration,
+    cancelled: Arc<AtomicBool>,
 ) -> Result<PreparedMcpRepositoryCatalog, ()> {
     let manifest_path = connected_workspace_manifest_path(
         state_root,
@@ -300,7 +450,10 @@ fn prepare_connected_workspace_mcp_catalog(
         configuration,
         applied_at_unix_ms,
     );
-    index_local_connected_workspace(request, Arc::new(AtomicBool::new(false))).map_err(|_| ())?;
+    index_local_connected_workspace(request, Arc::clone(&cancelled)).map_err(|_| ())?;
+    if cancelled.load(Ordering::Acquire) {
+        return Err(());
+    }
 
     let mut default_repository_identity = None;
     let mut repositories = Vec::with_capacity(workspace.members.len());
@@ -534,6 +687,10 @@ fn write_private_catalog_document(path: &Path, label: &str, encoded: &[u8]) -> R
         let _ = std::fs::remove_file(&temporary);
         return Err(());
     }
+    // The rename is the commit point. A directory-sync failure after it is a
+    // durability warning, not a failed mutation: callers must not report a
+    // catalog/workspace creation failure for state that is already visible.
+    let _ = std::fs::File::open(parent).and_then(|directory| directory.sync_all());
     Ok(())
 }
 
@@ -594,76 +751,88 @@ fn create_codex_connected_workspace(
         return Err(());
     }
     let state_root = codex_catalog_state_root(codex_home)?;
-    let catalog_path = codex_connected_workspace_catalog_path(&state_root);
-    let existing = read_codex_connected_workspaces(&catalog_path, &state_root)?;
-    if existing.iter().any(|workspace| workspace.name == name) {
-        return Err(());
-    }
-
-    let mut roots = std::collections::BTreeSet::new();
-    let mut members = Vec::with_capacity(requested_roots.len());
+    // Validate every requested worktree before the lock helper creates the
+    // state root. A Codex home inside any member repository must fail without
+    // leaving a lock file or private-state directory in that repository.
     for requested_root in requested_roots {
         let root = resolve_explicit_worktree_root(requested_root)?;
-        if !roots.insert(root.clone()) || LocalRepositoryPathInspector.inspect(&root).is_err() {
+        if LocalRepositoryPathInspector.inspect(&root).is_err() {
             return Err(());
         }
-        if existing
-            .iter()
-            .flat_map(|workspace| &workspace.members)
-            .any(|member| member.root == root)
-        {
+        ensure_outside_repository(&root, &state_root)?;
+    }
+    with_catalog_mutation_lock(&state_root, None, || {
+        let catalog_path = codex_connected_workspace_catalog_path(&state_root);
+        let existing = read_codex_connected_workspaces(&catalog_path, &state_root)?;
+        if existing.iter().any(|workspace| workspace.name == name) {
             return Err(());
         }
-        let repository_identity = OsIdentityGenerator
-            .generate(LocalIdentityKind::Repository)
-            .map_err(|_| ())?;
-        let source_slot_identity = OsIdentityGenerator
-            .generate(LocalIdentityKind::SourceSlot)
-            .map_err(|_| ())?;
-        members.push(RegisteredCodexConnectedWorkspaceMember {
-            repository_identity,
-            source_slot_identity,
-            root,
-        });
-    }
-    let workspace = RegisteredCodexConnectedWorkspace {
-        name: name.to_owned(),
-        connected_workspace_identity: OsIdentityGenerator
-            .generate(LocalIdentityKind::ConnectedWorkspace)
-            .map_err(|_| ())?,
-        members,
-    };
-    let workspace_directory = prepare_private_connected_workspace_directory(&state_root, &workspace)?;
-    let manifest_path = workspace_directory.join(CONNECTED_WORKSPACE_MANIFEST_FILE);
-    let manifest = render_connected_workspace_manifest(&workspace)?;
-    write_private_catalog_document(
-        &manifest_path,
-        CONNECTED_WORKSPACE_MANIFEST_FILE,
-        manifest.as_bytes(),
-    )?;
-    let (admitted_manifest, parent) = read_bounded_regular_file_with_parent(
-        &manifest_path,
-        repowitness_local::MAX_LOCAL_CONNECTED_WORKSPACE_MANIFEST_BYTES,
-    )
-    .map_err(|_| ())?;
-    if admitted_manifest.bytes() != manifest.as_bytes() {
-        return Err(());
-    }
-    let configuration = resolve_configuration(&[]).map_err(|_| ())?;
-    let database = workspace_directory.join(ONBOARD_DATABASE_FILE);
-    let request = LocalConnectedWorkspaceIndexRequest::new(
-        admitted_manifest.bytes(),
-        &parent,
-        &database,
-        &configuration,
-        unix_time_millis()?,
-    );
-    index_local_connected_workspace(request, Arc::new(AtomicBool::new(false))).map_err(|_| ())?;
 
-    let mut updated = existing;
-    updated.push(workspace);
-    write_codex_connected_workspaces(&catalog_path, &updated)?;
-    Ok(requested_roots.len())
+        let mut roots = std::collections::BTreeSet::new();
+        let mut members = Vec::with_capacity(requested_roots.len());
+        for requested_root in requested_roots {
+            let root = resolve_explicit_worktree_root(requested_root)?;
+            if !roots.insert(root.clone()) || LocalRepositoryPathInspector.inspect(&root).is_err() {
+                return Err(());
+            }
+            if existing
+                .iter()
+                .flat_map(|workspace| &workspace.members)
+                .any(|member| member.root == root)
+            {
+                return Err(());
+            }
+            let repository_identity = OsIdentityGenerator
+                .generate(LocalIdentityKind::Repository)
+                .map_err(|_| ())?;
+            let source_slot_identity = OsIdentityGenerator
+                .generate(LocalIdentityKind::SourceSlot)
+                .map_err(|_| ())?;
+            members.push(RegisteredCodexConnectedWorkspaceMember {
+                repository_identity,
+                source_slot_identity,
+                root,
+            });
+        }
+        let workspace = RegisteredCodexConnectedWorkspace {
+            name: name.to_owned(),
+            connected_workspace_identity: OsIdentityGenerator
+                .generate(LocalIdentityKind::ConnectedWorkspace)
+                .map_err(|_| ())?,
+            members,
+        };
+        let workspace_directory = prepare_private_connected_workspace_directory(&state_root, &workspace)?;
+        let manifest_path = workspace_directory.join(CONNECTED_WORKSPACE_MANIFEST_FILE);
+        let manifest = render_connected_workspace_manifest(&workspace)?;
+        write_private_catalog_document(
+            &manifest_path,
+            CONNECTED_WORKSPACE_MANIFEST_FILE,
+            manifest.as_bytes(),
+        )?;
+        let (admitted_manifest, parent) = read_bounded_regular_file_with_parent(
+            &manifest_path,
+            repowitness_local::MAX_LOCAL_CONNECTED_WORKSPACE_MANIFEST_BYTES,
+        )
+        .map_err(|_| ())?;
+        if admitted_manifest.bytes() != manifest.as_bytes() {
+            return Err(());
+        }
+        let configuration = resolve_configuration(&[]).map_err(|_| ())?;
+        let database = workspace_directory.join(ONBOARD_DATABASE_FILE);
+        let request = LocalConnectedWorkspaceIndexRequest::new(
+            admitted_manifest.bytes(),
+            &parent,
+            &database,
+            &configuration,
+            unix_time_millis()?,
+        );
+        index_local_connected_workspace(request, Arc::new(AtomicBool::new(false))).map_err(|_| ())?;
+
+        let mut updated = existing;
+        updated.push(workspace);
+        write_codex_connected_workspaces(&catalog_path, &updated)?;
+        Ok(requested_roots.len())
+    })
 }
 
 fn list_codex_connected_workspaces(
@@ -686,15 +855,17 @@ fn remove_codex_connected_workspace(codex_home: &Path, name: &str) -> Result<boo
         return Err(());
     }
     let state_root = codex_catalog_state_root(codex_home)?;
-    let catalog_path = codex_connected_workspace_catalog_path(&state_root);
-    let mut workspaces = read_codex_connected_workspaces(&catalog_path, &state_root)?;
-    let before = workspaces.len();
-    workspaces.retain(|workspace| workspace.name != name);
-    if workspaces.len() == before {
-        return Ok(false);
-    }
-    write_codex_connected_workspaces(&catalog_path, &workspaces)?;
-    Ok(true)
+    with_catalog_mutation_lock(&state_root, None, || {
+        let catalog_path = codex_connected_workspace_catalog_path(&state_root);
+        let mut workspaces = read_codex_connected_workspaces(&catalog_path, &state_root)?;
+        let before = workspaces.len();
+        workspaces.retain(|workspace| workspace.name != name);
+        if workspaces.len() == before {
+            return Ok(false);
+        }
+        write_codex_connected_workspaces(&catalog_path, &workspaces)?;
+        Ok(true)
+    })
 }
 
 fn codex_catalog_state_root(codex_home: &Path) -> Result<PathBuf, ()> {

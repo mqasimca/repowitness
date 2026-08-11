@@ -143,10 +143,12 @@ impl NativeEventHints {
             }
             if let Ok(entries) = fs::read_dir(directory) {
                 for entry in entries.flatten() {
+                    if directories.len() >= MAX_NATIVE_HINT_DIRECTORIES {
+                        break;
+                    }
                     if entry
                         .file_type()
                         .is_ok_and(|kind| kind.is_dir() && !kind.is_symlink())
-                        && directories.len() < MAX_NATIVE_HINT_DIRECTORIES
                     {
                         directories.push(entry.path());
                     }
@@ -172,12 +174,17 @@ impl NativeEventHints {
         let mut buffer = [MaybeUninit::uninit(); 4_096];
         let mut reader = inotify::Reader::new(&self.descriptor, &mut buffer);
         match reader.next() {
-            Ok(_event) => {
-                // Rebuild after each observed event so newly created
-                // directories can contribute future hints. The bounded
-                // watcher is still only an optimization; periodic complete
-                // reconciliation remains the correctness fallback.
-                if let Ok(replacement) = Self::new(&self.root) {
+            Ok(event) => {
+                // Rebuild only when a directory may have been created or
+                // moved into the tree. Re-scanning every file modification
+                // turns a bounded hint into repeated O(directory-count)
+                // work; periodic complete reconciliation remains the
+                // correctness fallback for missed watches.
+                if event
+                    .events()
+                    .intersects(inotify::ReadFlags::CREATE | inotify::ReadFlags::MOVED_TO)
+                    && let Ok(replacement) = Self::new(&self.root)
+                {
                     *self = replacement;
                 }
                 Some(RunnerObservation::Unsupported)
