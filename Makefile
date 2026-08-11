@@ -2,6 +2,8 @@ SHELL := /bin/sh
 
 CARGO ?= cargo
 CARGO_DENY_VERSION ?= 0.19.4
+INSTALL_DIR ?= $(HOME)/.local/bin
+INSTALL_PATH ?= $(INSTALL_DIR)/repowitness
 
 .DEFAULT_GOAL := help
 .NOTPARALLEL:
@@ -22,6 +24,7 @@ CARGO_DENY_VERSION ?= 0.19.4
 	fuzz-check \
 	grammars \
 	help \
+	install \
 	rustdoc \
 	test \
 	test-all \
@@ -46,6 +49,7 @@ help:
 		'  make test-sibling-repositories  Privately smoke-test sibling Git worktrees' \
 		'  make test-sqlite               Run the SQLite durability spike' \
 		'  make test-sqlite-benchmarks    Run manual SQLite probes in release mode' \
+		'  make install                   Build and atomically install the local CLI' \
 		'  make rustdoc                   Build warning-free API documentation' \
 		'  make deny                      Check advisories, licenses, bans, and sources' \
 		'  make docs                      Check Markdown files and local links' \
@@ -99,6 +103,17 @@ test-sqlite:
 test-sqlite-benchmarks:
 	$(CARGO) test -p repowitness-local --test sqlite_generation_spike \
 		--release --locked -- --ignored --nocapture
+
+install:
+	@set -eu; \
+	$(CARGO) build --release --locked -p repowitness-cli --bin repowitness; \
+	mkdir -p "$(INSTALL_DIR)"; \
+	temporary_path="$(INSTALL_PATH).tmp.$$$$"; \
+	trap 'rm -f "$$temporary_path"' EXIT HUP INT TERM; \
+	install -m 0755 target/release/repowitness "$$temporary_path"; \
+	mv -f "$$temporary_path" "$(INSTALL_PATH)"; \
+	trap - EXIT HUP INT TERM; \
+	printf '%s\n' "installed $(INSTALL_PATH)"
 
 rustdoc:
 	RUSTDOCFLAGS="-D warnings" $(CARGO) doc \

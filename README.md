@@ -40,15 +40,17 @@ place it on your `PATH`. Release archives are available for Linux x86_64, macOS
 arm64, and Windows x86_64.
 
 To build from source instead, install `rustup` and Git, clone this repository,
-then run the checked-in Rust 1.97.1 toolchain through Cargo:
+then run the checked-in Rust 1.97.1 toolchain through Cargo. The Make target
+builds the locked release binary and atomically installs it at
+`~/.local/bin/repowitness`:
 
 ```text
-cargo build --release --locked -p repowitness-cli --bin repowitness
-mkdir -p "$HOME/.local/bin"
-install -m 0755 target/release/repowitness "$HOME/.local/bin/repowitness"
+make install
 export PATH="$HOME/.local/bin:$PATH"
 repowitness --version
 ```
+
+Override `INSTALL_DIR` or `INSTALL_PATH` when installing to another location.
 
 Persist the `PATH` change in your shell profile if needed. On Windows, use
 `target\release\repowitness.exe` and the explicit single-repository or registry
