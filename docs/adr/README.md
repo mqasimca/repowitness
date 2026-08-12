@@ -102,6 +102,8 @@ passed, so maintainers accepted ADR-0018 and then ADR-0021.
 | [0056](0056-opt-in-local-catalog-daemon.md) | Offer an opt-in local catalog daemon | Proposed |
 | [0057](0057-unified-engineering-memory-profile.md) | Expose one engineering-memory profile | Accepted |
 | [0058](0058-internal-memory-trust-boundary.md) | Keep memory trust receipts internal and minimal | Accepted |
+| [0059](0059-fast-development-indexing-profile.md) | Use a fast source-only catalog refresh during development | Proposed |
+| [0060](0060-bounded-cross-repository-discovery.md) | Add bounded cross-repository FTI discovery over the local catalog | Proposed |
 
 Use [0000-template.md](0000-template.md) for a new decision.
 

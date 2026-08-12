@@ -38,24 +38,13 @@ fn run_symbol_search(
         Ok(configuration) => configuration,
         Err(_) => return emit_error(stderr, EXIT_SOFTWARE, "error: configuration resolution failed\n"),
     };
-    let request = match &invocation.workspace {
-        GraphWorkspaceContext::SingleRepository(repository_identity) => LocalSymbolSearchRequest::new(
-            &invocation.database,
-            repository_identity,
-            &invocation.name,
-            invocation.name_match,
-        ),
-        GraphWorkspaceContext::ConnectedWorkspace {
-            connected_workspace,
-            source_slot,
-        } => LocalSymbolSearchRequest::for_connected_workspace(
-            &invocation.database,
-            connected_workspace,
-            source_slot,
-            &invocation.name,
-            invocation.name_match,
-        ),
-    }
+    let GraphWorkspaceContext::SingleRepository(repository_identity) = &invocation.workspace;
+    let request = LocalSymbolSearchRequest::new(
+        &invocation.database,
+        repository_identity,
+        &invocation.name,
+        invocation.name_match,
+    )
     .with_filters(
         invocation.language,
         invocation.kind,
@@ -228,7 +217,7 @@ mod symbol_search_command_tests {
     use std::ffi::OsString;
 
     use super::{
-        CONFIGURATION_LAYER_ARGUMENTS, GraphWorkspaceContext, MAX_SYMBOL_SEARCH_ARGUMENTS,
+        CONFIGURATION_LAYER_ARGUMENTS, MAX_SYMBOL_SEARCH_ARGUMENTS,
         SymbolSearchNameMatch, parse_symbol_search_arguments,
     };
 
@@ -256,27 +245,4 @@ mod symbol_search_command_tests {
         ]).is_err());
     }
 
-    #[test]
-    fn parser_pins_one_connected_workspace_source_slot() {
-        let connected_workspace = format!("cwi1:h:{}", "02".repeat(32));
-        let source_slot = format!("ssi1:h:{}", "03".repeat(32));
-        let parsed = parse_symbol_search_arguments(&[
-            OsString::from("--connected-workspace-id"),
-            OsString::from(&connected_workspace),
-            OsString::from("--source-slot-id"),
-            OsString::from(&source_slot),
-            OsString::from("--database"),
-            OsString::from("index.sqlite3"),
-            OsString::from("--name"),
-            OsString::from("run"),
-        ])
-        .expect("connected source selector should parse");
-        assert!(matches!(
-            parsed.workspace,
-            GraphWorkspaceContext::ConnectedWorkspace {
-                connected_workspace: actual_workspace,
-                source_slot: actual_slot,
-            } if actual_workspace == connected_workspace && actual_slot == source_slot
-        ));
-    }
 }

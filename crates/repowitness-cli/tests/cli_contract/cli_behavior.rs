@@ -85,12 +85,10 @@ fn help_and_version_write_to_stdout_and_succeed() {
     assert!(help.status.success());
     assert!(help.stderr.is_empty());
     let help = String::from_utf8(help.stdout).expect("help must be UTF-8");
-    assert!(help.contains("index          Build"));
-    assert!(help.contains("--repository-id"));
-    assert!(help.contains("architecture-map --repository-id"));
-    assert!(help.contains("architecture-overview --repository-id"));
-    assert!(help.contains("test-markers --repository-id"));
-    assert!(help.contains("syntax-site-search --repository-id"));
+    assert!(help.contains("index, watch, gc, context-build"));
+    assert!(help.contains("mcp-serve --repository-id"));
+    assert!(!help.contains("catalog"));
+    assert!(!help.contains("scip"));
 
     let version = repowitness(&["--version"]);
     assert!(version.status.success());

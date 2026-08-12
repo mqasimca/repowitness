@@ -10,13 +10,9 @@ pub fn run(args: impl IntoIterator<Item = OsString>, stdout: impl Write, stderr:
     let command = arguments.next();
     let is_watch = command.as_deref() == Some(OsStr::new("watch"));
     let is_gc = command.as_deref() == Some(OsStr::new("gc"));
-    let is_daemon = command.as_deref() == Some(OsStr::new("daemon"));
     let arguments = program.into_iter().chain(command).chain(arguments);
     if is_watch {
         return run_watch(arguments, stdout, stderr);
-    }
-    if is_daemon {
-        return run_daemon(arguments, stdout, stderr);
     }
     if is_gc {
         return run_gc(arguments, stdout, stderr);
@@ -82,9 +78,6 @@ fn run_with_adapters(
             &PrivateOnboardStateDirectory,
         );
     }
-    if command == OsStr::new("codex") {
-        return run_codex(args, &mut stdout, &mut stderr);
-    }
     if command == OsStr::new("config") {
         return run_config(args, &mut stdout, &mut stderr, configuration_loader);
     }
@@ -102,9 +95,6 @@ fn run_with_adapters(
             indexer,
             configuration_loader,
         );
-    }
-    if command == OsStr::new("workspace") {
-        return run_workspace(args, &mut stdout, &mut stderr, configuration_loader);
     }
     if command == OsStr::new("context-build") {
         return run_context_build(
@@ -143,24 +133,6 @@ fn run_with_adapters(
             &LocalRepositoryGraphReader,
             configuration_loader,
         );
-    }
-    if command == OsStr::new("scip-evidence") {
-        return run_scip_evidence(args, &mut stdout, &mut stderr);
-    }
-    if command == OsStr::new("scip-relationship-trace") {
-        return run_scip_relationship_trace(args, &mut stdout, &mut stderr);
-    }
-    if command == OsStr::new("scip-symbol-resolve") {
-        return run_scip_symbol_resolve(args, &mut stdout, &mut stderr);
-    }
-    if command == OsStr::new("scip-import") {
-        return run_scip_import(args, &mut stdout, &mut stderr);
-    }
-    if command == OsStr::new("scip-rust-import") {
-        return run_scip_rust_import(args, &mut stdout, &mut stderr);
-    }
-    if command == OsStr::new("scip-go-import") {
-        return run_scip_go_import(args, &mut stdout, &mut stderr);
     }
     if command == OsStr::new("search") {
         return run_search(
@@ -203,18 +175,6 @@ fn run_with_adapters(
     }
     if command == OsStr::new("memory-manage") {
         return run_memory_manage(args, &mut stdout, &mut stderr, memory);
-    }
-    if command == OsStr::new("memory-history") {
-        return run_memory_history(args, &mut stdout, &mut stderr);
-    }
-    if command == OsStr::new("personal-memory") {
-        return run_personal_memory(args, &mut stdout, &mut stderr);
-    }
-    if command == OsStr::new("task-status") {
-        return run_task_status(args, &mut stdout, &mut stderr);
-    }
-    if command == OsStr::new("task") {
-        return run_task(args, &mut stdout, &mut stderr);
     }
 
     emit_error(

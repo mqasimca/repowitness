@@ -338,39 +338,23 @@ The MCP server contract is tested at three levels: wire DTO and bounded-line
 unit tests; in-process SDK initialization, schema, tool, semaphore,
 cancellation, and encoded-output tests; and an installed-binary stdio
 round-trip. The black-box test indexes a temporary five-language worktree,
-negotiates MCP `2025-11-25`, and lists exactly twenty-four read-only tools:
-`architecture_map`, `architecture_overview`, `repository_topology`, `code_graph_query`, `code_search`, `context_build`, `diagnostics`, `graph_architecture`,
+negotiates MCP `2025-11-25`, and lists exactly twenty fixed read-only tools in
+single-repository mode. Catalog mode adds the bounded FTI-only
+`cross_repository_search` tool:
+`architecture_map`, `architecture_overview`, `code_graph_query`, `code_search`, `context_build`, `diagnostics`, `graph_architecture`,
 `graph_evidence`, `graph_search`, `graph_status`, `graph_trace`,
-`impact_analyze`, `historical_memory`, `locate_relevant_paths`, `memory_recall`, `outbound_sites`, `scip_evidence`, `scip_relationship_trace`, `scip_symbol_resolve`, `symbol_get`, `symbol_search`, `syntax_site_search`, and `verify`. It inventories exact indexed paths before retrieving exact
+`impact_analyze`, `locate_relevant_paths`, `memory_recall`, `outbound_sites`, `repository_topology`, `symbol_get`, `symbol_search`, `syntax_site_search`, and `change_review`. It inventories exact indexed paths before retrieving exact
 declarations from every language, reads exact declaration-contained raw syntax
 observations without target resolution, searches exact raw targets without target resolution, exercises the finite `code_graph_query` envelope, builds exact UTF-8 source contexts through
 the evidence-balanced profile,
 round-trips Rust graph status/search/evidence/architecture/trace/impact,
 reindexes, and proves the old generation selector fails.
-Focused protocol tests cover context, memory, diagnostics, graph and SCIP schemas,
-contained SCIP import, read-only annotations, exact view/generation pinning,
-exact declaration-receipt-to-SCIP navigation, categorical evidence, bounded producer-row traversal, coverage,
+Focused protocol tests cover context, memory, diagnostics, graph schemas,
+read-only annotations, exact view/generation pinning, categorical evidence, bounded producer-row traversal, coverage,
 truncation, cancellation, backpressure, and
-encoded-output bounds.
-The proposed local multi-repository registry mode adds strict bounded
-control-file admission, exact opaque-selector schema, missing/unknown-selector
-non-invocation, two-service routing isolation, unchanged single-repository
-schemas, and installed-binary two-repository stdio coverage. Its fixtures must
-assert path-free diagnostics and must never record real local registry paths.
-The proposed Codex catalog mode additionally requires synthetic installed-binary
-first and repeat current-worktree admissions, complete-index-before-catalog
-publication, non-worktree failure before transport startup, default-selector
-isolation, and path-free outputs. Its install/remove tests must prove that only
-its exact marked global Codex configuration records change, an unmanaged
-same-name entry is preserved, and the SessionStart hook is non-mutating.
-The proposed explicit Codex connected-workspace catalog adds synthetic
-installed-binary create/list/remove coverage, bounded private manifest and
-catalog admission, complete atomic multi-source publish before MCP startup,
-default/current-member and explicit-other-member routing, source-slot/generation
-pinning for code search, relevant paths, and typed declaration search, and
-path-free responses. Private sibling-repository validation may report only
-aggregate outcomes and must run through the repository script; no source,
-path, identity, or measurement from that corpus belongs in fixtures or logs.
+encoded-output bounds. Catalog, registry, connected-workspace, SCIP-import,
+personal-memory, and durable-task modes are deferred and have no active CLI or
+MCP contract.
 Stdout is parsed only as JSON-RPC and shutdown must leave stderr empty. A
 durable ignored variant exercises the same index-to-exact-retrieval-and-context
 path against a configured real supported-language worktree:

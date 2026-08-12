@@ -11,19 +11,16 @@ The file is named `mcp-catalog-v1.json` below the private onboarding state
 directory, at `<user-state>/repowitness/mcp-catalog-v1.json`. The enclosing
 directory is created through the same private no-follow Unix capability path as
 `onboard`; unsupported private-ACL platforms fail closed. Direct catalog mode
-uses the normal onboarding user-state selection. The `repowitness codex install`
-command configures an explicit `<Codex-home>/repowitness-state` user-state root
-instead, so the one global integration does not depend on an ambient state-home
-layout. The catalog has a 64 KiB byte limit, must be a regular no-follow UTF-8
+uses the normal onboarding user-state selection, defaulting to
+`$XDG_STATE_HOME/repowitness` or `~/.local/state/repowitness` on Linux. The
+catalog has a 64 KiB byte limit, must be a regular no-follow UTF-8
 JSON file, and is loaded once before the MCP runtime starts.
 
-The startup process resolves only its own current directory to the containing
-Git worktree. It does not accept a root or database from MCP input, traverse
-siblings, scan parents after finding that root, scan a home directory, or load
-configured roots. It indexes that one root using the resolved process
-configuration. A new entry is written atomically only after complete index
-activation; index or catalog failure leaves the previous file and previous
-active generation readable.
+`onboard` is the catalog admission point. It indexes one explicit root and
+atomically adds that root and its private database to the catalog after
+successful activation. MCP startup only reads the catalog; it does not scan,
+index, or mutate repositories. It does not accept a root or database from MCP
+input, traverse siblings, scan parents, or load configured roots.
 
 The separately versioned connected-workspace catalog may be present beneath
 the same private state root. It is admitted only after this current-worktree
@@ -64,7 +61,12 @@ registry schema and behavior remain separate: all registry calls require an
 explicit selector and no static registry process gains a default.
 
 Catalog v1 has no reload, status/list API, manual edit guarantee, background
-watcher, daemon, root scan, remote catalog, general cross-repository query,
+watcher, daemon, root scan, remote catalog, semantic cross-repository query,
 compatibility aliases, mutation, tasks, or personal-memory surface. Explicit
 connected-workspace source-slot selection is available only through the
 separate private catalog and its bounded source-view-aware tool subset.
+
+Catalog mode additionally exposes `cross_repository_search`, a bounded
+SQLite-FTS5 literal search over the registered indexes. It returns per-repository
+generation and coverage receipts but makes no dependency, ownership, or
+relationship claim from matching text.

@@ -6,10 +6,8 @@ const REPOSITORY_ID: &str = concat!(
     "rwi1:h:",
     "ABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABAB"
 );
-const CONNECTED_WORKSPACE_ID: &str = concat!(
-    "cwi1:h:",
-    "1111111111111111111111111111111111111111111111111111111111111111"
-);
+const CONNECTED_WORKSPACE_ID: &str =
+    "cwi1:h:1111111111111111111111111111111111111111111111111111111111111111";
 const SOURCE_SLOT_ID: &str = concat!(
     "ssi1:h:",
     "2222222222222222222222222222222222222222222222222222222222222222"
@@ -54,41 +52,6 @@ impl RepositoryGraphReader for FakeGraphReader {
         self.operation.replace(Some(operation));
         Ok(status_output())
     }
-}
-
-#[test]
-fn graph_status_forwards_an_explicit_connected_workspace_source_slot() {
-    let reader = FakeGraphReader::new();
-    let arguments = [
-        "status",
-        "--connected-workspace-id",
-        CONNECTED_WORKSPACE_ID,
-        "--source-slot-id",
-        SOURCE_SLOT_ID,
-        "--database",
-        "../graph.db",
-    ]
-    .into_iter()
-    .map(OsString::from);
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-    let code = run_graph(
-        arguments,
-        &mut stdout,
-        &mut stderr,
-        &reader,
-        &LocalConfigurationLoader,
-    );
-
-    assert_eq!(code, EXIT_SUCCESS, "{}", String::from_utf8_lossy(&stderr));
-    assert!(stderr.is_empty());
-    assert!(matches!(
-        reader.workspace.borrow().as_ref(),
-        Some(GraphWorkspaceContext::ConnectedWorkspace {
-            connected_workspace,
-            source_slot,
-        }) if connected_workspace == CONNECTED_WORKSPACE_ID && source_slot == SOURCE_SLOT_ID
-    ));
 }
 
 fn status_output() -> GraphReadServiceOutput {

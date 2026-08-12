@@ -16,7 +16,7 @@ const ONBOARD_HELP: &str = concat!(
     "Usage:\n",
     "  repowitness onboard --root <path> [--state-dir <path>] [--repository-id <id>]\n\n",
     "The command never searches parent or sibling repositories, writes repository\n",
-    "configuration, or creates a root registry. If --repository-id is omitted, it\n",
+    "configuration. If --repository-id is omitted, it\n",
     "uses operating-system secure randomness. The database is stored under the\n",
     "documented private-state convention named by that opaque identity.\n",
 );
@@ -42,7 +42,15 @@ trait OnboardStateDirectory {
         state_dir: Option<&Path>,
         repository_identity: &str,
     ) -> Result<PreparedOnboardDatabase, ()>;
-
+    fn register_catalog(
+        &self,
+        _repository_root: &Path,
+        _state_dir: Option<&Path>,
+        _repository_identity: &str,
+        _database: &Path,
+    ) -> Result<(), ()> {
+        Ok(())
+    }
 }
 
 struct PrivateOnboardStateDirectory;
@@ -89,6 +97,21 @@ impl OnboardStateDirectory for PrivateOnboardStateDirectory {
                 database: repository_state.join(ONBOARD_DATABASE_FILE),
             })
         }
+    }
+
+    fn register_catalog(
+        &self,
+        repository_root: &Path,
+        state_dir: Option<&Path>,
+        repository_identity: &str,
+        database: &Path,
+    ) -> Result<(), ()> {
+        register_mcp_catalog_repository(
+            state_dir,
+            repository_identity,
+            repository_root,
+            database,
+        )
     }
 }
 
@@ -149,9 +172,11 @@ fn run_onboard(
             return emit_error(stderr, EXIT_SOFTWARE, "error: private onboarding state is unavailable\n");
         }
     };
+    let repository_root = invocation.root.clone();
+    let state_dir = invocation.state_dir.clone();
     let index_report = match indexer.index(
         &IndexInvocation {
-            repository_root: invocation.root,
+            repository_root,
             database: prepared_database.database.clone(),
             repository_identity: OsString::from(&repository_identity),
         },
@@ -160,6 +185,17 @@ fn run_onboard(
         Ok(report) => report,
         Err(_) => return emit_error(stderr, EXIT_SOFTWARE, "error: onboarding indexing failed\n"),
     };
+    if state_directory
+        .register_catalog(
+            &invocation.root,
+            state_dir.as_deref(),
+            &repository_identity,
+            &prepared_database.database,
+        )
+        .is_err()
+    {
+        return emit_error(stderr, EXIT_SOFTWARE, "error: onboarding catalog registration failed\n");
+    }
     emit_onboard_report(stdout, &repository_identity, index_report)
 }
 

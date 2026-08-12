@@ -59,8 +59,6 @@ pub enum McpToolProfile {
     Canonical,
     /// The smallest read-only discovery surface.
     Minimal,
-    /// A separately tested bounded incumbent-compatibility surface.
-    IncumbentCompatible,
 }
 
 impl McpToolProfile {
@@ -70,7 +68,6 @@ impl McpToolProfile {
         match self {
             Self::Canonical => "canonical",
             Self::Minimal => "minimal",
-            Self::IncumbentCompatible => "incumbent-compatible",
         }
     }
 }

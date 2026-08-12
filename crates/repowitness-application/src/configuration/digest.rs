@@ -78,7 +78,6 @@ const fn tool_profile_tag(profile: McpToolProfile) -> u8 {
     match profile {
         McpToolProfile::Canonical => 1,
         McpToolProfile::Minimal => 2,
-        McpToolProfile::IncumbentCompatible => 3,
     }
 }
 
@@ -99,7 +98,6 @@ fn tool_profile_mask(profiles: &std::collections::BTreeSet<McpToolProfile>) -> u
         mask | match profile {
             McpToolProfile::Canonical => 1 << 0,
             McpToolProfile::Minimal => 1 << 1,
-            McpToolProfile::IncumbentCompatible => 1 << 2,
         }
     })
 }

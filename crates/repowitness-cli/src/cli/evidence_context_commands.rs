@@ -6,9 +6,6 @@ fn run_evidence_balanced_context_build(
 ) -> u8 {
     let ContextBuildInvocation {
         invocation,
-        workspace,
-        scip_symbol,
-        ..
     } = invocation;
     let repository_identity = match invocation.repository_identity.to_str() {
         Some(value) => value,
@@ -30,26 +27,12 @@ fn run_evidence_balanced_context_build(
             );
         }
     };
-    let request = match workspace.as_ref() {
-        Some((connected_workspace, source_slot)) => LocalEvidenceContextBuildRequest::for_connected_workspace(
-            &invocation.root,
-            &invocation.database,
-            repository_identity,
-            connected_workspace,
-            source_slot,
-            intent,
-        ),
-        None => LocalEvidenceContextBuildRequest::new(
-            &invocation.root,
-            &invocation.database,
-            repository_identity,
-            intent,
-        ),
-    };
-    let request = match scip_symbol.as_deref() {
-        Some(scip_symbol) => request.with_scip_symbol(scip_symbol),
-        None => request,
-    };
+    let request = LocalEvidenceContextBuildRequest::new(
+        &invocation.root,
+        &invocation.database,
+        repository_identity,
+        intent,
+    );
     let request = match request.with_budget_units(invocation.budget_units) {
         Ok(request) => request,
         Err(_) => {

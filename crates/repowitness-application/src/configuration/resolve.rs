@@ -287,12 +287,7 @@ impl PolicyAccumulator {
                 SUPPORTED_CONFIGURATION_LANGUAGES.into_iter().collect(),
             ),
             allowed_mcp_tool_profiles: PolicyAccumulatorValue::built_in(
-                [
-                    McpToolProfile::Canonical,
-                    McpToolProfile::IncumbentCompatible,
-                ]
-                .into_iter()
-                .collect(),
+                [McpToolProfile::Canonical].into_iter().collect(),
             ),
             max_source_file_bytes: PolicyAccumulatorValue::built_in(
                 MAX_CONFIGURATION_SOURCE_FILE_BYTES,

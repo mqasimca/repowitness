@@ -7,6 +7,7 @@ pub struct LocalIndexRequest<'a> {
     migration_applied_at_unix_ms: u64,
     limits: LocalRustIndexLimits,
     configuration: Option<&'a ResolvedConfiguration>,
+    build_graph: bool,
 }
 
 impl fmt::Debug for LocalIndexRequest<'_> {
@@ -25,6 +26,7 @@ impl fmt::Debug for LocalIndexRequest<'_> {
                 "configuration_digest",
                 &self.configuration.map(ResolvedConfiguration::digest),
             )
+            .field("build_graph", &self.build_graph)
             .finish()
     }
 }
@@ -45,6 +47,7 @@ impl<'a> LocalIndexRequest<'a> {
             migration_applied_at_unix_ms,
             limits: LocalRustIndexLimits::default(),
             configuration: None,
+            build_graph: true,
         }
     }
 
@@ -60,6 +63,18 @@ impl<'a> LocalIndexRequest<'a> {
     pub const fn with_configuration(mut self, configuration: &'a ResolvedConfiguration) -> Self {
         self.configuration = Some(configuration);
         self
+    }
+
+    /// Skips the optional Rust graph projection while retaining atomic source
+    /// facts, raw syntax sites, and repository topology.
+    #[must_use]
+    pub const fn without_graph(mut self) -> Self {
+        self.build_graph = false;
+        self
+    }
+
+    pub(crate) const fn build_graph(self) -> bool {
+        self.build_graph
     }
 }
 

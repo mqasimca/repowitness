@@ -103,7 +103,10 @@ const STARTUP_PROGRESS_INSTRUCTIONS: i32 = 1_000;
 
 /// Opens, configures, migrates, and validates the one writer-owned connection.
 #[cfg(test)]
-fn open_index_writer(path: &Path, applied_at_unix_ms: u64) -> Result<Connection, SqliteStoreError> {
+pub(crate) fn open_index_writer(
+    path: &Path,
+    applied_at_unix_ms: u64,
+) -> Result<Connection, SqliteStoreError> {
     let expected_identity = database_file_identity(path)?;
     open_index_writer_with_identity(path, expected_identity, applied_at_unix_ms)
 }

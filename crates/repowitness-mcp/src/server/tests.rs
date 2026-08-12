@@ -6,13 +6,7 @@ use std::{
     },
 };
 
-use rmcp::{
-    ServiceExt,
-    model::{
-        CallToolRequest, CallToolRequestParams, ClientRequest, GetTaskParams, GetTaskPayloadParams,
-        GetTaskPayloadRequest, GetTaskRequest, ServerResult, TaskMetadata,
-    },
-};
+use rmcp::{ServiceExt, model::CallToolRequestParams};
 
 use super::*;
 use crate::{
@@ -20,7 +14,7 @@ use crate::{
     McpMemoryProducer, McpMemoryTarget, McpSearchMatch, McpSpan, McpSymbol,
     MemoryManageDatabaseIdentityStatus, MemoryManageMaintenanceStatus,
     MemoryManageMaintenanceStepStatus, MemoryManageOperation, MemoryRecallServiceSelection,
-    PersonalMemoryOperation, RepositoryTopologyOutput, SymbolSelectorOutput,
+    RepositoryTopologyOutput, SymbolSelectorOutput,
 };
 
 mod fixtures;
@@ -51,9 +45,8 @@ struct FakeService {
     context_calls: AtomicUsize,
     diagnostics_calls: AtomicUsize,
     graph_calls: AtomicUsize,
-    scip_calls: AtomicUsize,
-    scip_relationship_trace_calls: AtomicUsize,
     invalid_diagnostics: AtomicBool,
+    search_truncated: AtomicBool,
     manage_calls: AtomicUsize,
     memory_calls: AtomicUsize,
     symbol_calls: AtomicUsize,
@@ -63,8 +56,6 @@ struct FakeService {
     context_request: Mutex<Option<(String, u64, u16)>>,
     memory_request: Mutex<Option<(bool, u16)>>,
     manage_request: Mutex<Option<MemoryManageOperation>>,
-    native_tasks: Mutex<BTreeMap<String, NativeTaskStatus>>,
-    next_native_task: AtomicUsize,
 }
 
 struct ConcurrencyService {
@@ -129,9 +120,8 @@ impl FakeService {
             context_calls: AtomicUsize::new(0),
             diagnostics_calls: AtomicUsize::new(0),
             graph_calls: AtomicUsize::new(0),
-            scip_calls: AtomicUsize::new(0),
-            scip_relationship_trace_calls: AtomicUsize::new(0),
             invalid_diagnostics: AtomicBool::new(false),
+            search_truncated: AtomicBool::new(false),
             manage_calls: AtomicUsize::new(0),
             memory_calls: AtomicUsize::new(0),
             symbol_calls: AtomicUsize::new(0),
@@ -141,79 +131,11 @@ impl FakeService {
             context_request: Mutex::new(None),
             memory_request: Mutex::new(None),
             manage_request: Mutex::new(None),
-            native_tasks: Mutex::new(BTreeMap::new()),
-            next_native_task: AtomicUsize::new(1),
         }
     }
 }
 
 impl RepositoryService for FakeService {
-    fn native_task_start(
-        &self,
-        _objective: &str,
-        _cancelled: Arc<AtomicBool>,
-    ) -> Result<NativeTaskStatus, RepositoryServiceError> {
-        let task_id = format!(
-            "{:032x}",
-            self.next_native_task.fetch_add(1, Ordering::Relaxed)
-        );
-        let status = NativeTaskStatus::new(task_id.clone(), NativeTaskState::Working, 1, 0);
-        self.native_tasks
-            .lock()
-            .expect("lock")
-            .insert(task_id, status.clone());
-        Ok(status)
-    }
-
-    fn native_task_transition(
-        &self,
-        task_id: &str,
-        state: NativeTaskState,
-        _cancelled: Arc<AtomicBool>,
-    ) -> Result<NativeTaskStatus, RepositoryServiceError> {
-        let mut tasks = self.native_tasks.lock().expect("lock");
-        let previous = tasks
-            .get(task_id)
-            .ok_or(RepositoryServiceError::NativeTask)?;
-        let status = NativeTaskStatus::new(
-            task_id.to_owned(),
-            state,
-            previous.checkpoint_sequence() + 1,
-            previous.verification_count(),
-        );
-        tasks.insert(task_id.to_owned(), status.clone());
-        Ok(status)
-    }
-
-    fn native_task_status(
-        &self,
-        task_id: &str,
-        _cancelled: Arc<AtomicBool>,
-    ) -> Result<Option<NativeTaskStatus>, RepositoryServiceError> {
-        Ok(self
-            .native_tasks
-            .lock()
-            .expect("lock")
-            .get(task_id)
-            .cloned())
-    }
-
-    fn native_task_list(
-        &self,
-        limit: u16,
-        _cancelled: Arc<AtomicBool>,
-    ) -> Result<Box<[NativeTaskStatus]>, RepositoryServiceError> {
-        Ok(self
-            .native_tasks
-            .lock()
-            .expect("lock")
-            .values()
-            .take(usize::from(limit))
-            .cloned()
-            .collect::<Vec<_>>()
-            .into_boxed_slice())
-    }
-
     fn code_search(
         &self,
         request: CodeSearchServiceRequest,
@@ -224,7 +146,11 @@ impl RepositoryService for FakeService {
             .lock()
             .expect("lock")
             .replace((request.query().to_owned(), request.max_results()));
-        Ok(search_output())
+        let mut output = search_output();
+        if self.search_truncated.load(Ordering::Relaxed) {
+            output.coverage.truncated = 1;
+        }
+        Ok(output)
     }
 
     fn relevant_paths(
@@ -401,33 +327,6 @@ impl RepositoryService for FakeService {
         Ok(graph_output(request))
     }
 
-    fn scip_evidence(
-        &self,
-        request: ScipEvidenceServiceRequest,
-        _cancelled: Arc<AtomicBool>,
-    ) -> Result<ScipEvidenceOutput, RepositoryServiceError> {
-        self.scip_calls.fetch_add(1, Ordering::Relaxed);
-        assert_eq!(request.symbol().as_str(), "scip-rust pkg 1 Symbol.");
-        Ok(scip_evidence_output())
-    }
-
-    fn scip_relationship_trace(
-        &self,
-        request: ScipRelationshipTraceServiceRequest,
-        _cancelled: Arc<AtomicBool>,
-    ) -> Result<ScipRelationshipTraceOutput, RepositoryServiceError> {
-        self.scip_relationship_trace_calls
-            .fetch_add(1, Ordering::Relaxed);
-        assert_eq!(request.symbol().as_str(), "scip-rust pkg 1 Symbol.");
-        assert!(matches!(
-            request.direction(),
-            repowitness_application::ScipRelationshipTraceDirection::Outgoing
-        ));
-        assert_eq!(request.max_depth().get(), 2);
-        assert_eq!(request.max_edges().get(), 8);
-        Ok(scip_relationship_trace_output())
-    }
-
     fn memory_recall(
         &self,
         request: MemoryRecallServiceRequest,
@@ -461,28 +360,10 @@ impl RepositoryService for FakeService {
             confirmed_memory_maintenance(),
         ))
     }
-
-    fn personal_memory(
-        &self,
-        request: PersonalMemoryServiceRequest,
-        _cancelled: Arc<AtomicBool>,
-    ) -> Result<PersonalMemoryOutput, RepositoryServiceError> {
-        assert!(matches!(
-            request,
-            PersonalMemoryServiceRequest::Read { max_results: 1, .. }
-        ));
-        Ok(PersonalMemoryOutput {
-            schema_version: 1,
-            scope: "personal".to_owned(),
-            operation: PersonalMemoryOperation::Read,
-            records: Vec::new(),
-        })
-    }
 }
 
 mod adversarial;
 mod cancellation;
-mod compatibility;
 mod graph;
 mod memory_manage;
 mod mutation_timeout;
@@ -605,191 +486,6 @@ fn tool_contract_is_exact_sorted_versioned_and_read_only() {
     );
 }
 
-#[tokio::test]
-#[allow(
-    clippy::too_many_lines,
-    reason = "one transport-level isolation fixture keeps selector-schema, non-invocation, single-surface, and exact-routing assertions auditable together"
-)]
-async fn registry_mode_requires_an_explicit_selector_and_routes_only_to_its_service() {
-    let first_id = "rwi1:h:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-    let second_id = "rwi1:h:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
-    let first = Arc::new(FakeService::new());
-    let second = Arc::new(FakeService::new());
-    let server = RepoWitnessMcpServer::with_repository_registry(BTreeMap::from([
-        (
-            first_id.to_owned(),
-            first.clone() as Arc<dyn RepositoryService>,
-        ),
-        (
-            second_id.to_owned(),
-            second.clone() as Arc<dyn RepositoryService>,
-        ),
-    ]))
-    .expect("non-empty bounded registry");
-    assert_eq!(server.tools.len(), 24);
-    assert!(
-        server
-            .tools
-            .iter()
-            .all(|tool| tool.name.as_ref() != MEMORY_MANAGE_TOOL_NAME)
-    );
-    let code_search = server
-        .tools
-        .iter()
-        .find(|tool| tool.name.as_ref() == CODE_SEARCH_TOOL_NAME)
-        .expect("code-search tool");
-    let properties = code_search
-        .input_schema
-        .get("properties")
-        .and_then(serde_json::Value::as_object)
-        .expect("object properties");
-    assert_eq!(
-        properties
-            .get("repository_id")
-            .and_then(|value| value.get("enum")),
-        Some(&serde_json::json!([first_id, second_id]))
-    );
-    assert!(
-        code_search
-            .input_schema
-            .get("required")
-            .and_then(serde_json::Value::as_array)
-            .is_some_and(|required| required.contains(&serde_json::json!("repository_id")))
-    );
-    let single_repository_server = RepoWitnessMcpServer::new(first.clone());
-    let single_code_search = single_repository_server
-        .tools
-        .iter()
-        .find(|tool| tool.name.as_ref() == CODE_SEARCH_TOOL_NAME)
-        .expect("single-repository code-search tool");
-    assert!(
-        single_code_search
-            .input_schema
-            .get("properties")
-            .and_then(serde_json::Value::as_object)
-            .is_some_and(|properties| !properties.contains_key("repository_id"))
-    );
-
-    let (server_transport, client_transport) = tokio::io::duplex(32 * 1024);
-    let server_task = tokio::spawn(async move {
-        server
-            .serve(server_transport)
-            .await
-            .expect("server starts")
-            .waiting()
-            .await
-            .expect("server stops")
-    });
-    let client = ().serve(client_transport).await.expect("client starts");
-    for arguments in [
-        serde_json::json!({"query": "run"}),
-        serde_json::json!({"query": "run", "repository_id": "unknown"}),
-        serde_json::json!({"query": "run", "repository_id": 7}),
-    ] {
-        client
-            .call_tool(
-                CallToolRequestParams::new(CODE_SEARCH_TOOL_NAME)
-                    .with_arguments(json_object(arguments)),
-            )
-            .await
-            .expect_err("invalid registry selection must be a protocol error");
-    }
-    assert_eq!(first.search_calls.load(Ordering::Relaxed), 0);
-    assert_eq!(second.search_calls.load(Ordering::Relaxed), 0);
-
-    for (repository_id, expected_first_calls, expected_second_calls) in
-        [(first_id, 1, 0), (second_id, 1, 1)]
-    {
-        let response = client
-            .call_tool(
-                CallToolRequestParams::new(CODE_SEARCH_TOOL_NAME).with_arguments(json_object(
-                    serde_json::json!({"query": "run", "repository_id": repository_id}),
-                )),
-            )
-            .await
-            .expect("registered service call succeeds");
-        assert_eq!(response.is_error, Some(false));
-        assert_eq!(
-            first.search_calls.load(Ordering::Relaxed),
-            expected_first_calls
-        );
-        assert_eq!(
-            second.search_calls.load(Ordering::Relaxed),
-            expected_second_calls
-        );
-    }
-
-    client.cancel().await.expect("client closes");
-    server_task.await.expect("server task");
-}
-
-#[tokio::test]
-async fn catalog_mode_defaults_only_to_its_process_fixed_repository() {
-    let first_id = "rwi1:h:CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC";
-    let second_id = "rwi1:h:DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD";
-    let first = Arc::new(FakeService::new());
-    let second = Arc::new(FakeService::new());
-    let server = RepoWitnessMcpServer::with_repository_catalog(
-        BTreeMap::from([
-            (
-                first_id.to_owned(),
-                first.clone() as Arc<dyn RepositoryService>,
-            ),
-            (
-                second_id.to_owned(),
-                second.clone() as Arc<dyn RepositoryService>,
-            ),
-        ]),
-        first_id.to_owned(),
-    )
-    .expect("catalog default names an admitted service");
-    let code_search = server
-        .tools
-        .iter()
-        .find(|tool| tool.name.as_ref() == CODE_SEARCH_TOOL_NAME)
-        .expect("code-search tool");
-    assert!(
-        code_search
-            .input_schema
-            .get("required")
-            .and_then(serde_json::Value::as_array)
-            .is_some_and(|required| !required.contains(&serde_json::json!("repository_id")))
-    );
-
-    let (server_transport, client_transport) = tokio::io::duplex(32 * 1024);
-    let server_task = tokio::spawn(async move {
-        server
-            .serve(server_transport)
-            .await
-            .expect("server starts")
-            .waiting()
-            .await
-            .expect("server stops")
-    });
-    let client = ().serve(client_transport).await.expect("client starts");
-    client
-        .call_tool(
-            CallToolRequestParams::new(CODE_SEARCH_TOOL_NAME)
-                .with_arguments(json_object(serde_json::json!({"query": "run"}))),
-        )
-        .await
-        .expect("default catalog call succeeds");
-    assert_eq!(first.search_calls.load(Ordering::Relaxed), 1);
-    assert_eq!(second.search_calls.load(Ordering::Relaxed), 0);
-    client
-        .call_tool(
-            CallToolRequestParams::new(CODE_SEARCH_TOOL_NAME).with_arguments(json_object(
-                serde_json::json!({"query": "run", "repository_id": second_id}),
-            )),
-        )
-        .await
-        .expect("explicit catalog call succeeds");
-    assert_eq!(first.search_calls.load(Ordering::Relaxed), 1);
-    assert_eq!(second.search_calls.load(Ordering::Relaxed), 1);
-    client.cancel().await.expect("client closes");
-    server_task.await.expect("server task");
-}
-
 #[test]
 fn encoded_call_tool_result_is_checked_against_the_output_budget() {
     let result = operation_result(Ok(search_output()), 32).expect("serialization succeeds");
@@ -798,57 +494,6 @@ fn encoded_call_tool_result_is_checked_against_the_output_budget() {
         result.content[0].as_text().expect("text error").text,
         "tool output exceeded its byte limit"
     );
-}
-
-#[tokio::test]
-async fn personal_memory_is_absent_by_default_and_requires_explicit_server_capability() {
-    let default = RepoWitnessMcpServer::new(Arc::new(FakeService::new()));
-    assert!(
-        default
-            .tools
-            .iter()
-            .all(|tool| tool.name.as_ref() != PERSONAL_MEMORY_TOOL_NAME)
-    );
-    let (server_transport, client_transport) = tokio::io::duplex(8 * 1024);
-    let server = RepoWitnessMcpServer::with_surface_and_personal_memory(
-        Arc::new(FakeService::new()),
-        McpToolSurface::NativeV1,
-    );
-    let server_task = tokio::spawn(async move {
-        server
-            .serve(server_transport)
-            .await
-            .expect("server starts")
-            .waiting()
-            .await
-            .expect("server stops")
-    });
-    let client = ().serve(client_transport).await.expect("client starts");
-    let tools = client.list_all_tools().await.expect("tools list");
-    assert!(
-        tools
-            .iter()
-            .any(|tool| tool.name.as_ref() == PERSONAL_MEMORY_TOOL_NAME)
-    );
-    let response = client
-        .call_tool(
-            CallToolRequestParams::new(PERSONAL_MEMORY_TOOL_NAME).with_arguments(json_object(
-                serde_json::json!({"operation": "read", "max_results": 1}),
-            )),
-        )
-        .await
-        .expect("personal-memory response");
-    assert_eq!(response.is_error, Some(false));
-    assert_eq!(
-        response
-            .structured_content
-            .as_ref()
-            .and_then(|value| value.get("scope"))
-            .and_then(serde_json::Value::as_str),
-        Some("personal")
-    );
-    drop(client);
-    server_task.await.expect("server task joins");
 }
 
 #[tokio::test]
@@ -1205,46 +850,6 @@ async fn initialized_client_lists_and_calls_all_tools() {
         .await
         .expect("symbol response");
     assert_eq!(symbol.is_error, Some(false));
-    let scip = client
-        .call_tool(
-            CallToolRequestParams::new(SCIP_EVIDENCE_TOOL_NAME).with_arguments(json_object(
-                serde_json::json!({
-                    "symbol": "scip-rust pkg 1 Symbol.",
-                }),
-            )),
-        )
-        .await
-        .expect("SCIP evidence response");
-    assert_eq!(scip.is_error, Some(false));
-    assert_eq!(
-        scip.structured_content
-            .as_ref()
-            .and_then(|value| value.get("resolution"))
-            .and_then(serde_json::Value::as_str),
-        Some("not_produced")
-    );
-    let scip_trace = client
-        .call_tool(
-            CallToolRequestParams::new(SCIP_RELATIONSHIP_TRACE_TOOL_NAME).with_arguments(
-                json_object(serde_json::json!({
-                    "symbol": "scip-rust pkg 1 Symbol.",
-                    "direction": "outgoing",
-                    "max_depth": 2,
-                    "max_edges": 8,
-                })),
-            ),
-        )
-        .await
-        .expect("SCIP relationship trace response");
-    assert_eq!(scip_trace.is_error, Some(false));
-    assert_eq!(
-        scip_trace
-            .structured_content
-            .as_ref()
-            .and_then(|value| value.get("resolution"))
-            .and_then(serde_json::Value::as_str),
-        Some("not_produced")
-    );
     for (tool, arguments) in graph::tool_requests() {
         let response = client
             .call_tool(CallToolRequestParams::new(tool).with_arguments(json_object(arguments)))
@@ -1275,13 +880,6 @@ async fn initialized_client_lists_and_calls_all_tools() {
     assert_eq!(service.symbol_calls.load(Ordering::Relaxed), 1);
     assert_eq!(service.outbound_sites_calls.load(Ordering::Relaxed), 1);
     assert_eq!(service.syntax_site_search_calls.load(Ordering::Relaxed), 1);
-    assert_eq!(service.scip_calls.load(Ordering::Relaxed), 1);
-    assert_eq!(
-        service
-            .scip_relationship_trace_calls
-            .load(Ordering::Relaxed),
-        1
-    );
     assert_eq!(service.graph_calls.load(Ordering::Relaxed), 6);
     assert_eq!(
         service.search_request.lock().expect("lock").as_ref(),
@@ -1300,25 +898,125 @@ async fn initialized_client_lists_and_calls_all_tools() {
     server_task.await.expect("server task");
 }
 
-#[test]
-fn native_tasks_are_opt_in_and_only_the_context_tool_is_task_capable() {
-    let default = RepoWitnessMcpServer::new(Arc::new(FakeService::new()));
-    assert!(default.get_info().capabilities.tasks.is_none());
-    let enabled = RepoWitnessMcpServer::with_native_tasks(Arc::new(FakeService::new()));
-    assert!(enabled.get_info().capabilities.tasks.is_some());
-    let task_tools = enabled
-        .tools
-        .iter()
-        .filter(|tool| tool.task_support() != rmcp::model::TaskSupport::Forbidden)
-        .map(|tool| tool.name.as_ref())
-        .collect::<Vec<_>>();
-    assert_eq!(task_tools, vec![CONTEXT_BUILD_TOOL_NAME]);
+#[tokio::test]
+async fn catalog_routes_one_mcp_connection_to_the_selected_repository() {
+    let first = Arc::new(FakeService::new());
+    let second = Arc::new(FakeService::new());
+    let first_id = "rwi1:h:11".to_owned();
+    let second_id = "rwi1:h:22".to_owned();
+    let mut registry: BTreeMap<String, Arc<dyn RepositoryService>> = BTreeMap::new();
+    registry.insert(first_id.clone(), first.clone());
+    registry.insert(second_id.clone(), second.clone());
+
+    let (server_transport, client_transport) = tokio::io::duplex(64 * 1024);
+    let server =
+        RepoWitnessMcpServer::with_repository_catalog(registry, None).expect("catalog is valid");
+    let server_task = tokio::spawn(async move {
+        server
+            .serve(server_transport)
+            .await
+            .expect("server starts")
+            .waiting()
+            .await
+            .expect("server stops")
+    });
+    let client = ().serve(client_transport).await.expect("client starts");
+    let code_search = client
+        .list_all_tools()
+        .await
+        .expect("tools list")
+        .into_iter()
+        .find(|tool| tool.name.as_ref() == CODE_SEARCH_TOOL_NAME)
+        .expect("code search tool");
+    assert!(
+        code_search
+            .input_schema
+            .get("required")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|required| required.iter().any(|value| value == "repository_id"))
+    );
+
+    let response = client
+        .call_tool(
+            CallToolRequestParams::new(CODE_SEARCH_TOOL_NAME).with_arguments(json_object(
+                serde_json::json!({"repository_id": second_id, "query": "run"}),
+            )),
+        )
+        .await
+        .expect("catalog response");
+    assert_eq!(response.is_error, Some(false));
+    assert_eq!(first.search_calls.load(Ordering::Relaxed), 0);
+    assert_eq!(second.search_calls.load(Ordering::Relaxed), 1);
+
+    client.cancel().await.expect("client closes");
+    server_task.await.expect("server task");
 }
 
 #[tokio::test]
-async fn native_task_submission_returns_an_opaque_id_and_retains_a_bounded_result() {
-    let (server_transport, client_transport) = tokio::io::duplex(32 * 1024);
-    let server = RepoWitnessMcpServer::with_native_tasks(Arc::new(FakeService::new()));
+async fn catalog_cross_repository_search_fans_out_and_keeps_repository_receipts() {
+    let first = Arc::new(FakeService::new());
+    let second = Arc::new(FakeService::new());
+    let first_id = "rwi1:h:11".to_owned();
+    let second_id = "rwi1:h:22".to_owned();
+    let mut registry: BTreeMap<String, Arc<dyn RepositoryService>> = BTreeMap::new();
+    registry.insert(first_id.clone(), first.clone());
+    registry.insert(second_id.clone(), second.clone());
+
+    let (server_transport, client_transport) = tokio::io::duplex(64 * 1024);
+    let server = RepoWitnessMcpServer::with_repository_catalog(registry, Some(first_id.clone()))
+        .expect("catalog is valid");
+    let server_task = tokio::spawn(async move {
+        server
+            .serve(server_transport)
+            .await
+            .expect("server starts")
+            .waiting()
+            .await
+            .expect("server stops")
+    });
+    let client = ().serve(client_transport).await.expect("client starts");
+    let tools = client.list_all_tools().await.expect("tools list");
+    assert!(
+        tools
+            .iter()
+            .any(|tool| tool.name.as_ref() == CROSS_REPOSITORY_SEARCH_TOOL_NAME)
+    );
+
+    let response = client
+        .call_tool(
+            CallToolRequestParams::new(CROSS_REPOSITORY_SEARCH_TOOL_NAME).with_arguments(
+                json_object(serde_json::json!({"query": "run", "max_results": 1})),
+            ),
+        )
+        .await
+        .expect("cross-repository response");
+    assert_eq!(response.is_error, Some(false));
+    let output = response.structured_content.expect("structured output");
+    assert_eq!(output["repositories_requested"], 2);
+    assert_eq!(output["repositories_completed"], 2);
+    assert_eq!(output["matches_returned"], 1);
+    let repositories = output["repositories"].as_array().expect("repositories");
+    assert_eq!(repositories[0]["repository_id"], first_id);
+    assert_eq!(repositories[1]["repository_id"], second_id);
+    assert_eq!(first.search_calls.load(Ordering::Relaxed), 1);
+    assert_eq!(second.search_calls.load(Ordering::Relaxed), 1);
+
+    client.cancel().await.expect("client closes");
+    server_task.await.expect("server task");
+}
+
+#[tokio::test]
+async fn catalog_cross_repository_search_preserves_partial_search_coverage() {
+    let first = Arc::new(FakeService::new());
+    first.search_truncated.store(true, Ordering::Relaxed);
+    let second = Arc::new(FakeService::new());
+    let mut registry: BTreeMap<String, Arc<dyn RepositoryService>> = BTreeMap::new();
+    registry.insert("rwi1:h:11".to_owned(), first);
+    registry.insert("rwi1:h:22".to_owned(), second);
+
+    let (server_transport, client_transport) = tokio::io::duplex(64 * 1024);
+    let server =
+        RepoWitnessMcpServer::with_repository_catalog(registry, None).expect("catalog is valid");
     let server_task = tokio::spawn(async move {
         server
             .serve(server_transport)
@@ -1330,68 +1028,43 @@ async fn native_task_submission_returns_an_opaque_id_and_retains_a_bounded_resul
     });
     let client = ().serve(client_transport).await.expect("client starts");
     let response = client
-        .send_request(ClientRequest::CallToolRequest(CallToolRequest::new(
-            CallToolRequestParams::new(CONTEXT_BUILD_TOOL_NAME)
-                .with_arguments(json_object(serde_json::json!({
-                    "intent": "run",
-                    "budget_units": 4096,
-                    "max_provider_results": 7
-                })))
-                .with_task(TaskMetadata::new()),
-        )))
+        .call_tool(
+            CallToolRequestParams::new(CROSS_REPOSITORY_SEARCH_TOOL_NAME)
+                .with_arguments(json_object(serde_json::json!({"query": "run"}))),
+        )
         .await
-        .expect("task is accepted");
-    let ServerResult::CreateTaskResult(created) = response else {
-        panic!("task invocation must create a native task");
-    };
-    let task_id = created.task.task_id;
-    let suffix = task_id.as_str();
-    assert_eq!(suffix.len(), 32);
-    assert!(
-        suffix
-            .chars()
-            .all(|character| character.is_ascii_hexdigit())
-    );
+        .expect("cross-repository response");
+    let output = response.structured_content.expect("structured output");
+    assert_eq!(output["resolution"], "partial");
+    assert_eq!(output["coverage"]["truncated"], 1);
 
-    let mut completed = false;
-    let mut last_status = None;
-    for _ in 0..100 {
-        let response = client
-            .send_request(ClientRequest::GetTaskRequest(GetTaskRequest::new(
-                GetTaskParams::new(task_id.clone()),
-            )))
+    client.cancel().await.expect("client closes");
+    server_task.await.expect("server task");
+}
+
+#[tokio::test]
+async fn single_repository_mcp_does_not_advertise_cross_repository_search() {
+    let service = Arc::new(FakeService::new());
+    let (server_transport, client_transport) = tokio::io::duplex(16 * 1024);
+    let server = RepoWitnessMcpServer::new(service);
+    let server_task = tokio::spawn(async move {
+        server
+            .serve(server_transport)
             .await
-            .expect("task remains queryable");
-        let ServerResult::GetTaskResult(status) = response else {
-            panic!("task query must return its status");
-        };
-        last_status = Some((
-            status.task.status.clone(),
-            status.task.status_message.clone(),
-        ));
-        if status.task.status == TaskStatus::Completed {
-            completed = true;
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
+            .expect("server starts")
+            .waiting()
+            .await
+            .expect("server stops")
+    });
+    let client = ().serve(client_transport).await.expect("client starts");
     assert!(
-        completed,
-        "native task must reach its terminal state: {last_status:?}"
+        !client
+            .list_all_tools()
+            .await
+            .expect("tools list")
+            .iter()
+            .any(|tool| tool.name.as_ref() == CROSS_REPOSITORY_SEARCH_TOOL_NAME)
     );
-    let response = client
-        .send_request(ClientRequest::GetTaskPayloadRequest(
-            GetTaskPayloadRequest::new(GetTaskPayloadParams::new(task_id)),
-        ))
-        .await
-        .expect("completed task result is available");
-    // Task payloads retain the original `CallToolResult` wire shape, which
-    // the SDK decodes as that concrete result before its custom fallback.
-    let ServerResult::CallToolResult(result) = response else {
-        panic!("task result must use the negotiated task payload response");
-    };
-    assert!(result.structured_content.is_some());
-
     client.cancel().await.expect("client closes");
     server_task.await.expect("server task");
 }

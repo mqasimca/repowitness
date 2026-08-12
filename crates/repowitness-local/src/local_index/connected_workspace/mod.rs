@@ -429,30 +429,30 @@ fn stage_connected_source(
     })?;
     after_phase(CoordinatorPhase::SourceStaged, source.slot_ordinal);
     check_control(cancelled.as_ref(), source.deadline)?;
-    let graph = source
-        .publication
-        .graph
-        .into_generation(staged.generation(), cancelled.as_ref(), source.deadline)
-        .map_err(|graph_error| ConnectedWorkspaceIndexError::Preparation {
-            slot_ordinal: source.slot_ordinal,
-            source: LocalIndexError::GraphPreparation {
-                source: graph_error,
-            },
-        })?;
-    writer
-        .stage_rust_graph(
-            staged.generation(),
-            graph,
-            Arc::clone(cancelled),
-            source.deadline,
-        )
-        .map_err(
-            |error| ConnectedWorkspaceIndexError::GraphPublicationStaging {
+    if let Some(graph) = source.publication.graph {
+        let graph = graph
+            .into_generation(staged.generation(), cancelled.as_ref(), source.deadline)
+            .map_err(|graph_error| ConnectedWorkspaceIndexError::Preparation {
                 slot_ordinal: source.slot_ordinal,
-                source: error,
-            },
-        )?;
-    after_phase(CoordinatorPhase::GraphStaged, source.slot_ordinal);
+                source: LocalIndexError::GraphPreparation {
+                    source: graph_error,
+                },
+            })?;
+        writer
+            .stage_rust_graph(
+                staged.generation(),
+                graph,
+                Arc::clone(cancelled),
+                source.deadline,
+            )
+            .map_err(
+                |error| ConnectedWorkspaceIndexError::GraphPublicationStaging {
+                    slot_ordinal: source.slot_ordinal,
+                    source: error,
+                },
+            )?;
+        after_phase(CoordinatorPhase::GraphStaged, source.slot_ordinal);
+    }
     check_control(cancelled.as_ref(), source.deadline)?;
     Ok(StagedConnectedSource {
         slot_ordinal: source.slot_ordinal,

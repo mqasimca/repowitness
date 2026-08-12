@@ -49,7 +49,7 @@ mcp_tool_profile = "canonical"
 
 [policy]
 allowed_languages = ["rust", "go", "typescript", "tsx", "python"]
-allowed_mcp_tool_profiles = ["canonical", "incumbent-compatible"]
+allowed_mcp_tool_profiles = ["canonical"]
 max_source_file_bytes = 268435456
 max_source_files = 1000000
 max_query_results = 100
@@ -68,11 +68,11 @@ Every field other than `schema_version` is optional. Empty allowed sets are
 valid tightening requests. Valid enum spellings are:
 
 - profile: `local`;
-- MCP tool profile: `canonical`, `minimal`, or `incumbent-compatible`; and
+- MCP tool profile: `canonical` or `minimal`; and
 - language: `rust`, `go`, `typescript`, `tsx`, or `python`.
 
 Every text scalar is at most 32 UTF-8 bytes. Language arrays contain at most
-five unique elements. MCP tool-profile arrays contain at most three unique
+five unique elements. MCP tool-profile arrays contain at most two unique
 elements.
 
 ## Numeric ranges
@@ -129,11 +129,10 @@ ceiling may cap an ordinary default; both the ordinary supplier and binding
 policy categories remain available.
 
 `mcp_tool_profile` is a request, not startup authorization. The compiled
-version-1 capability allow-list contains `canonical` and the opt-in
-`incumbent-compatible` alias surface. `allowed_mcp_tool_profiles` can preserve
-or shrink that set but can never grow it. A request for `minimal` remains
-visible with no authorized profile; `doctor` and MCP startup reject it until a
-separate implementation and contract make that profile available.
+version-1 capability allow-list contains only `canonical`. `allowed_mcp_tool_profiles`
+can preserve or shrink that set but can never grow it. A request for `minimal`
+remains visible with no authorized profile; `doctor` and MCP startup reject it
+until a separate implementation and contract make that profile available.
 
 ## Canonical semantic identity
 
@@ -166,9 +165,8 @@ strictest caller/configuration bounds. Diagnostics wire schema 3 exposes only
 `digest_sha256`, `schema_version`, `resolver_version`, and `profile` under its
 `configuration` object.
 
-MCP startup supports the default canonical profile and the opt-in compiled
-`incumbent-compatible` alias profile. It rejects an unavailable or unauthorized
-request before runtime creation. Enabling `memory_manage` still requires the
+MCP startup supports the canonical profile only. It rejects an unavailable or
+unauthorized request before runtime creation. Enabling `memory_manage` still requires the
 explicit fixed-actor startup capability and also fails when `deny_memory_writes`
 is effective. A later repository layer cannot reverse a user/workspace denial
 or expand the compiled profile allow-list.

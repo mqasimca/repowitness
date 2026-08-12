@@ -1,7 +1,7 @@
 use std::{fmt, time::Duration};
 
 use repowitness_application::{
-    DEFAULT_CODE_SEARCH_RESULTS, EvidenceContextBudget, MemoryRecallQuery, ScipSymbol,
+    DEFAULT_CODE_SEARCH_RESULTS, EvidenceContextBudget, MemoryRecallQuery,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -18,8 +18,6 @@ pub struct EvidenceContextBuildInput {
     pub budget_units: Option<u64>,
     /// Maximum independently returned candidates from each implemented provider.
     pub max_provider_results: Option<u16>,
-    /// Optional exact opaque SCIP symbol for the precision-overlay provider.
-    pub scip_symbol: Option<String>,
     /// End-to-end operation deadline in milliseconds.
     pub timeout_ms: Option<u64>,
 }
@@ -31,10 +29,6 @@ impl fmt::Debug for EvidenceContextBuildInput {
             .field("intent", &"<redacted-intent>")
             .field("budget_units", &self.budget_units)
             .field("max_provider_results", &self.max_provider_results)
-            .field(
-                "scip_symbol",
-                &self.scip_symbol.as_ref().map(|_| "<redacted-scip-symbol>"),
-            )
             .field("timeout_ms", &self.timeout_ms)
             .finish()
     }
@@ -57,17 +51,10 @@ impl EvidenceContextBuildInput {
         if !(1..=repowitness_application::MAX_CODE_SEARCH_RESULTS).contains(&max_provider_results) {
             return Err("max_provider_results must be between 1 and 100");
         }
-        let scip_symbol = self
-            .scip_symbol
-            .map(ScipSymbol::try_new)
-            .transpose()
-            .map_err(|_| "scip_symbol does not satisfy the bounded opaque-symbol profile")?
-            .map(ScipSymbol::into_string);
         Ok(EvidenceContextBuildServiceRequest {
             intent: source.as_str().to_owned(),
             budget_units: budget.units(),
             max_provider_results,
-            scip_symbol,
             timeout: validate_timeout(self.timeout_ms)?,
         })
     }
@@ -78,7 +65,6 @@ pub struct EvidenceContextBuildServiceRequest {
     intent: String,
     budget_units: u64,
     max_provider_results: u16,
-    scip_symbol: Option<String>,
     timeout: Duration,
 }
 
@@ -101,12 +87,6 @@ impl EvidenceContextBuildServiceRequest {
         self.max_provider_results
     }
 
-    /// Returns the optional validated opaque SCIP symbol.
-    #[must_use]
-    pub fn scip_symbol(&self) -> Option<&str> {
-        self.scip_symbol.as_deref()
-    }
-
     /// Returns the remaining end-to-end deadline duration.
     #[must_use]
     pub const fn timeout(&self) -> Duration {
@@ -126,10 +106,6 @@ impl fmt::Debug for EvidenceContextBuildServiceRequest {
             .field("intent", &"<redacted-intent>")
             .field("budget_units", &self.budget_units)
             .field("max_provider_results", &self.max_provider_results)
-            .field(
-                "scip_symbol",
-                &self.scip_symbol.as_ref().map(|_| "<redacted-scip-symbol>"),
-            )
             .field("timeout", &self.timeout)
             .finish()
     }
@@ -324,7 +300,6 @@ mod tests {
             intent: "  Publish\tAtomic ".to_owned(),
             budget_units: Some(4096),
             max_provider_results: Some(7),
-            scip_symbol: Some("scip-rust pkg 0/Widget#".to_owned()),
             timeout_ms: Some(1000),
         };
         assert!(!format!("{input:?}").contains("Publish"));
@@ -332,7 +307,6 @@ mod tests {
         assert_eq!(request.intent(), "Publish Atomic");
         assert_eq!(request.budget_units(), 4096);
         assert_eq!(request.max_provider_results(), 7);
-        assert_eq!(request.scip_symbol(), Some("scip-rust pkg 0/Widget#"));
     }
 
     #[test]
@@ -342,21 +316,18 @@ mod tests {
                 intent: String::new(),
                 budget_units: None,
                 max_provider_results: None,
-                scip_symbol: None,
                 timeout_ms: None,
             },
             EvidenceContextBuildInput {
                 intent: "x".to_owned(),
                 budget_units: Some(0),
                 max_provider_results: None,
-                scip_symbol: None,
                 timeout_ms: None,
             },
             EvidenceContextBuildInput {
                 intent: "x".to_owned(),
                 budget_units: None,
                 max_provider_results: Some(101),
-                scip_symbol: None,
                 timeout_ms: None,
             },
         ] {

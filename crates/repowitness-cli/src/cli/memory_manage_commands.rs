@@ -13,6 +13,12 @@ fn run_memory_manage(
         );
     }
     if matches!(arguments.as_slice(), [help] if help == OsStr::new("--help") || help == OsStr::new("-h"))
+        || matches!(arguments.as_slice(), [operation, help]
+            if (help == OsStr::new("--help") || help == OsStr::new("-h"))
+                && matches!(
+                    operation.to_str(),
+                    Some("write" | "approve" | "sync" | "review" | "import-history")
+                ))
     {
         return emit_output(stdout, MEMORY_MANAGE_HELP);
     }

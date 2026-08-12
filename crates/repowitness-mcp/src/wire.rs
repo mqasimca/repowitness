@@ -15,22 +15,17 @@ mod architecture_map;
 mod architecture_overview;
 mod change_review;
 mod code_graph_query;
-mod compatibility;
+mod cross_repository_search;
 mod diagnostics;
 mod evidence_context;
 mod graph;
-mod historical_memory;
 mod memory_manage;
 mod memory_mutation;
 mod memory_recall;
 mod outbound_sites;
-mod personal_memory;
 mod relevant_paths;
 mod repository_service_error;
 mod repository_topology;
-mod scip_evidence;
-mod scip_relationship_trace;
-mod scip_symbol_resolve;
 mod symbol_search;
 mod syntax_site_search;
 mod test_markers;
@@ -53,17 +48,11 @@ pub use code_graph_query::{
     CodeGraphQueryInput, CodeGraphQueryOutput, CodeGraphQueryResultOutput,
     CodeGraphQueryServiceRequest,
 };
-pub use compatibility::{
-    COMPATIBILITY_PROFILE_VERSION, CompatibilityGraphSchema, CompatibilityGraphSchemaLimits,
-    CompatibilityLevels, CompatibilityNamespace, CompatibilityObservation, CompatibilityOutput,
-    CompatibilityReceipt, GET_ARCHITECTURE_ALIAS_TOOL_NAME, GET_CODE_SNIPPET_ALIAS_TOOL_NAME,
-    GET_GRAPH_SCHEMA_ALIAS_TOOL_NAME, GetArchitectureInput, GetCodeSnippetInput,
-    GetGraphSchemaInput, INCUMBENT_COMPATIBLE_PROFILE, INCUMBENT_COMPATIBLE_SURFACE,
-    INDEX_STATUS_ALIAS_TOOL_NAME, IndexStatusInput, SEARCH_CODE_ALIAS_TOOL_NAME,
-    SEARCH_GRAPH_ALIAS_TOOL_NAME, SearchCodeInput, SearchGraphInput, TRACE_PATH_ALIAS_TOOL_NAME,
-    TracePathInput,
+pub use cross_repository_search::{
+    CROSS_REPOSITORY_SEARCH_TOOL_NAME, CrossRepositorySearchInput, CrossRepositorySearchOutput,
+    CrossRepositorySearchRepository, CrossRepositorySearchServiceRequest,
+    MAX_CROSS_REPOSITORY_RESULTS, MAX_CROSS_REPOSITORY_SELECTIONS,
 };
-pub(crate) use compatibility::{CompatibilityAlias, compatibility_output, graph_schema_output};
 pub use diagnostics::{
     DiagnosticsInput, DiagnosticsOutput, DiagnosticsServiceRequest, McpConfigurationIdentity,
     McpDiagnosticsMemoryProjection,
@@ -84,12 +73,6 @@ pub use graph::{
     McpGraphPublication, McpGraphSite, McpGraphTrace, McpGraphTraceCoverage,
     McpGraphTraceTruncation,
 };
-pub use historical_memory::{
-    HISTORICAL_MEMORY_SCHEMA_VERSION, HistoricalMemoryApplicability, HistoricalMemoryCoverage,
-    HistoricalMemoryEvidence, HistoricalMemoryEvidenceBasis, HistoricalMemoryInput,
-    HistoricalMemoryOutput, HistoricalMemoryServiceRequest, HistoricalMemoryTarget,
-    HistoricalMemoryTargetKind,
-};
 pub use memory_manage::{
     MEMORY_MANAGE_SCHEMA_VERSION, MemoryManageDatabaseIdentityStatus,
     MemoryManageFileIdentityStatus, MemoryManageInput, MemoryManageMaintenanceStatus,
@@ -108,11 +91,6 @@ pub use outbound_sites::{
     OutboundSitesInput, OutboundSitesOutput, OutboundSitesSelectorOutput,
     OutboundSitesServiceRequest,
 };
-pub use personal_memory::{
-    PERSONAL_MEMORY_SCHEMA_VERSION, PersonalMemoryInput, PersonalMemoryKind,
-    PersonalMemoryLifecycle, PersonalMemoryOperation, PersonalMemoryOutput,
-    PersonalMemoryRecordOutput, PersonalMemoryServiceRequest,
-};
 pub use relevant_paths::{
     McpRelevantPath, RELEVANT_PATHS_TOOL_NAME, RelevantPathsInput, RelevantPathsOutput,
     RelevantPathsServiceRequest,
@@ -122,19 +100,6 @@ pub use repository_topology::{
     McpRepositoryTopologyCategory, McpRepositoryTopologyCoverage, McpRepositoryTopologyEntry,
     REPOSITORY_TOPOLOGY_TOOL_NAME, RepositoryTopologyInput, RepositoryTopologyOutput,
     RepositoryTopologyServiceRequest,
-};
-pub use scip_evidence::{
-    McpScipOccurrence, McpScipOverlay, McpScipRelationship, ScipEvidenceInput, ScipEvidenceOutput,
-    ScipEvidenceServiceRequest,
-};
-pub use scip_relationship_trace::{
-    McpScipRelationshipTraceEdge, McpScipRelationshipTraceOverlay,
-    SCIP_RELATIONSHIP_TRACE_TOOL_NAME, ScipRelationshipTraceInput, ScipRelationshipTraceOutput,
-    ScipRelationshipTraceServiceRequest,
-};
-pub use scip_symbol_resolve::{
-    SCIP_SYMBOL_RESOLVE_TOOL_NAME, ScipSymbolResolveInput, ScipSymbolResolveOutput,
-    ScipSymbolResolveServiceRequest,
 };
 pub use symbol_search::{
     SYMBOL_SEARCH_TOOL_NAME, SymbolSearchInput, SymbolSearchOutput, SymbolSearchServiceRequest,
@@ -157,14 +122,9 @@ pub const DIAGNOSTICS_TOOL_NAME: &str = "diagnostics";
 pub const MEMORY_RECALL_TOOL_NAME: &str = "memory_recall";
 /// MCP tool name for explicitly authorized local engineering-memory mutation.
 pub const MEMORY_MANAGE_TOOL_NAME: &str = "memory_manage";
-/// MCP tool name for explicitly enabled local-profile personal memory.
-pub const PERSONAL_MEMORY_TOOL_NAME: &str = "personal_memory";
-/// MCP tool name for a bounded exact historical memory applicability receipt.
-pub const HISTORICAL_MEMORY_TOOL_NAME: &str = "historical_memory";
+/// MCP tool name for the bounded repository catalog.
 /// MCP tool name for exact verified declaration retrieval.
 pub const SYMBOL_GET_TOOL_NAME: &str = "symbol_get";
-/// MCP tool name for immutable package-scoped SCIP symbol evidence.
-pub const SCIP_EVIDENCE_TOOL_NAME: &str = "scip_evidence";
 
 pub(crate) const DEFAULT_MCP_TIMEOUT_MS: u64 = 5_000;
 pub(crate) const MAX_MCP_TIMEOUT_MS: u64 = 30_000;
@@ -183,10 +143,7 @@ pub(crate) const MAX_MCP_EVIDENCE_CONTEXT_OUTPUT_BYTES: usize = 24 * 1024 * 1024
 pub(crate) const MAX_MCP_DIAGNOSTICS_OUTPUT_BYTES: usize = 256 * 1024;
 pub(crate) const MAX_MCP_GRAPH_OUTPUT_BYTES: usize = 64 * 1024 * 1024;
 pub(crate) const MAX_MCP_MEMORY_RECALL_OUTPUT_BYTES: usize = 20 * 1024 * 1024;
-pub(crate) const MAX_MCP_HISTORICAL_MEMORY_OUTPUT_BYTES: usize = 128 * 1024;
 pub(crate) const MAX_MCP_MEMORY_MANAGE_OUTPUT_BYTES: usize = 64 * 1024;
-/// Personal records are bounded to 4 KiB fields and reads to 100 records.
-pub(crate) const MAX_MCP_PERSONAL_MEMORY_OUTPUT_BYTES: usize = 2 * 1024 * 1024;
 // The MCP SDK includes both structured JSON and a compatibility text copy.
 // A bounded 10 MiB application payload can therefore require almost 60 MiB
 // after exact source representation and nested JSON escaping.
@@ -194,8 +151,6 @@ pub(crate) const MAX_MCP_SYMBOL_OUTPUT_BYTES: usize = 64 * 1024 * 1024;
 pub(crate) const MAX_MCP_OUTBOUND_SITES_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
 pub(crate) const MAX_MCP_SYNTAX_SITE_SEARCH_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
 pub(crate) const MAX_MCP_CODE_GRAPH_QUERY_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
-pub(crate) const MAX_MCP_SCIP_EVIDENCE_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
-pub(crate) const MAX_MCP_SCIP_RELATIONSHIP_TRACE_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
 
 /// Version-1 wire input for `code_search`.
 #[derive(Deserialize, JsonSchema)]
@@ -245,6 +200,14 @@ pub struct CodeSearchServiceRequest {
 }
 
 impl CodeSearchServiceRequest {
+    pub(crate) fn new(query: String, max_results: u16, timeout: Duration) -> Self {
+        Self {
+            query,
+            max_results,
+            timeout,
+        }
+    }
+
     /// Returns the canonical literal query.
     #[must_use]
     pub fn query(&self) -> &str {
@@ -420,124 +383,11 @@ impl fmt::Debug for SymbolGetServiceRequest {
     }
 }
 
-/// Durable lifecycle state projected through negotiated native MCP Tasks.
-///
-/// The transport never derives this state from an ephemeral result payload.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum NativeTaskState {
-    /// Work remains active.
-    Working,
-    /// The operation completed successfully.
-    Completed,
-    /// The operation needs follow-up after a bounded failure.
-    Failed,
-    /// The caller cancelled the operation.
-    Cancelled,
-}
-
-/// Polling-safe durable task projection for the MCP transport.
-///
-/// It excludes persisted task text and all captured output. `task_id` is an
-/// opaque canonical durable task identity, not a user-controlled path or key.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct NativeTaskStatus {
-    task_id: String,
-    state: NativeTaskState,
-    checkpoint_sequence: u32,
-    verification_count: u32,
-}
-
-impl NativeTaskStatus {
-    /// Creates one validated adapter-owned status projection.
-    #[must_use]
-    pub fn new(
-        task_id: String,
-        state: NativeTaskState,
-        checkpoint_sequence: u32,
-        verification_count: u32,
-    ) -> Self {
-        Self {
-            task_id,
-            state,
-            checkpoint_sequence,
-            verification_count,
-        }
-    }
-
-    /// Returns the canonical opaque durable task identity.
-    #[must_use]
-    pub fn task_id(&self) -> &str {
-        &self.task_id
-    }
-
-    /// Returns the lifecycle state supported by the MCP task protocol.
-    #[must_use]
-    pub const fn state(&self) -> NativeTaskState {
-        self.state
-    }
-
-    /// Returns the last committed immutable checkpoint sequence.
-    #[must_use]
-    pub const fn checkpoint_sequence(&self) -> u32 {
-        self.checkpoint_sequence
-    }
-
-    /// Returns the bounded number of verification receipts.
-    #[must_use]
-    pub const fn verification_count(&self) -> u32 {
-        self.verification_count
-    }
-}
-
 /// Synchronous repository operations injected by the CLI composition root.
 ///
 /// Implementations must honor both the request timeout and cancellation flag.
 /// They must return only bounded output DTOs and stable, redacted errors.
 pub trait RepositoryService: Send + Sync + 'static {
-    /// Creates the canonical durable engineering-task record backing one
-    /// explicitly negotiated native MCP task. The returned opaque identifier
-    /// is both the transport handle and the durable task identity text.
-    fn native_task_start(
-        &self,
-        _objective: &str,
-        _cancelled: Arc<AtomicBool>,
-    ) -> Result<NativeTaskStatus, RepositoryServiceError> {
-        Err(RepositoryServiceError::NativeTask)
-    }
-
-    /// Appends one bounded lifecycle checkpoint to a durable native task.
-    ///
-    /// This is intentionally separate from the retained MCP result payload:
-    /// the payload is ephemeral transport data, while this state survives a
-    /// reconnect and remains subject to the engineering-task audit rules.
-    fn native_task_transition(
-        &self,
-        _task_id: &str,
-        _state: NativeTaskState,
-        _cancelled: Arc<AtomicBool>,
-    ) -> Result<NativeTaskStatus, RepositoryServiceError> {
-        Err(RepositoryServiceError::NativeTask)
-    }
-
-    /// Returns one durable native task in the configured repository scope.
-    fn native_task_status(
-        &self,
-        _task_id: &str,
-        _cancelled: Arc<AtomicBool>,
-    ) -> Result<Option<NativeTaskStatus>, RepositoryServiceError> {
-        Err(RepositoryServiceError::NativeTask)
-    }
-
-    /// Lists the bounded most-recent durable native task records in the
-    /// configured repository scope.
-    fn native_task_list(
-        &self,
-        _limit: u16,
-        _cancelled: Arc<AtomicBool>,
-    ) -> Result<Box<[NativeTaskStatus]>, RepositoryServiceError> {
-        Err(RepositoryServiceError::NativeTask)
-    }
-
     /// Runs one bounded lexical search.
     fn code_search(
         &self,
@@ -649,49 +499,12 @@ pub trait RepositoryService: Send + Sync + 'static {
         Err(RepositoryServiceError::GraphRead)
     }
 
-    /// Reads bounded package-scoped SCIP evidence from one immutable overlay.
-    fn scip_evidence(
-        &self,
-        _request: ScipEvidenceServiceRequest,
-        _cancelled: Arc<AtomicBool>,
-    ) -> Result<ScipEvidenceOutput, RepositoryServiceError> {
-        Err(RepositoryServiceError::ScipEvidence)
-    }
-
-    /// Traces bounded producer-declared SCIP relationships from one exact opaque symbol.
-    fn scip_relationship_trace(
-        &self,
-        _request: ScipRelationshipTraceServiceRequest,
-        _cancelled: Arc<AtomicBool>,
-    ) -> Result<ScipRelationshipTraceOutput, RepositoryServiceError> {
-        Err(RepositoryServiceError::ScipRelationshipTrace)
-    }
-
-    /// Resolves an exact source identifier span to an opaque SCIP symbol only when unique.
-    fn scip_symbol_resolve(
-        &self,
-        _request: ScipSymbolResolveServiceRequest,
-        _cancelled: Arc<AtomicBool>,
-    ) -> Result<ScipSymbolResolveOutput, RepositoryServiceError> {
-        Err(RepositoryServiceError::ScipSymbolResolve)
-    }
-
     /// Recalls bounded records from the complete active memory projection.
     fn memory_recall(
         &self,
         request: MemoryRecallServiceRequest,
         cancelled: Arc<AtomicBool>,
     ) -> Result<MemoryRecallOutput, RepositoryServiceError>;
-
-    /// Reads a bounded exact historical applicability receipt. The repository
-    /// scope is fixed at MCP startup and target paths are never accepted.
-    fn historical_memory(
-        &self,
-        _request: HistoricalMemoryServiceRequest,
-        _cancelled: Arc<AtomicBool>,
-    ) -> Result<HistoricalMemoryOutput, RepositoryServiceError> {
-        Err(RepositoryServiceError::HistoricalMemory)
-    }
 
     /// Performs one explicitly authorized, path-confined memory mutation.
     fn memory_manage(
@@ -700,18 +513,6 @@ pub trait RepositoryService: Send + Sync + 'static {
         _cancelled: Arc<AtomicBool>,
     ) -> Result<MemoryManageOutput, RepositoryServiceError> {
         Err(RepositoryServiceError::MemoryManage)
-    }
-
-    /// Reads or appends local-only memory for the fixed startup profile.
-    ///
-    /// This method is unavailable unless the composition root opted into a
-    /// single opaque local profile before the MCP runtime started.
-    fn personal_memory(
-        &self,
-        _request: PersonalMemoryServiceRequest,
-        _cancelled: Arc<AtomicBool>,
-    ) -> Result<PersonalMemoryOutput, RepositoryServiceError> {
-        Err(RepositoryServiceError::PersonalMemory)
     }
 
     /// Retrieves one exact, verified source declaration.

@@ -128,7 +128,6 @@ fn parse_tool_profile(value: String) -> Result<McpToolProfile, ConfigurationFile
     match value.as_str() {
         "canonical" => Ok(McpToolProfile::Canonical),
         "minimal" => Ok(McpToolProfile::Minimal),
-        "incumbent-compatible" => Ok(McpToolProfile::IncumbentCompatible),
         _ => Err(ConfigurationFileError::InvalidValue),
     }
 }

@@ -94,6 +94,7 @@ fn index_local_repository_with_mode_and_control(
             configuration_digest: configuration.digest(),
             languages,
             limits: configured_limits,
+            build_graph: request.build_graph(),
             cancelled: &cancelled,
             deadline,
         })?;

@@ -3,9 +3,12 @@
 use libfuzzer_sys::fuzz_target;
 use repowitness_local::{ConfigurationFileLayer, parse_configuration_file};
 use repowitness_mcp::{
-    GetArchitectureInput, GetCodeSnippetInput, GetGraphSchemaInput, GraphArchitectureInput,
-    GraphEvidenceInput, GraphImpactInput, GraphSearchInput, GraphStatusInput, GraphTraceInput,
-    IndexStatusInput, SearchCodeInput, SearchGraphInput, TracePathInput,
+    ArchitectureMapInput, ArchitectureOverviewInput, ChangeReviewInput, CodeGraphQueryInput,
+    CodeSearchInput, CrossRepositorySearchInput, DiagnosticsInput, EvidenceContextBuildInput,
+    GraphArchitectureInput, GraphEvidenceInput, GraphImpactInput, GraphSearchInput,
+    GraphStatusInput, GraphTraceInput, MemoryManageInput, MemoryRecallInput, OutboundSitesInput,
+    RelevantPathsInput, RepositoryTopologyInput, SymbolGetInput, SymbolSearchInput,
+    SyntaxSiteSearchInput, TestMarkersInput,
 };
 
 const MAX_INPUT_BYTES: usize = 64 * 1024;
@@ -54,21 +57,35 @@ fn exercise_graph_wire(input: &[u8]) {
     }
 }
 
-fn exercise_compatibility_wire(input: &[u8]) {
-    let _ = serde_json::from_slice::<SearchCodeInput>(input);
-    let _ = serde_json::from_slice::<GetCodeSnippetInput>(input);
-    let _ = serde_json::from_slice::<SearchGraphInput>(input);
-    let _ = serde_json::from_slice::<TracePathInput>(input);
-    let _ = serde_json::from_slice::<GetGraphSchemaInput>(input);
-    let _ = serde_json::from_slice::<GetArchitectureInput>(input);
-    let _ = serde_json::from_slice::<IndexStatusInput>(input);
+fn exercise_wire(input: &[u8]) {
+    for result in [
+        serde_json::from_slice::<ArchitectureMapInput>(input).is_ok(),
+        serde_json::from_slice::<ArchitectureOverviewInput>(input).is_ok(),
+        serde_json::from_slice::<ChangeReviewInput>(input).is_ok(),
+        serde_json::from_slice::<CodeGraphQueryInput>(input).is_ok(),
+        serde_json::from_slice::<CodeSearchInput>(input).is_ok(),
+        serde_json::from_slice::<CrossRepositorySearchInput>(input).is_ok(),
+        serde_json::from_slice::<DiagnosticsInput>(input).is_ok(),
+        serde_json::from_slice::<EvidenceContextBuildInput>(input).is_ok(),
+        serde_json::from_slice::<MemoryManageInput>(input).is_ok(),
+        serde_json::from_slice::<MemoryRecallInput>(input).is_ok(),
+        serde_json::from_slice::<OutboundSitesInput>(input).is_ok(),
+        serde_json::from_slice::<RelevantPathsInput>(input).is_ok(),
+        serde_json::from_slice::<RepositoryTopologyInput>(input).is_ok(),
+        serde_json::from_slice::<SymbolGetInput>(input).is_ok(),
+        serde_json::from_slice::<SymbolSearchInput>(input).is_ok(),
+        serde_json::from_slice::<SyntaxSiteSearchInput>(input).is_ok(),
+        serde_json::from_slice::<TestMarkersInput>(input).is_ok(),
+    ] {
+        std::hint::black_box(result);
+    }
 }
 
 fuzz_target!(|data: &[u8]| {
     let input = &data[..data.len().min(MAX_INPUT_BYTES)];
     exercise_configuration(input);
     exercise_graph_wire(input);
-    exercise_compatibility_wire(input);
+    exercise_wire(input);
 
     let seed = match input.first().copied().unwrap_or_default() % 4 {
         0 => VALID_CONFIGURATION,
@@ -79,5 +96,5 @@ fuzz_target!(|data: &[u8]| {
     let mutated_seed = mutate_seed(input.get(1..).unwrap_or_default(), seed);
     exercise_configuration(&mutated_seed);
     exercise_graph_wire(&mutated_seed);
-    exercise_compatibility_wire(&mutated_seed);
+    exercise_wire(&mutated_seed);
 });

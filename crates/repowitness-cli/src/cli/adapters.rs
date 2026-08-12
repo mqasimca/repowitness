@@ -25,23 +25,6 @@ trait RepositoryIndexer {
         configuration: &ResolvedConfiguration,
     ) -> Result<CliIndexReport, String>;
 
-    fn reconcile(
-        &self,
-        invocation: &IndexInvocation,
-        configuration: &ResolvedConfiguration,
-    ) -> Result<CliIndexReport, String> {
-        self.index(invocation, configuration)
-    }
-
-    fn reconcile_with_cancel(
-        &self,
-        invocation: &IndexInvocation,
-        configuration: &ResolvedConfiguration,
-        cancelled: Arc<AtomicBool>,
-    ) -> Result<CliIndexReport, String> {
-        let _ = cancelled;
-        self.reconcile(invocation, configuration)
-    }
 }
 
 struct LocalRepositoryIndexer;
@@ -75,46 +58,6 @@ impl RepositoryIndexer for LocalRepositoryIndexer {
         .map_err(|error| error.to_string())
     }
 
-    fn reconcile(
-        &self,
-        invocation: &IndexInvocation,
-        configuration: &ResolvedConfiguration,
-    ) -> Result<CliIndexReport, String> {
-        self.reconcile_with_cancel(
-            invocation,
-            configuration,
-            Arc::new(AtomicBool::new(false)),
-        )
-    }
-
-    fn reconcile_with_cancel(
-        &self,
-        invocation: &IndexInvocation,
-        configuration: &ResolvedConfiguration,
-        cancelled: Arc<AtomicBool>,
-    ) -> Result<CliIndexReport, String> {
-        let repository_identity = invocation
-            .repository_identity
-            .to_str()
-            .ok_or_else(|| "repository identity text is not valid UTF-8".to_owned())?;
-        let elapsed = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|_| "system clock is before the Unix epoch".to_owned())?;
-        let applied_at_unix_ms = u64::try_from(elapsed.as_millis())
-            .map_err(|_| "system clock is outside the supported range".to_owned())?;
-        reconcile_local_repository(
-            LocalIndexRequest::new(
-                &invocation.repository_root,
-                &invocation.database,
-                repository_identity,
-                applied_at_unix_ms,
-            )
-            .with_configuration(configuration),
-            cancelled,
-        )
-        .map(CliIndexReport::from)
-        .map_err(|error| error.to_string())
-    }
 }
 
 struct SearchInvocation {

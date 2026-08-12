@@ -299,47 +299,6 @@ pub(super) fn repository_topology_output() -> RepositoryTopologyOutput {
     }
 }
 
-pub(super) fn scip_evidence_output() -> ScipEvidenceOutput {
-    ScipEvidenceOutput {
-        schema_version: 1,
-        connected_workspace: "cwi1:h:00".to_owned(),
-        workspace_view: 1,
-        source_slot: "ssi1:h:00".to_owned(),
-        resolution: "not_produced".to_owned(),
-        overlay: None,
-        package_scope_sha256: None,
-        occurrences_truncated: false,
-        relationships_truncated: false,
-        output_bytes: 0,
-        occurrences: Vec::new(),
-        relationships: Vec::new(),
-    }
-}
-
-pub(super) fn scip_relationship_trace_output() -> ScipRelationshipTraceOutput {
-    ScipRelationshipTraceOutput {
-        schema_version: 1,
-        connected_workspace: "cwi1:h:00".to_owned(),
-        workspace_view: 1,
-        source_slot: "ssi1:h:00".to_owned(),
-        resolution: "not_produced".to_owned(),
-        overlay: None,
-        package_scope_sha256: None,
-        direction: "outgoing".to_owned(),
-        max_depth: 2,
-        max_edges: 8,
-        visited_symbols: 0,
-        unexpanded_frontier_symbols: 0,
-        depth_limit_reached: false,
-        edge_limit_reached: false,
-        symbol_limit_reached: false,
-        output_limit_reached: false,
-        truncated: false,
-        output_bytes: 0,
-        edges: Vec::new(),
-    }
-}
-
 pub(super) fn memory_output() -> MemoryRecallOutput {
     MemoryRecallOutput {
         schema_version: 1,

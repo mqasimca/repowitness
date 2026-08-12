@@ -71,6 +71,7 @@ pub(crate) struct LocalSourceIndexReuseRequest<'a> {
     languages: SourceLanguageSelection,
     package_scope: Option<&'a PackageScope>,
     limits: LocalRustIndexLimits,
+    build_graph: bool,
     cancelled: &'a AtomicBool,
     excluded_identity: Option<&'a FileIdentity>,
 }
@@ -91,6 +92,7 @@ impl<'a> LocalSourceIndexReuseRequest<'a> {
             languages,
             package_scope: None,
             limits,
+            build_graph: true,
             cancelled,
             excluded_identity,
         }
@@ -117,9 +119,15 @@ impl<'a> LocalSourceIndexReuseRequest<'a> {
             languages,
             package_scope: Some(package_scope),
             limits,
+            build_graph: true,
             cancelled,
             excluded_identity,
         }
+    }
+
+    pub(crate) const fn without_graph(mut self) -> Self {
+        self.build_graph = false;
+        self
     }
 }
 
@@ -258,6 +266,7 @@ fn prepare_local_rust_index_with_exclusion_reuse_and_hook(
             selection: SelectionPolicy::RustOnly,
             package_scope: None,
             limits,
+            build_graph: true,
             cancelled,
             excluded_identity,
         },
@@ -303,6 +312,7 @@ fn prepare_local_source_index_with_exclusion_reuse_and_hook(
         languages,
         package_scope,
         limits,
+        build_graph,
         cancelled,
         excluded_identity,
     } = request;
@@ -315,6 +325,7 @@ fn prepare_local_source_index_with_exclusion_reuse_and_hook(
             selection: SelectionPolicy::SupportedLanguages(languages),
             package_scope,
             limits,
+            build_graph,
             cancelled,
             excluded_identity,
         },

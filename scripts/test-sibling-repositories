@@ -2,13 +2,9 @@
 # Run the production index, path-only topology, architecture-map, architecture-overview,
 # typed-symbol-discovery, lexical path-navigation (direct and finite-MCP-envelope),
 # canonical evidence-balanced context compilation,
-# exact raw syntax-target search (direct and finite-MCP-envelope), no-overlay
-# SCIP-evidence, SCIP-symbol-resolution, and SCIP-relationship-trace smoke,
-# repository-scoped test-marker, revision-pinned change-receipt, and exact
-# outbound-site loop. The opt-in
-# --rust-scip and --go-scip modes additionally invoke the installed producer
-# for every eligible sibling with indexed Rust or Go source, import the resulting
-# private temporary artifact, and report only aggregate categorical outcomes.
+# exact raw syntax-target search (direct and finite-MCP-envelope), repository-
+# scoped test-marker, revision-pinned change-receipt, and exact outbound-site
+# loop.
 # loop against every direct Git worktree beside this workspace. External
 # repositories are confidential smoke inputs: this script deliberately emits aggregate
 # outcomes only.
@@ -32,29 +28,18 @@ CLI=$TARGET_DIRECTORY/debug/repowitness
 umask 077
 
 usage() {
-    printf '%s\n' 'usage: ./scripts/test-sibling-repositories [--skip-build] [--rust-scip] [--go-scip] [--include-project] [--repository <path>]' >&2
+    printf '%s\n' 'usage: ./scripts/test-sibling-repositories [--skip-build] [--include-project] [--repository <path>]' >&2
     exit 64
 }
 
 SKIP_BUILD=false
-RUST_SCIP=false
-GO_SCIP=false
 INCLUDE_PROJECT=false
 TEST_REPOSITORY=
-SCIP_GO=${SCIP_GO:-scip-go}
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --skip-build)
             test "$SKIP_BUILD" = false || usage
             SKIP_BUILD=true
-            ;;
-        --rust-scip)
-            test "$RUST_SCIP" = false || usage
-            RUST_SCIP=true
-            ;;
-        --go-scip)
-            test "$GO_SCIP" = false || usage
-            GO_SCIP=true
             ;;
         --include-project)
             test "$INCLUDE_PROJECT" = false || usage
@@ -85,19 +70,6 @@ command -v mktemp >/dev/null 2>&1 || {
     printf '%s\n' 'error: mktemp is required' >&2
     exit 69
 }
-if [ "$RUST_SCIP" = true ]; then
-    command -v rust-analyzer >/dev/null 2>&1 || {
-        printf '%s\n' 'error: rust-analyzer is required with --rust-scip' >&2
-        exit 69
-    }
-fi
-if [ "$GO_SCIP" = true ]; then
-    command -v "$SCIP_GO" >/dev/null 2>&1 || {
-        printf '%s\n' 'error: scip-go is required with --go-scip; set SCIP_GO when it is not on PATH' >&2
-        exit 69
-    }
-fi
-
 safe_git() (
     unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY
     unset GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_SHALLOW_FILE GIT_COMMON_DIR
@@ -483,18 +455,6 @@ map_has_go_files() {
         }
         exit 1;
     '
-}
-
-scip_import_failure_category() {
-    sed -n 's/^error: SCIP import failed (category=\([a-z_][a-z_]*\))$/\1/p' "$1"
-}
-
-scip_go_import_failure_category() {
-    if grep -qx 'error: scip-go SCIP production failed' "$1"; then
-        printf '%s\n' producer
-        return
-    fi
-    scip_import_failure_category "$1"
 }
 
 symbol_search_has_match() {
@@ -1036,86 +996,6 @@ extract_first_symbol_selector() {
     '
 }
 
-validate_scip_symbol_resolve_not_produced() {
-    perl -MJSON::PP -e '
-        use strict;
-        use warnings;
-
-        local $/;
-        my $result = eval { decode_json(<STDIN>) };
-        exit 1 if $@ || ref($result) ne q{HASH};
-        exit 1 if ($result->{schema_version} // q{}) != 1;
-        exit 1 if ($result->{connected_workspace} // q{}) !~ /\Acwi1:h:[0-9A-F]+\z/
-          || ($result->{source_slot} // q{}) !~ /\Assi1:h:[0-9A-F]+\z/;
-        exit 1 if !defined($result->{workspace_view}) || ref($result->{workspace_view})
-          || $result->{workspace_view} !~ /\A[1-9][0-9]*\z/;
-        exit 1 if ($result->{resolution} // q{}) ne q{not_produced};
-        exit 1 if defined($result->{symbol});
-    '
-}
-
-validate_scip_evidence_not_produced() {
-    perl -MJSON::PP -e '
-        use strict;
-        use warnings;
-
-        local $/;
-        my $result = eval { decode_json(<STDIN>) };
-        exit 1 if $@ || ref($result) ne q{HASH};
-        exit 1 if ($result->{schema_version} // q{}) != 1;
-        exit 1 if ($result->{connected_workspace} // q{}) !~ /\Acwi1:h:[0-9A-F]+\z/
-          || ($result->{source_slot} // q{}) !~ /\Assi1:h:[0-9A-F]+\z/;
-        exit 1 if !defined($result->{workspace_view}) || ref($result->{workspace_view})
-          || $result->{workspace_view} !~ /\A[1-9][0-9]*\z/;
-        exit 1 if ($result->{resolution} // q{}) ne q{not_produced};
-        for my $field (qw(overlay package_scope_sha256)) {
-            exit 1 if !exists($result->{$field}) || defined($result->{$field});
-        }
-        for my $field (qw(occurrences_truncated relationships_truncated)) {
-            exit 1 if !JSON::PP::is_bool($result->{$field}) || $result->{$field};
-        }
-        exit 1 if !defined($result->{output_bytes}) || ref($result->{output_bytes})
-          || $result->{output_bytes} !~ /\A0\z/;
-        for my $field (qw(occurrences relationships)) {
-            exit 1 if ref($result->{$field}) ne q{ARRAY} || @{$result->{$field}} != 0;
-        }
-    '
-}
-
-validate_scip_relationship_trace_not_produced() {
-    perl -MJSON::PP -e '
-        use strict;
-        use warnings;
-
-        local $/;
-        my $result = eval { decode_json(<STDIN>) };
-        exit 1 if $@ || ref($result) ne q{HASH};
-        exit 1 if ($result->{schema_version} // q{}) != 1;
-        exit 1 if ($result->{connected_workspace} // q{}) !~ /\Acwi1:h:[0-9A-F]+\z/
-          || ($result->{source_slot} // q{}) !~ /\Assi1:h:[0-9A-F]+\z/;
-        exit 1 if !defined($result->{workspace_view}) || ref($result->{workspace_view})
-          || $result->{workspace_view} !~ /\A[1-9][0-9]*\z/;
-        exit 1 if ($result->{resolution} // q{}) ne q{not_produced};
-        for my $field (qw(overlay package_scope_sha256)) {
-            exit 1 if !exists($result->{$field}) || defined($result->{$field});
-        }
-        exit 1 if ($result->{direction} // q{}) ne q{outgoing};
-        for my $field (qw(max_depth max_edges)) {
-            exit 1 if !defined($result->{$field}) || ref($result->{$field})
-              || $result->{$field} !~ /\A1\z/;
-        }
-        for my $field (qw(visited_symbols unexpanded_frontier_symbols output_bytes)) {
-            exit 1 if !defined($result->{$field}) || ref($result->{$field})
-              || $result->{$field} !~ /\A0\z/;
-        }
-        for my $field (qw(depth_limit_reached edge_limit_reached symbol_limit_reached output_limit_reached truncated)) {
-            exit 1 if !JSON::PP::is_bool($result->{$field}) || $result->{$field};
-        }
-        exit 1 if ref($result->{edges}) ne q{ARRAY} || @{$result->{edges}} != 0;
-        exit 1 if defined($result->{symbol});
-    '
-}
-
 validate_outbound_sites() {
     perl -MJSON::PP -e '
         use strict;
@@ -1528,50 +1408,6 @@ symbol_positive_unavailable=0
 outbound_passed=0
 outbound_failed=0
 outbound_unavailable=0
-scip_symbol_resolve_not_produced_passed=0
-scip_symbol_resolve_not_produced_failed=0
-scip_symbol_resolve_not_attempted_no_declaration=0
-scip_symbol_resolve_not_attempted_no_candidate=0
-scip_evidence_not_produced_passed=0
-scip_evidence_not_produced_failed=0
-scip_relationship_trace_not_produced_passed=0
-scip_relationship_trace_not_produced_failed=0
-rust_scip_rust_repositories=0
-rust_scip_no_cargo_manifest=0
-rust_scip_import_passed=0
-rust_scip_import_failed=0
-rust_scip_invalid_input=0
-rust_scip_source_mismatch=0
-rust_scip_unsupported_source_encoding=0
-rust_scip_deadline_exceeded=0
-rust_scip_resource_limit=0
-rust_scip_inconsistent_summary=0
-rust_scip_preparation=0
-rust_scip_other_failure=0
-go_scip_go_repositories=0
-go_scip_no_root_go_manifest=0
-go_scip_import_passed=0
-go_scip_import_failed=0
-go_scip_producer_failed=0
-go_scip_invalid_input=0
-go_scip_source_mismatch=0
-go_scip_unsupported_source_encoding=0
-go_scip_deadline_exceeded=0
-go_scip_resource_limit=0
-go_scip_inconsistent_summary=0
-go_scip_preparation=0
-go_scip_input_admission=0
-go_scip_database_read=0
-go_scip_source_scope_unavailable=0
-go_scip_database_identity=0
-go_scip_source_fence=0
-go_scip_source_manifest_mismatch=0
-go_scip_cancelled=0
-go_scip_input_changed=0
-go_scip_publication=0
-go_scip_shutdown=0
-go_scip_other_failure=0
-
 if [ -n "$TEST_REPOSITORY" ]; then
     set -- "$TEST_REPOSITORY"
 elif [ "$INCLUDE_PROJECT" = true ]; then
@@ -1634,25 +1470,6 @@ for candidate; do
         continue
     fi
     context_build_passed=$((context_build_passed + 1))
-
-    scip_evidence_output="$RUN_DIRECTORY/$repositories.scip-evidence.json"
-    if ! "$CLI" scip-evidence --repository-id "$identity" --database "$database" \
-        --symbol 'scip-rust pkg 1 RepoWitnessSynthetic.' >"$scip_evidence_output" 2>/dev/null \
-        || ! validate_scip_evidence_not_produced <"$scip_evidence_output"; then
-        scip_evidence_not_produced_failed=$((scip_evidence_not_produced_failed + 1))
-        continue
-    fi
-    scip_evidence_not_produced_passed=$((scip_evidence_not_produced_passed + 1))
-
-    scip_relationship_trace_output="$RUN_DIRECTORY/$repositories.scip-relationship-trace.json"
-    if ! "$CLI" scip-relationship-trace --repository-id "$identity" --database "$database" \
-        --symbol 'scip-rust pkg 1 RepoWitnessSynthetic.' --direction outgoing \
-        --max-depth 1 --max-edges 1 >"$scip_relationship_trace_output" 2>/dev/null \
-        || ! validate_scip_relationship_trace_not_produced <"$scip_relationship_trace_output"; then
-        scip_relationship_trace_not_produced_failed=$((scip_relationship_trace_not_produced_failed + 1))
-        continue
-    fi
-    scip_relationship_trace_not_produced_passed=$((scip_relationship_trace_not_produced_passed + 1))
 
     if ! "$CLI" repository-topology --repository-id "$identity" --database "$database" \
         --max-paths 1000 2>/dev/null | validate_repository_topology; then
@@ -1761,7 +1578,6 @@ for candidate; do
             relevant_paths_positive_unavailable=$((relevant_paths_positive_unavailable + 1))
             code_graph_relevant_paths_positive_unavailable=$((code_graph_relevant_paths_positive_unavailable + 1))
             outbound_unavailable=$((outbound_unavailable + 1))
-            scip_symbol_resolve_not_attempted_no_candidate=$((scip_symbol_resolve_not_attempted_no_candidate + 1))
         else
             symbol_positive_passed=$((symbol_positive_passed + 1))
             if symbol_name=$(extract_first_relevant_paths_query <"$symbol_output"); then
@@ -1805,21 +1621,8 @@ for candidate; do
                 IFS= read -r name_end;
             } <"$selector_output"; then
                 outbound_failed=$((outbound_failed + 1))
-                scip_symbol_resolve_not_produced_failed=$((scip_symbol_resolve_not_produced_failed + 1))
                 continue
             fi
-            scip_symbol_resolve_output="$RUN_DIRECTORY/$repositories.scip-symbol-resolve.json"
-            if ! "$CLI" scip-symbol-resolve --repository-id "$identity" --database "$database" \
-                --snapshot "$snapshot" --generation "$generation" --path "$path" \
-                --content "$content" --artifact "$artifact" --fact-ordinal "$fact" \
-                --name-start "$name_start" --name-end "$name_end" \
-                --workspace-view "$workspace_view" \
-                >"$scip_symbol_resolve_output" 2>/dev/null \
-                || ! validate_scip_symbol_resolve_not_produced <"$scip_symbol_resolve_output"; then
-                scip_symbol_resolve_not_produced_failed=$((scip_symbol_resolve_not_produced_failed + 1))
-                continue
-            fi
-            scip_symbol_resolve_not_produced_passed=$((scip_symbol_resolve_not_produced_passed + 1))
             outbound_output="$RUN_DIRECTORY/$repositories.outbound-sites.json"
             if ! "$CLI" outbound-sites --repository-id "$identity" --database "$database" \
                 --snapshot "$snapshot" --generation "$generation" --path "$path" \
@@ -1870,127 +1673,10 @@ for candidate; do
         code_graph_syntax_site_search_positive_unavailable=$((code_graph_syntax_site_search_positive_unavailable + 1))
         relevant_paths_positive_unavailable=$((relevant_paths_positive_unavailable + 1))
         code_graph_relevant_paths_positive_unavailable=$((code_graph_relevant_paths_positive_unavailable + 1))
-        scip_symbol_resolve_not_attempted_no_declaration=$((scip_symbol_resolve_not_attempted_no_declaration + 1))
     fi
     relevant_paths_passed=$((relevant_paths_passed + 1))
     symbol_passed=$((symbol_passed + 1))
 
-    if [ "$RUST_SCIP" = true ] && map_has_rust_files <"$map_output"; then
-        rust_scip_rust_repositories=$((rust_scip_rust_repositories + 1))
-        if [ ! -f "$candidate/Cargo.toml" ]; then
-            rust_scip_no_cargo_manifest=$((rust_scip_no_cargo_manifest + 1))
-            continue
-        fi
-        rust_scip_stderr="$RUN_DIRECTORY/$repositories.scip-rust-import.stderr"
-        if "$CLI" scip-rust-import --repository-id "$identity" --database "$database" \
-            --root "$candidate" --producer-timeout-ms 300000 \
-            >/dev/null 2>"$rust_scip_stderr"; then
-            rust_scip_import_passed=$((rust_scip_import_passed + 1))
-            continue
-        fi
-        rust_scip_import_failed=$((rust_scip_import_failed + 1))
-        case "$(scip_import_failure_category "$rust_scip_stderr")" in
-            invalid_input)
-                rust_scip_invalid_input=$((rust_scip_invalid_input + 1))
-                ;;
-            source_mismatch)
-                rust_scip_source_mismatch=$((rust_scip_source_mismatch + 1))
-                ;;
-            unsupported_source_encoding)
-                rust_scip_unsupported_source_encoding=$((rust_scip_unsupported_source_encoding + 1))
-                ;;
-            deadline_exceeded)
-                rust_scip_deadline_exceeded=$((rust_scip_deadline_exceeded + 1))
-                ;;
-            resource_limit)
-                rust_scip_resource_limit=$((rust_scip_resource_limit + 1))
-                ;;
-            inconsistent_summary)
-                rust_scip_inconsistent_summary=$((rust_scip_inconsistent_summary + 1))
-                ;;
-            preparation)
-                rust_scip_preparation=$((rust_scip_preparation + 1))
-                ;;
-            *)
-                rust_scip_other_failure=$((rust_scip_other_failure + 1))
-                ;;
-        esac
-    fi
-
-    if [ "$GO_SCIP" = true ] && map_has_go_files <"$map_output"; then
-        go_scip_go_repositories=$((go_scip_go_repositories + 1))
-        if [ ! -f "$candidate/go.mod" ]; then
-            go_scip_no_root_go_manifest=$((go_scip_no_root_go_manifest + 1))
-            continue
-        fi
-        go_scip_stderr="$RUN_DIRECTORY/$repositories.scip-go-import.stderr"
-        if "$CLI" scip-go-import --repository-id "$identity" --database "$database" \
-            --root "$candidate" --scip-go "$SCIP_GO" --producer-timeout-ms 300000 \
-            >/dev/null 2>"$go_scip_stderr"; then
-            go_scip_import_passed=$((go_scip_import_passed + 1))
-            continue
-        fi
-        go_scip_import_failed=$((go_scip_import_failed + 1))
-        case "$(scip_go_import_failure_category "$go_scip_stderr")" in
-            producer)
-                go_scip_producer_failed=$((go_scip_producer_failed + 1))
-                ;;
-            invalid_input)
-                go_scip_invalid_input=$((go_scip_invalid_input + 1))
-                ;;
-            source_mismatch)
-                go_scip_source_mismatch=$((go_scip_source_mismatch + 1))
-                ;;
-            unsupported_source_encoding)
-                go_scip_unsupported_source_encoding=$((go_scip_unsupported_source_encoding + 1))
-                ;;
-            deadline_exceeded)
-                go_scip_deadline_exceeded=$((go_scip_deadline_exceeded + 1))
-                ;;
-            resource_limit)
-                go_scip_resource_limit=$((go_scip_resource_limit + 1))
-                ;;
-            inconsistent_summary)
-                go_scip_inconsistent_summary=$((go_scip_inconsistent_summary + 1))
-                ;;
-            preparation)
-                go_scip_preparation=$((go_scip_preparation + 1))
-                ;;
-            input_admission)
-                go_scip_input_admission=$((go_scip_input_admission + 1))
-                ;;
-            database_read)
-                go_scip_database_read=$((go_scip_database_read + 1))
-                ;;
-            source_scope_unavailable)
-                go_scip_source_scope_unavailable=$((go_scip_source_scope_unavailable + 1))
-                ;;
-            database_identity)
-                go_scip_database_identity=$((go_scip_database_identity + 1))
-                ;;
-            source_fence)
-                go_scip_source_fence=$((go_scip_source_fence + 1))
-                ;;
-            source_manifest_mismatch)
-                go_scip_source_manifest_mismatch=$((go_scip_source_manifest_mismatch + 1))
-                ;;
-            cancelled)
-                go_scip_cancelled=$((go_scip_cancelled + 1))
-                ;;
-            input_changed)
-                go_scip_input_changed=$((go_scip_input_changed + 1))
-                ;;
-            publication)
-                go_scip_publication=$((go_scip_publication + 1))
-                ;;
-            shutdown)
-                go_scip_shutdown=$((go_scip_shutdown + 1))
-                ;;
-            *)
-                go_scip_other_failure=$((go_scip_other_failure + 1))
-                ;;
-        esac
-    fi
 done
 
 if [ "$repositories" -eq 0 ]; then
@@ -1999,18 +1685,8 @@ if [ "$repositories" -eq 0 ]; then
 fi
 
 printf '%s\n' \
-    "state=completed repositories=$repositories index_passed=$index_passed index_failed=$index_failed context_build_passed=$context_build_passed context_build_failed=$context_build_failed change_review_passed=$change_review_passed change_review_failed=$change_review_failed change_review_unavailable=$change_review_unavailable change_review_command_failed=$change_review_command_failed change_review_validation_failed=$change_review_validation_failed mcp_change_review_passed=$mcp_change_review_passed mcp_change_review_failed=$mcp_change_review_failed topology_passed=$topology_passed topology_failed=$topology_failed map_passed=$map_passed map_failed=$map_failed overview_passed=$overview_passed overview_failed=$overview_failed test_markers_passed=$test_markers_passed test_markers_failed=$test_markers_failed syntax_site_search_passed=$syntax_site_search_passed syntax_site_search_failed=$syntax_site_search_failed syntax_site_search_positive_passed=$syntax_site_search_positive_passed syntax_site_search_positive_unavailable=$syntax_site_search_positive_unavailable code_graph_syntax_site_search_passed=$code_graph_syntax_site_search_passed code_graph_syntax_site_search_failed=$code_graph_syntax_site_search_failed code_graph_syntax_site_search_positive_passed=$code_graph_syntax_site_search_positive_passed code_graph_syntax_site_search_positive_unavailable=$code_graph_syntax_site_search_positive_unavailable relevant_paths_passed=$relevant_paths_passed relevant_paths_failed=$relevant_paths_failed relevant_paths_positive_passed=$relevant_paths_positive_passed relevant_paths_positive_unavailable=$relevant_paths_positive_unavailable code_graph_relevant_paths_passed=$code_graph_relevant_paths_passed code_graph_relevant_paths_failed=$code_graph_relevant_paths_failed code_graph_relevant_paths_positive_passed=$code_graph_relevant_paths_positive_passed code_graph_relevant_paths_positive_unavailable=$code_graph_relevant_paths_positive_unavailable symbol_passed=$symbol_passed symbol_failed=$symbol_failed symbol_positive_passed=$symbol_positive_passed symbol_positive_unavailable=$symbol_positive_unavailable outbound_passed=$outbound_passed outbound_failed=$outbound_failed outbound_unavailable=$outbound_unavailable scip_symbol_resolve_not_produced_passed=$scip_symbol_resolve_not_produced_passed scip_symbol_resolve_not_produced_failed=$scip_symbol_resolve_not_produced_failed scip_symbol_resolve_not_attempted_no_declaration=$scip_symbol_resolve_not_attempted_no_declaration scip_symbol_resolve_not_attempted_no_candidate=$scip_symbol_resolve_not_attempted_no_candidate scip_evidence_not_produced_passed=$scip_evidence_not_produced_passed scip_evidence_not_produced_failed=$scip_evidence_not_produced_failed scip_relationship_trace_not_produced_passed=$scip_relationship_trace_not_produced_passed scip_relationship_trace_not_produced_failed=$scip_relationship_trace_not_produced_failed"
+    "state=completed repositories=$repositories index_passed=$index_passed index_failed=$index_failed context_build_passed=$context_build_passed context_build_failed=$context_build_failed change_review_passed=$change_review_passed change_review_failed=$change_review_failed change_review_unavailable=$change_review_unavailable change_review_command_failed=$change_review_command_failed change_review_validation_failed=$change_review_validation_failed mcp_change_review_passed=$mcp_change_review_passed mcp_change_review_failed=$mcp_change_review_failed topology_passed=$topology_passed topology_failed=$topology_failed map_passed=$map_passed map_failed=$map_failed overview_passed=$overview_passed overview_failed=$overview_failed test_markers_passed=$test_markers_passed test_markers_failed=$test_markers_failed syntax_site_search_passed=$syntax_site_search_passed syntax_site_search_failed=$syntax_site_search_failed syntax_site_search_positive_passed=$syntax_site_search_positive_passed syntax_site_search_positive_unavailable=$syntax_site_search_positive_unavailable code_graph_syntax_site_search_passed=$code_graph_syntax_site_search_passed code_graph_syntax_site_search_failed=$code_graph_syntax_site_search_failed code_graph_syntax_site_search_positive_passed=$code_graph_syntax_site_search_positive_passed code_graph_syntax_site_search_positive_unavailable=$code_graph_syntax_site_search_positive_unavailable relevant_paths_passed=$relevant_paths_passed relevant_paths_failed=$relevant_paths_failed relevant_paths_positive_passed=$relevant_paths_positive_passed relevant_paths_positive_unavailable=$relevant_paths_positive_unavailable code_graph_relevant_paths_passed=$code_graph_relevant_paths_passed code_graph_relevant_paths_failed=$code_graph_relevant_paths_failed code_graph_relevant_paths_positive_passed=$code_graph_relevant_paths_positive_passed code_graph_relevant_paths_positive_unavailable=$code_graph_relevant_paths_positive_unavailable symbol_passed=$symbol_passed symbol_failed=$symbol_failed symbol_positive_passed=$symbol_positive_passed symbol_positive_unavailable=$symbol_positive_unavailable outbound_passed=$outbound_passed outbound_failed=$outbound_failed outbound_unavailable=$outbound_unavailable"
 
-if [ "$RUST_SCIP" = true ]; then
-    printf '%s\n' \
-        "rust_scip state=completed rust_repositories=$rust_scip_rust_repositories no_cargo_manifest=$rust_scip_no_cargo_manifest import_passed=$rust_scip_import_passed import_failed=$rust_scip_import_failed invalid_input=$rust_scip_invalid_input source_mismatch=$rust_scip_source_mismatch unsupported_source_encoding=$rust_scip_unsupported_source_encoding deadline_exceeded=$rust_scip_deadline_exceeded resource_limit=$rust_scip_resource_limit inconsistent_summary=$rust_scip_inconsistent_summary preparation=$rust_scip_preparation other_failure=$rust_scip_other_failure"
-fi
-
-if [ "$GO_SCIP" = true ]; then
-    printf '%s\n' \
-        "go_scip state=completed go_repositories=$go_scip_go_repositories no_root_go_manifest=$go_scip_no_root_go_manifest import_passed=$go_scip_import_passed import_failed=$go_scip_import_failed producer_failed=$go_scip_producer_failed invalid_input=$go_scip_invalid_input source_mismatch=$go_scip_source_mismatch unsupported_source_encoding=$go_scip_unsupported_source_encoding deadline_exceeded=$go_scip_deadline_exceeded resource_limit=$go_scip_resource_limit inconsistent_summary=$go_scip_inconsistent_summary preparation=$go_scip_preparation input_admission=$go_scip_input_admission database_read=$go_scip_database_read source_scope_unavailable=$go_scip_source_scope_unavailable database_identity=$go_scip_database_identity source_fence=$go_scip_source_fence source_manifest_mismatch=$go_scip_source_manifest_mismatch cancelled=$go_scip_cancelled input_changed=$go_scip_input_changed publication=$go_scip_publication shutdown=$go_scip_shutdown other_failure=$go_scip_other_failure"
-fi
-
-if [ "$index_failed" -ne 0 ] || [ "$context_build_failed" -ne 0 ] || [ "$change_review_failed" -ne 0 ] || [ "$mcp_change_review_failed" -ne 0 ] || [ "$topology_failed" -ne 0 ] || [ "$map_failed" -ne 0 ] || [ "$overview_failed" -ne 0 ] || [ "$test_markers_failed" -ne 0 ] || [ "$syntax_site_search_failed" -ne 0 ] || [ "$code_graph_syntax_site_search_failed" -ne 0 ] || [ "$relevant_paths_failed" -ne 0 ] || [ "$code_graph_relevant_paths_failed" -ne 0 ] || [ "$symbol_failed" -ne 0 ] || [ "$outbound_failed" -ne 0 ] || [ "$scip_symbol_resolve_not_produced_failed" -ne 0 ] || [ "$scip_evidence_not_produced_failed" -ne 0 ] || [ "$scip_relationship_trace_not_produced_failed" -ne 0 ] || { [ "$RUST_SCIP" = true ] && [ "$rust_scip_import_failed" -ne 0 ]; } || { [ "$GO_SCIP" = true ] && [ "$go_scip_import_failed" -ne 0 ]; }; then
+if [ "$index_failed" -ne 0 ] || [ "$context_build_failed" -ne 0 ] || [ "$change_review_failed" -ne 0 ] || [ "$mcp_change_review_failed" -ne 0 ] || [ "$topology_failed" -ne 0 ] || [ "$map_failed" -ne 0 ] || [ "$overview_failed" -ne 0 ] || [ "$test_markers_failed" -ne 0 ] || [ "$syntax_site_search_failed" -ne 0 ] || [ "$code_graph_syntax_site_search_failed" -ne 0 ] || [ "$relevant_paths_failed" -ne 0 ] || [ "$code_graph_relevant_paths_failed" -ne 0 ] || [ "$symbol_failed" -ne 0 ] || [ "$outbound_failed" -ne 0 ]; then
     exit 1
 fi

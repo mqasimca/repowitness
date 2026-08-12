@@ -1,5 +1,6 @@
 //! Testable command parsing and human-facing reports for the RepoWitness CLI.
 
+use serde::{Deserialize, Serialize};
 use std::ffi::{OsStr, OsString};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -16,30 +17,24 @@ use repowitness_local::{
     DEFAULT_ARCHITECTURE_OVERVIEW_ROOTS, DEFAULT_EVIDENCE_CONTEXT_BUDGET_UNITS,
     DEFAULT_LOCAL_EVIDENCE_CONTEXT_PROVIDER_RESULTS, EvidenceContextCandidate, EvidenceContextTier,
     EvidenceLocation, GeneratedLocalIdentity, GitObjectId, GitPathDiscoveryLimits,
-    GitPathDiscoveryStats, IndexedContext, KnownAtApplicability, KnownAtEvidenceBasis,
-    KnownAtHistoryCoverage, LocalArchitectureMapRequest, LocalArchitectureMapResult,
+    GitPathDiscoveryStats, IndexedContext, LocalArchitectureMapRequest, LocalArchitectureMapResult,
     LocalArchitectureOverviewRequest, LocalArchitectureOverviewResult, LocalChangeReviewReceipt,
     LocalChangeReviewRequest, LocalCodeGraphQueryRequest, LocalCodeGraphQueryResult,
-    LocalCodeSearchRequest, LocalCodeSearchResult, LocalConnectedWorkspaceIndexReport,
-    LocalConnectedWorkspaceIndexRequest, LocalDoctorReport, LocalDoctorTargets,
+    LocalCodeSearchRequest, LocalCodeSearchResult, LocalDoctorReport, LocalDoctorTargets,
     LocalEvidenceContextBuildRequest, LocalEvidenceContextItem, LocalIdentityGenerationError,
-    LocalIdentityKind, LocalIndexReport, LocalIndexRequest, LocalKnownAtHistoryRequest,
-    LocalMemoryApprovalRequest, LocalMemoryCorrespondenceReviewRequest,
-    LocalMemoryDatabaseIdentity, LocalMemoryHistoryImportRequest, LocalMemoryMaintenance,
-    LocalMemoryMaintenanceStep, LocalMemoryManageError, LocalMemoryMutation,
-    LocalMemoryRecallRequest, LocalMemoryRecallResult, LocalMemoryRecallSelection,
-    LocalMemoryRevalidationError, LocalMemoryRevalidationMutation, LocalMemoryRevalidationReport,
-    LocalMemoryRevalidationRequest, LocalMemoryWriteRequest, LocalOutboundSitesRequest,
-    LocalOutboundSitesResult, LocalPersonalMemoryAppendRequest, LocalPersonalMemoryReadRequest,
-    LocalRelevantPathsRequest, LocalRelevantPathsResult, LocalRepositoryDiagnosticsRequest,
-    LocalRepositoryDiagnosticsResult, LocalRepositoryTopologyRequest, LocalRetentionApplyReport,
-    LocalRetentionApplyRequest, LocalRetentionPins, LocalRetentionPlanReport,
-    LocalRetentionPlanRequest, LocalRustGraphReadOutput, LocalRustGraphReadRequest,
-    LocalRustGraphReadResult, LocalScipEvidenceReadRequest, LocalScipRelationshipTraceRequest,
-    LocalScipSymbolResolveRequest, LocalScipSymbolResolveSelectorText, LocalSymbolGetRequest,
-    LocalSymbolGetResult, LocalSymbolSearchRequest, LocalSymbolSearchResult,
+    LocalIdentityKind, LocalIndexReport, LocalIndexRequest, LocalMemoryApprovalRequest,
+    LocalMemoryCorrespondenceReviewRequest, LocalMemoryDatabaseIdentity,
+    LocalMemoryHistoryImportRequest, LocalMemoryMaintenance, LocalMemoryMaintenanceStep,
+    LocalMemoryManageError, LocalMemoryMutation, LocalMemoryRecallRequest, LocalMemoryRecallResult,
+    LocalMemoryRecallSelection, LocalMemoryRevalidationError, LocalMemoryRevalidationMutation,
+    LocalMemoryRevalidationReport, LocalMemoryRevalidationRequest, LocalMemoryWriteRequest,
+    LocalOutboundSitesRequest, LocalOutboundSitesResult, LocalRelevantPathsRequest,
+    LocalRelevantPathsResult, LocalRepositoryDiagnosticsRequest, LocalRepositoryDiagnosticsResult,
+    LocalRepositoryTopologyRequest, LocalRetentionApplyReport, LocalRetentionApplyRequest,
+    LocalRetentionPins, LocalRetentionPlanReport, LocalRetentionPlanRequest,
+    LocalRustGraphReadOutput, LocalRustGraphReadRequest, LocalRustGraphReadResult,
+    LocalSymbolGetRequest, LocalSymbolGetResult, LocalSymbolSearchRequest, LocalSymbolSearchResult,
     LocalSymbolSelectorText, LocalSyntaxSiteSearchRequest, LocalSyntaxSiteSearchResult,
-    LocalTaskCheckpointRequest, LocalTaskListRequest, LocalTaskPollRequest,
     LocalTeamMemorySyncRequest, LocalTestMarkersRequest, LocalTestMarkersResult, LocalWatchExit,
     LocalWatchReconciliation, LocalWatchReport, LocalWatchRequest, MAX_ARCHITECTURE_MAP_FILES,
     MAX_ARCHITECTURE_OVERVIEW_ENTRY_POINT_CANDIDATES, MAX_ARCHITECTURE_OVERVIEW_FILES,
@@ -47,37 +42,30 @@ use repowitness_local::{
     MAX_EVIDENCE_CONTEXT_BUDGET_UNITS, McpToolProfile, MemoryAssurance, MemoryCommitId,
     MemoryCorrespondenceReviewOperation, MemoryEffectiveState, MemoryFileIdentityStatus,
     MemoryFilePublicationStepStatus, MemoryKind, MemoryLifecycle, MemoryObjectFormat,
-    MemoryObservationSource, MemoryProjectionValidityState, MemoryRecallCandidateRelation,
-    MemoryRecallEvidence, MemoryRecallEvidenceAssurance, MemoryRecallEvidenceOutcome,
-    MemoryRecallEvidenceState, MemoryRecallOccurrence, MemoryRecallReason, MemoryRecallRecord,
-    MemoryRecordIdTextV1, MemoryRevalidationTarget, OUTBOUND_SITES_PROFILE_VERSION,
-    OutboundSitesAvailability, OutboundSyntaxSite, PersonalMemoryKind, PersonalMemoryProfileId,
-    PolicyValue, RELEVANT_PATHS_PROFILE_VERSION, RepositoryIdentityTextV1,
+    MemoryProjectionValidityState, MemoryRecallCandidateRelation, MemoryRecallEvidence,
+    MemoryRecallEvidenceAssurance, MemoryRecallEvidenceOutcome, MemoryRecallEvidenceState,
+    MemoryRecallOccurrence, MemoryRecallReason, MemoryRecallRecord, MemoryRecordIdTextV1,
+    MemoryRevalidationTarget, OUTBOUND_SITES_PROFILE_VERSION, OutboundSitesAvailability,
+    OutboundSyntaxSite, PolicyValue, RELEVANT_PATHS_PROFILE_VERSION, RepositoryIdentityTextV1,
     RepositoryPathTextByteLimit, RepositoryPathTextV1, ResolutionStatus, ResolvedConfiguration,
     ResolvedPreference, ResolvedToolProfilePreference, RustGraphAvailability,
     RustGraphCandidateRecord, RustGraphDefinitionRecord, RustGraphEvidenceResult,
     RustGraphImpactClass, RustGraphOutcomeRecord, RustGraphPublicationSummary,
     RustGraphSiteSelector, RustGraphTraceResult, RustSymbolKind, SYMBOL_GET_PROFILE_VERSION,
-    SYMBOL_SEARCH_PROFILE_VERSION, SYNTAX_SITE_SEARCH_PROFILE_VERSION, ScipRelationshipDirection,
-    ScipRelationshipTraceDirection, ScipRelationshipTraceResult, ScipSymbolEvidenceResult,
-    SourceLanguage, SourceSlotIdTextV1, SourceSnapshotDigest, SymbolSearchNameMatch,
-    SyntaxSiteSearchLimits, SyntaxSiteSearchQuery, TEST_MARKERS_PROFILE_VERSION, TaskId, TaskState,
-    TaskStatus, TestMarkersAvailability, TestMarkersLimits, TestMarkersQuery,
-    append_local_personal_memory, append_local_task_checkpoint, apply_local_retention,
-    approve_local_memory, build_local_change_review, build_local_evidence_context,
-    diagnose_local_repository, discover_repository_paths, generate_local_identity,
-    get_local_outbound_sites, get_local_symbol, import_local_memory_history,
-    index_local_connected_workspace, index_local_repository, inspect_local_doctor,
-    list_local_tasks, locate_local_relevant_paths, map_local_architecture,
-    overview_local_architecture, parse_configuration_file, plan_local_retention, poll_local_task,
-    read_bounded_regular_file_with_parent, read_local_code_graph_query,
-    read_local_known_at_history, read_local_personal_memory, read_local_repository_topology,
-    read_local_rust_graph, read_local_scip_evidence, read_local_test_markers, recall_local_memory,
-    reconcile_local_repository, resolve_configuration, resolve_local_scip_symbol,
-    revalidate_local_memory, review_local_memory_correspondence, search_local_index,
-    search_local_symbols, search_local_syntax_sites, sync_local_team_memory,
-    trace_local_scip_relationships, validate_local_memory_actor, watch_local_repository,
-    write_local_memory,
+    SYMBOL_SEARCH_PROFILE_VERSION, SYNTAX_SITE_SEARCH_PROFILE_VERSION, SourceLanguage,
+    SourceSlotIdTextV1, SymbolSearchNameMatch, SyntaxSiteSearchLimits, SyntaxSiteSearchQuery,
+    TEST_MARKERS_PROFILE_VERSION, TestMarkersAvailability, TestMarkersLimits, TestMarkersQuery,
+    apply_local_retention, approve_local_memory, build_local_change_review,
+    build_local_evidence_context, diagnose_local_repository, discover_repository_paths,
+    generate_local_identity, get_local_outbound_sites, get_local_symbol,
+    import_local_memory_history, index_local_repository, inspect_local_doctor,
+    locate_local_relevant_paths, map_local_architecture, overview_local_architecture,
+    parse_configuration_file, plan_local_retention, read_local_code_graph_query,
+    read_local_repository_topology, read_local_rust_graph, read_local_test_markers,
+    recall_local_memory, resolve_configuration, revalidate_local_memory,
+    review_local_memory_correspondence, search_local_index, search_local_symbols,
+    search_local_syntax_sites, sync_local_team_memory, validate_local_memory_actor,
+    watch_local_repository, write_local_memory,
 };
 use repowitness_mcp::{
     ARCHITECTURE_OVERVIEW_LIMITATIONS, ArchitectureMapOutput, ArchitectureMapServiceRequest,
@@ -89,43 +77,31 @@ use repowitness_mcp::{
     GraphArchitectureOutput, GraphEvidenceInput, GraphEvidenceOutput, GraphImpactInput,
     GraphImpactOutput, GraphReadServiceOutput, GraphReadServiceRequest, GraphSearchInput,
     GraphSearchOutput, GraphStatusInput, GraphStatusOutput, GraphTraceInput, GraphTraceOutput,
-    HistoricalMemoryApplicability, HistoricalMemoryCoverage, HistoricalMemoryEvidence,
-    HistoricalMemoryEvidenceBasis, HistoricalMemoryOutput, HistoricalMemoryServiceRequest,
-    HistoricalMemoryTarget, MAX_MCP_INTEROPERABLE_INTEGER, MEMORY_MANAGE_SCHEMA_VERSION,
-    McpArchitectureMapFile, McpArchitectureMapLanguage, McpArchitectureOverviewKind,
-    McpArchitectureOverviewRoot, McpChangeReviewPath, McpConfigurationIdentity, McpCoverage,
-    McpDiagnosticsMemoryProjection, McpEvidenceContextAttribution, McpEvidenceContextItem,
-    McpEvidenceContextOmission, McpEvidenceContextPayload, McpEvidenceContextProviderCoverage,
-    McpEvidenceContextScope, McpGraphArchitectureCount, McpGraphCandidate, McpGraphCardinality,
-    McpGraphContext, McpGraphDefinition, McpGraphEdge, McpGraphEvidence, McpGraphImpact,
-    McpGraphPublication, McpGraphSite, McpGraphTrace, McpGraphTraceCoverage,
-    McpGraphTraceTruncation, McpMemoryCandidate, McpMemoryCoverage, McpMemoryEvidence,
-    McpMemoryOccurrence, McpMemoryProducer, McpMemoryRecord, McpMemoryTarget,
-    McpOutboundSitesDeclaration, McpOutboundSyntaxSite, McpRelevantPath,
-    McpRepositoryTopologyCategory, McpRepositoryTopologyCoverage, McpRepositoryTopologyEntry,
-    McpScipOccurrence, McpScipOverlay, McpScipRelationship, McpScipRelationshipTraceEdge,
-    McpScipRelationshipTraceOverlay, McpSearchMatch, McpSelectedMemory, McpSpan, McpSymbol,
-    McpTestMarkerLanguageCoverage, McpToolSurface, MemoryManageDatabaseIdentityStatus,
+    MAX_MCP_INTEROPERABLE_INTEGER, MEMORY_MANAGE_SCHEMA_VERSION, McpArchitectureMapFile,
+    McpArchitectureMapLanguage, McpArchitectureOverviewKind, McpArchitectureOverviewRoot,
+    McpChangeReviewPath, McpConfigurationIdentity, McpCoverage, McpDiagnosticsMemoryProjection,
+    McpEvidenceContextAttribution, McpEvidenceContextItem, McpEvidenceContextOmission,
+    McpEvidenceContextPayload, McpEvidenceContextProviderCoverage, McpEvidenceContextScope,
+    McpGraphArchitectureCount, McpGraphCandidate, McpGraphCardinality, McpGraphContext,
+    McpGraphDefinition, McpGraphEdge, McpGraphEvidence, McpGraphImpact, McpGraphPublication,
+    McpGraphSite, McpGraphTrace, McpGraphTraceCoverage, McpGraphTraceTruncation,
+    McpMemoryCandidate, McpMemoryCoverage, McpMemoryEvidence, McpMemoryOccurrence,
+    McpMemoryProducer, McpMemoryRecord, McpMemoryTarget, McpOutboundSitesDeclaration,
+    McpOutboundSyntaxSite, McpRelevantPath, McpRepositoryTopologyCategory,
+    McpRepositoryTopologyCoverage, McpRepositoryTopologyEntry, McpSearchMatch, McpSelectedMemory,
+    McpSpan, McpSymbol, McpTestMarkerLanguageCoverage, MemoryManageDatabaseIdentityStatus,
     MemoryManageFileIdentityStatus, MemoryManageMaintenanceStatus,
     MemoryManageMaintenanceStepStatus, MemoryManageOutput, MemoryManagePublicationStatus,
     MemoryManagePublicationStepStatus, MemoryManageReviewDecision, MemoryManageServiceRequest,
     MemoryMutationOperation, MemoryMutationRequestScope, MemoryRecallOutput,
-    MemoryRecallServiceRequest, MemoryRecallServiceSelection, NativeTaskState, NativeTaskStatus,
-    OutboundSitesOutput, OutboundSitesSelectorOutput, OutboundSitesServiceRequest,
-    PersonalMemoryKind as McpPersonalMemoryKind,
-    PersonalMemoryLifecycle as McpPersonalMemoryLifecycle, PersonalMemoryOperation,
-    PersonalMemoryOutput, PersonalMemoryRecordOutput, PersonalMemoryServiceRequest,
-    RelevantPathsOutput, RelevantPathsServiceRequest, RepositoryService, RepositoryServiceError,
-    RepositoryTopologyOutput, RepositoryTopologyServiceRequest, ScipEvidenceInput,
-    ScipEvidenceOutput, ScipEvidenceServiceRequest, ScipRelationshipTraceInput,
-    ScipRelationshipTraceOutput, ScipRelationshipTraceServiceRequest, ScipSymbolResolveInput,
-    ScipSymbolResolveOutput, ScipSymbolResolveServiceRequest, SymbolGetOutput,
+    MemoryRecallServiceRequest, MemoryRecallServiceSelection, OutboundSitesOutput,
+    OutboundSitesSelectorOutput, OutboundSitesServiceRequest, RelevantPathsOutput,
+    RelevantPathsServiceRequest, RepositoryService, RepositoryServiceError,
+    RepositoryTopologyOutput, RepositoryTopologyServiceRequest, SymbolGetOutput,
     SymbolGetServiceRequest, SymbolSearchOutput, SymbolSearchServiceRequest, SymbolSelectorOutput,
-    SyntaxSiteSearchOutput, SyntaxSiteSearchServiceRequest, TestMarkersOutput,
-    serve_stdio_with_repository_catalog, serve_stdio_with_repository_registry,
-    serve_stdio_with_surface_and_native_tasks, serve_stdio_with_surface_tasks_and_personal_memory,
+    SyntaxSiteSearchOutput, SyntaxSiteSearchServiceRequest, TestMarkersOutput, serve_stdio,
+    serve_stdio_with_memory_writes, serve_stdio_with_repository_catalog,
 };
-use serde::{Deserialize, Serialize};
 
 const EXIT_SUCCESS: u8 = 0;
 const EXIT_USAGE: u8 = 64;
@@ -136,35 +112,24 @@ const MAX_CONTEXT_BUILD_ARGUMENTS: usize = 20 + CONFIGURATION_LAYER_ARGUMENTS;
 const MAX_CONFIG_EXPLAIN_ARGUMENTS: usize = 7;
 const MAX_DOCTOR_ARGUMENTS: usize = 10;
 const MAX_GRAPH_ARGUMENTS: usize = 52;
-const MAX_SCIP_EVIDENCE_ARGUMENTS: usize = 16;
-const MAX_SCIP_RELATIONSHIP_TRACE_ARGUMENTS: usize = 20;
-const MAX_SCIP_SYMBOL_RESOLVE_ARGUMENTS: usize = 26;
-const MAX_SCIP_RUST_IMPORT_ARGUMENTS: usize = 16;
-const MAX_SCIP_GO_IMPORT_ARGUMENTS: usize = 16;
 const MAX_DIAGNOSTICS_ARGUMENTS: usize = 4 + CONFIGURATION_LAYER_ARGUMENTS;
 const MAX_INDEX_ARGUMENTS: usize = 7 + CONFIGURATION_LAYER_ARGUMENTS;
-const MAX_WORKSPACE_INDEX_ARGUMENTS: usize = 5 + CONFIGURATION_LAYER_ARGUMENTS;
 const MAX_WATCH_ARGUMENTS: usize = 9 + CONFIGURATION_LAYER_ARGUMENTS;
 const MAX_MEMORY_RECALL_ARGUMENTS: usize = 9 + CONFIGURATION_LAYER_ARGUMENTS;
 const MAX_MEMORY_MANAGE_ARGUMENTS: usize = 24;
 const MAX_MEMORY_REVALIDATE_ARGUMENTS: usize = 7;
-const MAX_TASK_STATUS_ARGUMENTS: usize = 6;
-const MAX_TASK_COMMAND_ARGUMENTS: usize = 14;
-const MAX_PERSONAL_MEMORY_COMMAND_ARGUMENTS: usize = 18;
 const MAX_SEARCH_ARGUMENTS: usize = 8 + CONFIGURATION_LAYER_ARGUMENTS;
 const MAX_RELEVANT_PATHS_ARGUMENTS: usize = 8 + CONFIGURATION_LAYER_ARGUMENTS;
 const MAX_SYMBOL_SEARCH_ARGUMENTS: usize = 18 + CONFIGURATION_LAYER_ARGUMENTS;
 const MAX_ARCHITECTURE_MAP_ARGUMENTS: usize = 6;
 const MAX_REPOSITORY_TOPOLOGY_ARGUMENTS: usize = 6;
 const MAX_ONBOARD_ARGUMENTS: usize = 6;
-const MAX_CODEX_ARGUMENTS: usize = 70;
 const MAX_ARCHITECTURE_OVERVIEW_ARGUMENTS: usize = 12;
 const MAX_SYMBOL_GET_ARGUMENTS: usize = 18;
 const MAX_OUTBOUND_SITES_ARGUMENTS: usize = 18;
 const MAX_SYNTAX_SITE_SEARCH_ARGUMENTS: usize = 8;
 const MAX_TEST_MARKERS_ARGUMENTS: usize = 10;
 const MAX_MCP_SERVE_ARGUMENTS: usize = 15 + CONFIGURATION_LAYER_ARGUMENTS;
-const MAX_DAEMON_ARGUMENTS: usize = 3 + CONFIGURATION_LAYER_ARGUMENTS;
 const MAX_CLI_CONTEXT_OUTPUT_BYTES: usize = 24 * 1024 * 1024;
 const MAX_CLI_CONFIGURATION_OUTPUT_BYTES: usize = 32 * 1024;
 const MAX_CLI_DIAGNOSTICS_OUTPUT_BYTES: usize = 256 * 1024;
@@ -187,88 +152,17 @@ const HELP: &str = concat!(
     "RepoWitness ",
     env!("CARGO_PKG_VERSION"),
     "\n\n",
-    "Usage:\n",
-    "  repowitness --help\n",
-    "  repowitness --version\n",
-    "  repowitness config explain [configuration layer options]\n",
-    "  repowitness doctor [configuration layer options]\n",
-    "      [--repository <path> --database <path>]\n",
-    "  repowitness identity generate <repository|connected-workspace|source-slot>\n",
-    "  repowitness onboard --root <path> [--state-dir <path>] [--repository-id <id>]\n",
-    "  repowitness codex <install|remove|session-start> [--codex-home <path>]\n",
-    "  repowitness inspect-paths [--] <repository>\n",
-    "  repowitness index --repository-id <id> --database <path> [configuration layer options] [--] <repository>\n",
-    "  repowitness workspace index --manifest <path> --database <path> [configuration layer options]\n",
-    "  repowitness watch --repository-id <id> --database <path> [configuration layer options] [--] <repository>\n",
-    "  repowitness daemon --catalog [--catalog-state-dir <path>] [configuration layer options]\n",
-    "  repowitness gc <plan|apply> --database <path> [retention options]\n",
-    "  repowitness context-build --repository-id <id> --database <path> --root <path> --intent <text> [context options]\n",
-    "  repowitness verify --repository-id <id> --database <path> --root <path> --base <object-id> --intent <text>\n",
-    "  repowitness diagnostics --repository-id <id> --database <path> [configuration layer options]\n",
-    "  repowitness architecture-map --repository-id <id> --database <path> [--max-files <1-1000>]\n",
-    "  repowitness architecture-overview --repository-id <id> --database <path> [--max-roots <1-500>]\n",
-    "      [--max-entry-point-candidates <1-500>] [--max-files <1-1000>]\n",
-    "  repowitness repository-topology --repository-id <id> --database <path> [--max-paths <1-1000>]\n",
-    "  repowitness graph <status|search|evidence|architecture|trace|impact> <options>\n",
-    "  repowitness scip-rust-import <explicit Rust producer and import options>\n",
-    "  repowitness scip-go-import <explicit Go producer and import options>\n",
-    "  repowitness search --repository-id <id> --database <path> --query <text> [configuration layer options]\n",
-    "  repowitness locate-relevant-paths --repository-id <id> --database <path> --query <text> [--limit <1-50>] [configuration layer options]\n",
-    "  repowitness symbol-search --repository-id <id> --database <path> --name <symbol> [typed filters]\n",
-    "  repowitness symbol-get <exact selector options>\n",
-    "  repowitness outbound-sites <exact declaration selector options>\n",
-    "  repowitness syntax-site-search --repository-id <id> --database <path> --target <exact raw target>\n",
-    "      [--max-sites <1-250>]\n",
-    "  repowitness test-markers --repository-id <id> --database <path> [--language <language>]\n",
-    "      [--path-prefix <repository-relative-prefix>] [--limit <1-1000>]\n",
-    "  repowitness memory-revalidate --repository-id <id> --database <path> <repository>\n",
-    "  repowitness memory-recall --repository-id <id> --database <path> (--query <text>|--all) [configuration layer options]\n",
-    "  repowitness memory-manage <write|approve|review|import-history> <options>\n",
-    "  repowitness memory-history --repository-id <id> --database <path> --known-at <unix-ms> <exact target> <repository>\n",
-    "  repowitness personal-memory <append|read> <options>\n",
-    "  repowitness task-status --repository-id <id> --database <path> --task-id <hex>\n",
-    "  repowitness task <create|checkpoint> <options>\n",
-    "  repowitness mcp-serve (--repository-id <id> --database <path> --root <path>|--registry <path>|--catalog) [configuration layer options]\n",
-    "      [--enable-memory-writes --memory-actor <local-actor>]\n",
-    "      [--enable-personal-memory --personal-memory-profile <32 lowercase hex characters>]\n",
-    "      [--enable-native-tasks]\n\n",
+    "Usage:\n  repowitness <command> [options]\n\n",
     "Commands:\n",
-    "  config explain Explain effective configuration and path-free provenance.\n",
-    "  doctor         Validate effective configuration and explicit local targets.\n",
-    "  identity       Generate a canonical local identity from OS secure randomness.\n",
-    "  onboard        Index one explicit repository into private local user state.\n",
-    "  inspect-paths  Validate bounded Git path discovery without analyzing file\n",
-    "                 contents or creating an index.\n",
-    "  index          Build and atomically activate a bounded Rust/Go/TS/TSX/Python index.\n",
-    "  workspace      Atomically index an explicit connected-workspace manifest.\n",
-    "  watch          Reconcile and atomically activate source changes in the foreground.\n",
-    "  gc             Plan or explicitly apply bounded generation retention.\n",
-    "  context-build  Compile bounded evidence-balanced source and memory context.\n",
-    "  verify         Build a fenced, revision-pinned, read-only change-review receipt.\n",
-    "  diagnostics    Inspect active source/memory state, coverage, and limitations.\n",
-    "  architecture-map  Inventory exact indexed files without relationship inference.\n",
-    "  architecture-overview  Summarize source facts, structural path buckets, and main candidates.\n",
-    "  repository-topology  Inventory tracked path categories without reading their contents.\n",
-    "  graph          Read the native immutable Rust syntax graph with exact evidence.\n",
-    "  scip-rust-import  Explicitly produce and import a Rust SCIP precision overlay.\n",
-    "  scip-go-import  Explicitly produce and import a Go SCIP precision overlay.\n",
-    "  search         Search active Rust, Go, TypeScript, TSX, and Python symbols.\n",
-    "  locate-relevant-paths  Group direct lexical declaration matches into source paths.\n",
-    "  symbol-search  Find exact/prefix direct declarations with typed filters.\n",
-    "  symbol-get     Retrieve one exact verified declaration from search output.\n",
-    "  outbound-sites Read exact raw syntax observations within one declaration.\n",
-    "  syntax-site-search  Find exact raw syntax target observations without target resolution.\n",
-    "  test-markers   Read raw parser-attributed test markers without execution claims.\n\n",
-    "  memory-revalidate  Atomically rebuild current memory against active source.\n",
-    "  memory-recall  Recall bounded projected memory with freshness and evidence.\n",
-    "  memory-manage  Write, approve, review correspondence, or observe Git memory.\n",
-    "  memory-history Read a bounded historical applicability receipt for one exact target.\n",
-    "  personal-memory  Append or read explicitly profile-scoped local-only memory.\n",
-    "  task-status    Poll redacted status for one durable local task.\n",
-    "  task           Create or append a bounded durable task checkpoint.\n",
-    "  mcp-serve      Serve context_build and evidence retrieval over stdio.\n",
-    "\nConfiguration layer options:\n",
-    "  --user-config <path> --workspace-config <path> --repository-config <path>\n",
+    "  config explain, doctor, identity, onboard, inspect-paths\n",
+    "  index, watch, gc, context-build, verify, diagnostics\n",
+    "  architecture-map, architecture-overview, repository-topology, graph\n",
+    "  search, locate-relevant-paths, symbol-search, symbol-get\n",
+    "  outbound-sites, syntax-site-search, test-markers\n",
+    "  memory-revalidate, memory-recall, memory-manage\n",
+    "  mcp-serve --repository-id <id> --database <path> --root <path>\n\n",
+    "Run `repowitness <command> --help` for command details.\n",
+    "Configuration: --user-config <path> --workspace-config <path> --repository-config <path>\n",
 );
 
 const CONTEXT_BUILD_HELP: &str = concat!(
@@ -276,15 +170,12 @@ const CONTEXT_BUILD_HELP: &str = concat!(
     "Usage:\n",
     "  repowitness context-build --repository-id <id> --database <path> --root <path>\n",
     "      --intent <literal terms> [--budget <1-1048576>] [--limit <1-100>]\n",
-    "      [--connected-workspace-id <cwi1:h:...> --source-slot-id <ssi1:h:...>]\n",
-    "      [--scip-symbol <opaque-symbol>]\n",
     "      [--user-config <path>] [--workspace-config <path>]\n",
     "      [--repository-config <path>]\n\n",
     "The versioned evidence-balanced profile pins one single-repository\n",
-    "workspace view, or one explicit connected source slot. It reports typed scope,\n",
+    "workspace view. It reports typed scope,\n",
     "evidence tiers, provider attribution, whole-item omissions, and bounded source\n",
-    "or current-memory content. An optional exact SCIP symbol adds one source-verified,\n",
-    "unambiguous precision-overlay provider result.\n",
+    "or current-memory content.\n",
     "The budget uses the labeled utf8_bytes_upper_bound_v1 estimator, not an exact\n",
     "model token count.\n",
 );
@@ -310,47 +201,16 @@ const DOCTOR_HELP: &str = concat!(
 );
 
 const MCP_SERVE_HELP: &str = concat!(
-    "Serve the active Phase 0 supported-language index over local MCP stdio.\n\n",
+    "Serve one repository or a local catalog over MCP stdio.\n\n",
     "Usage:\n",
     "  repowitness mcp-serve --repository-id <id> --database <path> --root <path>\n",
-    "      [--connected-workspace-id <id> --source-slot-id <id>]\n",
+    "  repowitness mcp-serve --catalog [--catalog-state-dir <path>]\n",
     "      [--user-config <path>] [--workspace-config <path>]\n",
     "      [--repository-config <path>]\n",
-    "      [--enable-memory-writes --memory-actor <local-actor>]\n",
-    "      [--enable-personal-memory --personal-memory-profile <32 lowercase hex characters>]\n",
-    "      [--enable-native-tasks]\n\n",
-    "  repowitness mcp-serve --registry <path>\n",
-    "      [--user-config <path>] [--workspace-config <path>]\n\n",
-    "  repowitness mcp-serve --catalog [--daemon] [--catalog-state-dir <path>]\n",
-    "      [--user-config <path>] [--workspace-config <path>]\n\n",
-    "Stdout is reserved exclusively for newline-delimited MCP JSON-RPC. The\n",
-    "configured repository, database, identities, and optional graph source slot are fixed for the process;\n",
-    "tool callers cannot select arbitrary local paths. The default server exposes\n",
-    "only read tools. memory_manage is available only when both mutation options\n",
-    "are supplied, the effective configuration permits writes, and the selected\n",
-    "implemented tool profile is authorized. Its actor is fixed locally and never accepted\n",
-    "from tool input. Configuration failures occur before runtime initialization.\n",
-    "personal_memory is absent by default. It is available only when its explicit\n",
-    "startup profile capability is supplied; callers cannot select a profile, and\n",
-    "context_build and memory_recall remain team-only.\n",
-    "Native MCP Tasks are disabled by default and are available only when\n",
-    "--enable-native-tasks is supplied at startup; durable task state survives\n",
-    "a restart, while bounded process-local result payloads do not.\n",
-    "The default canonical profile is unchanged. A user-owned configuration may\n",
-    "opt into incumbent-compatible, which adds seven bounded read-only aliases.\n",
-    "Registry mode is a separate canonical read-only surface for 1 through 32\n",
-    "explicit independently indexed repositories. Every tool call must supply\n",
-    "one registered repository_id; it has no default repository and rejects\n",
-    "repository configuration, source slots, aliases, memory writes, personal\n",
-    "memory, and native tasks.\n",
-    "Catalog mode is an opt-in private user-state experience for one Codex MCP\n",
-    "entry. It resolves and incrementally indexes only the current process Git\n",
-    "worktree before startup, keeps no caller-selected paths, and defaults tool\n",
-    "calls only to that process-fixed repository. Supply repository_id to select\n",
-    "another repository admitted by the loaded catalog snapshot.\n",
-    "With --daemon, catalog stdio becomes a local Unix proxy to the already\n",
-    "running daemon admitted for this process-current worktree; it does not\n",
-    "index or create catalog state and fails before protocol startup when absent.\n",
+    "      [--enable-memory-writes --memory-actor <local-actor>]\n\n",
+    "Catalog mode exposes every repository registered by `onboard` through one MCP\n",
+    "connection. Tool calls may select an opaque repository_id; the current catalog\n",
+    "repository is the default when available. Catalog mode is read-only.\n",
 );
 
 const DIAGNOSTICS_HELP: &str = concat!(
@@ -369,7 +229,6 @@ const GRAPH_HELP: &str = concat!(
     "Read one active or exact immutable native Rust graph without mutation.\n\n",
     "Usage:\n",
     "  repowitness graph status --repository-id <id> --database <path>\n",
-    "  repowitness graph status --connected-workspace-id <id> --source-slot-id <id> --database <path>\n",
     "  repowitness graph search --repository-id <id> --database <path> --query <text>\n",
     "  repowitness graph evidence --repository-id <id> --database <path> --site-json <json>\n",
     "  repowitness graph architecture --repository-id <id> --database <path>\n",
@@ -377,8 +236,7 @@ const GRAPH_HELP: &str = concat!(
     "      --start-json <json> --direction <outbound|inbound> --edge-kind <kind>...\n",
     "  repowitness graph impact --repository-id <id> --database <path>\n",
     "      --start-json <definition-json> --edge-kind <kind>...\n\n",
-    "Use either --repository-id for the compatible single-repository workspace or\n",
-    "--connected-workspace-id with --source-slot-id for an explicit source member. Every\n",
+    "Every\n",
     "operation accepts an optional exact --workspace-view/--graph-generation pair,\n",
     "--timeout-ms, configuration layer options, and applicable --max-* bounds. Search\n",
     "accepts --query. Evidence accepts the exact site object emitted previously. Trace\n",
@@ -543,87 +401,11 @@ const SYMBOL_SEARCH_HELP: &str = concat!(
     "Find bounded exact or prefix direct declaration facts across the five indexed source languages.\n\n",
     "Usage:\n",
     "  repowitness symbol-search --repository-id <id> --database <path> --name <symbol>\n",
-    "  repowitness symbol-search --connected-workspace-id <id> --source-slot-id <id>\n",
-    "      --database <path> --name <symbol>\n",
     "      [--match <exact|prefix>] [--language <rust|go|typescript|tsx|python>]\n",
     "      [--kind <declaration-kind>] [--path-prefix <repository-relative-prefix>]\n",
     "      [--limit <1-100>] [configuration layer options]\n\n",
-    "Results are generation- and source-slot-pinned parser declaration evidence. Equal names\n",
-    "do not assert identity and never create relationship edges. Copy one candidate's immutable\n",
-    "selector and name_span, plus the returned workspace_view, to scip-symbol-resolve before\n",
-    "asking scip-evidence for separately produced explicit relationship evidence.\n",
-);
-
-const SCIP_EVIDENCE_HELP: &str = concat!(
-    "Read exact package-scoped evidence from one imported SCIP overlay.\n\n",
-    "Usage:\n",
-    "  repowitness scip-evidence --repository-id <id> --database <path> --symbol <scip-symbol>\n",
-    "      [--package-root <rwp1:h:text>]... [--workspace-view <positive-id>]\n",
-    "      [--timeout-ms <1-30000>]\n",
-    "  repowitness scip-evidence --connected-workspace-id <id> --source-slot-id <id>\n",
-    "      --database <path> --symbol <scip-symbol> [same optional bounds]\n\n",
-    "The command is read-only. It selects an active or exact immutable workspace view and\n",
-    "returns categorical `not_produced`, `no_match`, or `found` evidence. Package roots are\n",
-    "canonical byte-preserving repository paths; no package manager or host path is used.\n",
-);
-const SCIP_RELATIONSHIP_TRACE_HELP: &str = concat!(
-    "Trace bounded producer-declared relationships from one imported SCIP symbol.\n\n",
-    "Usage:\n",
-    "  repowitness scip-relationship-trace --repository-id <id> --database <path> --symbol <scip-symbol>\n",
-    "      --direction <outgoing|incoming> [--max-depth <1-4>] [--max-edges <1-256>]\n",
-    "      [--package-root <rwp1:h:text>]... [--workspace-view <positive-id>] [--timeout-ms <1-30000>]\n",
-    "  repowitness scip-relationship-trace --connected-workspace-id <id> --source-slot-id <id>\n",
-    "      --database <path> --symbol <scip-symbol> --direction <outgoing|incoming> [same optional bounds]\n\n",
-    "The command traverses only producer-declared SCIP relationships from one immutable overlay.\n",
-    "It does not infer source calls, runtime behavior, or repository-wide relationship completeness.\n",
-);
-const SCIP_SYMBOL_RESOLVE_HELP: &str = concat!(
-    "Usage:\n",
-    "  repowitness scip-symbol-resolve --repository-id <id> --database <path> --snapshot <sha256> --generation <id> --path <rwp1:h:...> --content <sha256> --artifact <sha256> --fact-ordinal <n> --name-start <byte> --name-end <byte>\n",
-    "  repowitness scip-symbol-resolve --connected-workspace-id <id> --source-slot-id <id> --database <path> --snapshot <sha256> --generation <id> --path <rwp1:h:...> --content <sha256> --artifact <sha256> --fact-ordinal <n> --name-start <byte> --name-end <byte> [--workspace-view <id>] [--timeout-ms <ms>]\n",
-);
-
-const MAX_SCIP_IMPORT_ARGUMENTS: usize = 14;
-const SCIP_IMPORT_HELP: &str = concat!(
-    "Import one bounded SCIP file as an immutable source-slot precision overlay.\n\n",
-    "Usage:\n",
-    "  repowitness scip-import --database <path> --root <repository-root> --scip-file <path>\n",
-    "      --connected-workspace-id <cwi1:h:text> --source-slot-id <ssi1:h:text>\n",
-    "      [--workspace-view <positive-id>] [--timeout-ms <1-300000>]\n\n",
-    "The file is read once through a no-follow regular-file boundary. Its claims are\n",
-    "validated only against the exact current source slot and source snapshot. A failed,\n",
-    "changed, stale, or cancelled import leaves the prior active overlay readable.\n",
-);
-const SCIP_RUST_IMPORT_HELP: &str = concat!(
-    "Produce and import one Rust SCIP overlay with an explicitly invoked rust-analyzer.\n\n",
-    "Usage:\n",
-    "  repowitness scip-rust-import --database <path> --root <repository-root>\n",
-    "      (--repository-id <rwi1:h:text>|--connected-workspace-id <cwi1:h:text>\n",
-    "       --source-slot-id <ssi1:h:text>)\n",
-    "      [--workspace-view <positive-id>] [--rust-analyzer <path>]\n",
-    "      [--producer-timeout-ms <1-300000>] [--import-timeout-ms <1-300000>]\n\n",
-    "This explicit CLI-only command runs `rust-analyzer scip . --output <private-temporary-file>`\n",
-    "with the repository as its working directory, then imports that file through the same\n",
-    "exact source-slot and immutable-view checks as scip-import. It does not run during index\n",
-    "or from MCP. rust-analyzer, cargo, and rustc must already be available to the requested\n",
-    "producer process. Failed production or import leaves the previous overlay readable.\n",
-);
-const SCIP_GO_IMPORT_HELP: &str = concat!(
-    "Produce and import one Go SCIP overlay with an explicitly invoked scip-go.\n\n",
-    "Usage:\n",
-    "  repowitness scip-go-import --database <path> --root <repository-root>\n",
-    "      (--repository-id <rwi1:h:text>|--connected-workspace-id <cwi1:h:text>\n",
-    "       --source-slot-id <ssi1:h:text>)\n",
-    "      [--workspace-view <positive-id>] [--scip-go <path>]\n",
-    "      [--producer-timeout-ms <1-300000>] [--import-timeout-ms <1-300000>]\n\n",
-    "This explicit CLI-only command runs `scip-go index --output <private-temporary-file>`\n",
-    "with the repository as its working directory, then imports that file through the same\n",
-    "exact source-slot and immutable-view checks as scip-import. It does not run during index\n",
-    "or from MCP. scip-go and Go must already be available to the requested producer process.\n",
-    "It disables Go network, checksum, ambient Go configuration, workspace, custom package-driver,\n",
-    "and automatic-toolchain behavior; dependencies therefore must already be available locally.\n",
-    "The supplied root must be a standard single-module Go project with its go.mod at that root.\n",
-    "Failed production or import leaves the previous overlay readable.\n",
+    "Results are generation-pinned parser declaration evidence. Equal names do not assert\n",
+    "identity and never create relationship edges.\n",
 );
 
 include!("cli/adapters.rs");
@@ -636,24 +418,15 @@ include!("cli/outbound_sites_commands.rs");
 include!("cli/syntax_site_search_commands.rs");
 include!("cli/test_markers_commands.rs");
 include!("cli/mcp_graph.rs");
-include!("cli/mcp_scip_evidence.rs");
-include!("cli/mcp_scip_relationship_trace.rs");
-include!("cli/mcp_scip_symbol_resolve.rs");
 include!("cli/mcp_service.rs");
+include!("cli/mcp_registry.rs");
 include!("cli/graph_arguments.rs");
 include!("cli/graph_commands.rs");
 include!("cli/graph_output.rs");
-include!("cli/scip_evidence_commands.rs");
-include!("cli/scip_relationship_trace_commands.rs");
-include!("cli/scip_symbol_resolve_commands.rs");
-include!("cli/scip_import_commands.rs");
-include!("cli/scip_rust_import_commands.rs");
-include!("cli/scip_go_import_commands.rs");
 include!("cli/identity_commands.rs");
 include!("cli/identity_output.rs");
 include!("cli/onboard_commands.rs");
 include!("cli/bounded_file.rs");
-include!("cli/codex_commands.rs");
 include!("cli/configuration.rs");
 include!("cli/config_commands.rs");
 include!("cli/config_output.rs");
@@ -672,17 +445,10 @@ include!("cli/memory.rs");
 include!("cli/memory_commands.rs");
 include!("cli/memory_manage.rs");
 include!("cli/memory_manage_commands.rs");
-include!("cli/known_at_history_commands.rs");
-include!("cli/task_commands.rs");
-include!("cli/personal_memory_commands.rs");
-include!("cli/mcp_registry.rs");
 include!("cli/mcp_commands.rs");
 include!("cli/mcp_memory_manage.rs");
-include!("cli/daemon_commands.rs");
 include!("cli/watch_commands.rs");
 include!("cli/watch_output.rs");
-include!("cli/workspace_commands.rs");
-include!("cli/workspace_output.rs");
 include!("cli/commands.rs");
 include!("cli/output.rs");
 include!("cli/memory_output.rs");

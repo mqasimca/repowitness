@@ -27,26 +27,14 @@ pub enum RepositoryServiceError {
     ContextBuild,
     /// Source-fenced revision-pinned change review failed without a receipt.
     ChangeReview,
-    /// A durable engineering-task projection could not be read or updated.
-    NativeTask,
     /// Repository diagnostics failed without a usable result.
     Diagnostics,
     /// Native Rust graph read failed without a usable result.
     GraphRead,
-    /// Immutable package-scoped SCIP evidence read failed without a usable result.
-    ScipEvidence,
-    /// Immutable bounded producer-declared SCIP relationship trace failed.
-    ScipRelationshipTrace,
-    /// Exact source-span to SCIP-symbol navigation failed without a usable result.
-    ScipSymbolResolve,
     /// Memory recall failed without a usable result.
     MemoryRecall,
-    /// Exact historical memory applicability read failed without a receipt.
-    HistoricalMemory,
     /// Authorized local memory management failed without a usable result.
     MemoryManage,
-    /// Explicit profile-pinned personal memory failed without a usable result.
-    PersonalMemory,
     /// An admitted memory mutation returned no definitive receipt within its bound.
     MemoryMutationOutcomeUnknown {
         /// Public request scope whose task outcome was uncertain.
@@ -91,16 +79,10 @@ impl fmt::Display for RepositoryServiceError {
             Self::CodeGraphQuery => "code-graph-query failed",
             Self::ContextBuild => "context build failed",
             Self::ChangeReview => "change review failed",
-            Self::NativeTask => "durable native task operation failed",
             Self::Diagnostics => "repository diagnostics failed",
             Self::GraphRead => "Rust graph read failed",
-            Self::ScipEvidence => "SCIP evidence read failed",
-            Self::ScipRelationshipTrace => "SCIP relationship trace failed",
-            Self::ScipSymbolResolve => "SCIP symbol resolution failed",
             Self::MemoryRecall => "memory recall failed",
-            Self::HistoricalMemory => "historical memory read failed",
             Self::MemoryManage => "memory management failed",
-            Self::PersonalMemory => "personal memory operation failed",
             Self::MemoryMutationOutcomeUnknown { .. } => {
                 unreachable!("outcome-unknown errors are rendered above")
             }

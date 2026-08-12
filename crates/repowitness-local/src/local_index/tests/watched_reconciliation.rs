@@ -36,6 +36,49 @@ fn watched_reconciliation_skips_unchanged_source_and_publishes_changes() {
 }
 
 #[test]
+fn source_only_reconciliation_publishes_without_eager_graph_storage() {
+    let directory = TempDirectory::new();
+    let repository = fixture_repository(&directory);
+    let database = directory.database();
+    let request = LocalIndexRequest::new(&repository, &database, REPOSITORY_ID, 0).without_graph();
+
+    let outcome = reconcile_local_repository(request, Arc::new(AtomicBool::new(false)))
+        .expect("source-only reconciliation should publish");
+    let LocalReconciliationOutcome::Published(report) = outcome else {
+        panic!("source-only reconciliation must publish");
+    };
+
+    let connection = rusqlite::Connection::open(&database).expect("database should open");
+    let graph_rows: i64 = connection
+        .query_row(
+            "SELECT (SELECT count(*) FROM generation_graph_requirements)
+                  + (SELECT count(*) FROM generation_graph_publications)",
+            [],
+            |row| row.get(0),
+        )
+        .expect("graph receipt count should be readable");
+    assert_eq!(graph_rows, 0);
+
+    assert!(report.total_facts() > 0);
+
+    let full = index_local_rust_repository(
+        LocalIndexRequest::new(&repository, &database, REPOSITORY_ID, 0),
+        Arc::new(AtomicBool::new(false)),
+    )
+    .expect("explicit full indexing should build the graph later");
+    assert!(full.generation() > report.generation());
+    let connection = rusqlite::Connection::open(&database).expect("database should reopen");
+    let graph_publications: i64 = connection
+        .query_row(
+            "SELECT count(*) FROM generation_graph_publications",
+            [],
+            |row| row.get(0),
+        )
+        .expect("graph publication count should be readable");
+    assert_eq!(graph_publications, 1);
+}
+
+#[test]
 fn unchanged_reconciliation_skips_generation_graph_preparation() {
     let directory = TempDirectory::new();
     let repository = fixture_repository(&directory);

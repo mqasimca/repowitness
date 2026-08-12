@@ -261,11 +261,9 @@ authored bounded read-only aliases: `search_code`, `get_code_snippet`,
 explicitly incompatible with the pinned release, and response and behavior
 compatibility are not assessed.
 
-The independently authored
-[public observation fixture](../../crates/repowitness-mcp/src/wire/compatibility/fixtures/codebase-memory-mcp-v0.9.0.json)
-and
-[local `tools/list` golden](../../crates/repowitness-mcp/src/server/tests/fixtures/incumbent-subset-v1-tools-list.json)
-bound those claims. The default remains the canonical native surface. The
+The independently authored public observation fixture was retired with this
+development-only compatibility surface. The active MCP tests now assert the
+canonical `tools/list` contract directly. The default remains the canonical native surface. The
 other initial candidates remain excluded until their own use case, strict
 boundary, and contract fixtures are implemented. This ADR remains proposed
 until maintainers review the name-only claims and release evidence.

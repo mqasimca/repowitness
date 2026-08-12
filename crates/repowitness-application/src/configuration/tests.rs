@@ -44,12 +44,7 @@ fn defaults_are_versioned_bounded_and_have_a_stable_golden_digest() {
     );
     assert_eq!(
         resolved.policy().allowed_mcp_tool_profiles().effective(),
-        &[
-            McpToolProfile::Canonical,
-            McpToolProfile::IncumbentCompatible
-        ]
-        .into_iter()
-        .collect()
+        &[McpToolProfile::Canonical,].into_iter().collect()
     );
     assert_eq!(
         resolved.policy().allowed_languages().effective(),
@@ -65,7 +60,7 @@ fn defaults_are_versioned_bounded_and_have_a_stable_golden_digest() {
     );
     assert_eq!(
         hex(resolved.digest().as_bytes()),
-        "e26f3f0c86f3dca85b2af3189445b0d60adbcf470b7de377b1b147e3fd65cec2"
+        "6198efdf6ae11d7b33a55b9a0514eda27976e2d5ee750817829923d92978589f"
     );
 }
 
@@ -168,9 +163,9 @@ fn every_allowed_language_pair_resolves_to_exact_intersection() {
 
 #[test]
 fn every_tool_profile_pair_can_only_shrink_compiled_authority() {
-    let compiled = tool_profiles(0b101);
-    for left_mask in 0_u8..8 {
-        for right_mask in 0_u8..8 {
+    let compiled = tool_profiles(0b01);
+    for left_mask in 0_u8..4 {
+        for right_mask in 0_u8..4 {
             let left = tool_profiles(left_mask);
             let right = tool_profiles(right_mask);
             let layers = [
@@ -202,95 +197,6 @@ fn every_tool_profile_pair_can_only_shrink_compiled_authority() {
             );
         }
     }
-}
-
-#[test]
-fn repository_and_workspace_tool_profile_requests_never_grant_startup_authority() {
-    let all_profiles: BTreeSet<McpToolProfile> = [
-        McpToolProfile::Canonical,
-        McpToolProfile::Minimal,
-        McpToolProfile::IncumbentCompatible,
-    ]
-    .into_iter()
-    .collect();
-    for layer_kind in [
-        ConfigurationLayerKind::Workspace,
-        ConfigurationLayerKind::Repository,
-    ] {
-        let untrusted = ConfigurationLayer::try_new(
-            layer_kind,
-            None,
-            preferences(None, Some(McpToolProfile::IncumbentCompatible)),
-            ConfigurationPolicyOverrides::try_new(
-                None,
-                Some(all_profiles.clone()),
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-            )
-            .expect("untrusted policy request"),
-        )
-        .expect("untrusted layer");
-        let resolved = resolve_configuration(&[untrusted]).expect("tool profile policy");
-        let requested = resolved.preferences().mcp_tool_profile();
-        assert_eq!(requested.requested(), McpToolProfile::IncumbentCompatible);
-        assert_eq!(requested.supplied_by(), layer_kind);
-        assert_eq!(requested.authorized(), None);
-        assert_eq!(
-            requested.constrained_by(),
-            [ConfigurationLayerKind::BuiltInDefaults]
-        );
-        assert_eq!(
-            resolved.policy().allowed_mcp_tool_profiles().effective(),
-            &[
-                McpToolProfile::Canonical,
-                McpToolProfile::IncumbentCompatible
-            ]
-            .into_iter()
-            .collect(),
-            "untrusted allow-lists cannot change compiled authority"
-        );
-    }
-}
-
-#[test]
-fn only_user_and_cli_layers_can_select_the_compiled_compatibility_profile() {
-    for layer_kind in [ConfigurationLayerKind::User, ConfigurationLayerKind::Cli] {
-        let trusted = layer(
-            layer_kind,
-            None,
-            preferences(None, Some(McpToolProfile::IncumbentCompatible)),
-            ConfigurationPolicyOverrides::default(),
-        );
-        let resolved = resolve_configuration(&[trusted]).expect("trusted tool profile");
-        let preference = resolved.preferences().mcp_tool_profile();
-        assert_eq!(preference.requested(), McpToolProfile::IncumbentCompatible);
-        assert_eq!(
-            preference.authorized(),
-            Some(McpToolProfile::IncumbentCompatible)
-        );
-    }
-
-    let user = layer(
-        ConfigurationLayerKind::User,
-        None,
-        preferences(None, Some(McpToolProfile::Minimal)),
-        ConfigurationPolicyOverrides::default(),
-    );
-    assert_eq!(
-        resolve_configuration(&[user])
-            .expect("minimal request resolves as denied")
-            .preferences()
-            .mcp_tool_profile()
-            .authorized(),
-        None,
-        "the unimplemented minimal surface remains outside compiled authority"
-    );
 }
 
 #[test]
@@ -603,15 +509,11 @@ fn languages(mask: u8) -> BTreeSet<SourceLanguage> {
 }
 
 fn tool_profiles(mask: u8) -> BTreeSet<McpToolProfile> {
-    [
-        McpToolProfile::Canonical,
-        McpToolProfile::Minimal,
-        McpToolProfile::IncumbentCompatible,
-    ]
-    .into_iter()
-    .enumerate()
-    .filter_map(|(index, profile)| (mask & (1 << index) != 0).then_some(profile))
-    .collect()
+    [McpToolProfile::Canonical, McpToolProfile::Minimal]
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, profile)| (mask & (1 << index) != 0).then_some(profile))
+        .collect()
 }
 
 fn hex(bytes: &[u8]) -> String {

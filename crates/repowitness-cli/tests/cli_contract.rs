@@ -3,9 +3,8 @@
 use std::{
     ffi::OsStr,
     fs,
-    io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
-    process::{ChildStdin, ChildStdout, Command, Output, Stdio},
+    process::{Command, Output, Stdio},
     sync::atomic::{AtomicU64, Ordering},
 };
 
@@ -348,4 +347,3 @@ include!("cli_contract/mcp_contract.rs");
 include!("cli_contract/onboarding_contract.rs");
 #[cfg(unix)]
 include!("cli_contract/watch_contract.rs");
-include!("cli_contract/workspace_contract.rs");

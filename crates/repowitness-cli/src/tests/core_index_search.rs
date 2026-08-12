@@ -5,11 +5,9 @@ fn help_and_version_are_successful_and_truthful() {
     let inspector = FakeInspector::failure("must not be called");
     let (code, stdout, stderr) = invoke(&["--help"], &inspector);
     assert_eq!(code, EXIT_SUCCESS);
-    assert!(stdout.contains("bounded Rust/Go/TS/TSX/Python index."));
-    assert!(stdout.contains("Search active Rust, Go, TypeScript, TSX, and Python symbols."));
-    assert!(stdout.contains(
-        "repowitness context-build --repository-id <id> --database <path> --root <path> --intent <text> [context options]\n"
-    ));
+    assert!(stdout.contains("index, watch, gc, context-build"));
+    assert!(stdout.contains("search, locate-relevant-paths, symbol-search"));
+    assert!(stdout.contains("context-build"));
     assert!(!stdout.contains("--profile"));
     assert!(stdout.contains("--repository-id"));
     assert!(stderr.is_empty());
@@ -48,6 +46,24 @@ fn global_help_and_version_reject_additional_arguments() {
         assert_eq!(code, EXIT_USAGE);
         assert!(stdout.is_empty());
         assert!(stderr.starts_with("error:"));
+    }
+    assert_eq!(inspector.calls.get(), 0);
+}
+
+#[test]
+fn nested_help_is_available_before_required_values() {
+    let inspector = FakeInspector::failure("must not be called");
+    for arguments in [
+        vec!["config", "explain", "--help"],
+        vec!["graph", "status", "--help"],
+        vec!["memory-recall", "--help"],
+        vec!["memory-manage", "write", "--help"],
+        vec!["memory-manage", "sync", "--help"],
+    ] {
+        let (code, stdout, stderr) = invoke(&arguments, &inspector);
+        assert_eq!(code, EXIT_SUCCESS, "{arguments:?}");
+        assert!(!stdout.is_empty(), "{arguments:?}");
+        assert!(stderr.is_empty(), "{arguments:?}");
     }
     assert_eq!(inspector.calls.get(), 0);
 }

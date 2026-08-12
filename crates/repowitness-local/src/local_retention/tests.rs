@@ -12,7 +12,8 @@ use repowitness_application::resolve_configuration;
 use super::*;
 use crate::{
     DEFAULT_RETAINED_GENERATIONS_PER_SOURCE_SLOT, MAX_RETENTION_GENERATION_PINS,
-    MAX_RETENTION_VIEW_PINS, OwnedSqliteIndex, SqliteStoreError,
+    MAX_RETENTION_VIEW_PINS, OwnedSqliteIndex, SqliteStoreError, sqlite::SqliteMutationLease,
+    sqlite::open_index_writer,
 };
 
 mod process_recovery;
@@ -444,8 +445,10 @@ fn hardlink_aliases_fail_before_creating_alias_leases() {
 fn initialize_database(directory: &Path) -> PathBuf {
     let database = directory.join("index.db");
     let deadline = Instant::now() + Duration::from_secs(2);
-    let (store, _) = OwnedSqliteIndex::start(&database, 1, deadline).expect("initialize database");
-    store.shutdown(deadline).expect("shutdown database");
+    let lease = SqliteMutationLease::acquire(&database, deadline).expect("initialize lease");
+    let connection = open_index_writer(&database, 1).expect("initialize database");
+    drop(connection);
+    drop(lease);
     database
 }
 

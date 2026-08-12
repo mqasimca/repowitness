@@ -106,7 +106,7 @@ fn doctor_warns_for_empty_language_set_and_rejects_unavailable_tool_profile() {
             None,
             None,
             None,
-            Some(McpToolProfile::IncumbentCompatible),
+            Some(McpToolProfile::Minimal),
         )
         .expect("preference"),
         ConfigurationPolicyOverrides::try_new(

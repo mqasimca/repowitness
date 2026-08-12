@@ -162,6 +162,7 @@ pub(super) fn prepare_connected_sources(
                 languages,
                 package_scope: slot.package_scope(),
                 limits,
+                build_graph: true,
                 cancelled,
                 deadline: resolved_source.deadline,
             })

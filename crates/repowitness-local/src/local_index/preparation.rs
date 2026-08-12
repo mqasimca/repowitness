@@ -7,6 +7,7 @@ struct ArtifactReusePreparationContext<'a> {
     languages: SourceLanguageSelection,
     package_scope: Option<&'a PackageScope>,
     limits: LocalRustIndexLimits,
+    build_graph: bool,
     cancelled: &'a Arc<AtomicBool>,
     deadline: Instant,
 }
@@ -23,6 +24,7 @@ fn prepare_with_artifact_reuse(
         languages,
         package_scope,
         limits,
+        build_graph,
         cancelled,
         deadline,
     } = context;
@@ -55,6 +57,11 @@ fn prepare_with_artifact_reuse(
             database_identity,
         ),
     };
+    let reuse_request = if build_graph {
+        reuse_request
+    } else {
+        reuse_request.without_graph()
+    };
     let preparation = prepare_local_source_index_with_full_reuse_deferred_to_publication(
         reuse_request,
         |language, requested, load_deadline| match &reuse_reader {
@@ -69,7 +76,7 @@ fn prepare_with_artifact_reuse(
             None => Ok(Default::default()),
         },
         |requested, load_deadline| match &reuse_reader {
-            Some(reader) => reader.load_reusable_graph_artifacts(
+            Some(reader) if build_graph => reader.load_reusable_graph_artifacts(
                 requested,
                 graph_identity,
                 limits.preparation(),
@@ -77,6 +84,7 @@ fn prepare_with_artifact_reuse(
                 Arc::clone(cancelled),
                 load_deadline,
             ),
+            Some(_) => Ok(Default::default()),
             None => Ok(Default::default()),
         },
         |requested, load_deadline| match &reuse_reader {
@@ -112,6 +120,7 @@ struct LocalIndexPublicationPreparationContext<'a> {
     configuration_digest: ConfigurationDigest,
     languages: SourceLanguageSelection,
     limits: LocalRustIndexLimits,
+    build_graph: bool,
     cancelled: &'a Arc<AtomicBool>,
     deadline: Instant,
 }
@@ -129,6 +138,7 @@ fn prepare_local_index_source(
         languages: context.languages,
         package_scope: None,
         limits: remaining_preparation_limits(context.limits, context.deadline)?,
+        build_graph: context.build_graph,
         cancelled: context.cancelled,
         deadline: context.deadline,
     })?;
@@ -160,6 +170,7 @@ fn prepare_local_index_source(
         preparation,
         coverage,
         report_input,
+        build_graph: context.build_graph,
     })
 }
 
@@ -171,14 +182,19 @@ fn prepare_local_index_publication(
 ) -> Result<PreparedLocalIndexPublication, LocalIndexError> {
     let (prepared, graph_artifacts, raw_syntax_artifacts, topology_paths) =
         source.preparation.into_prepared_parts();
-    let graph = prepare_local_rust_graph_projection(
-        repository,
-        &prepared,
-        graph_artifacts,
-        cancelled,
-        deadline,
-    )
-    .map_err(|source| LocalIndexError::GraphPreparation { source })?;
+    let graph = source
+        .build_graph
+        .then(|| {
+            prepare_local_rust_graph_projection(
+                repository,
+                &prepared,
+                graph_artifacts,
+                cancelled,
+                deadline,
+            )
+            .map_err(|source| LocalIndexError::GraphPreparation { source })
+        })
+        .transpose()?;
     let raw_syntax = prepare_local_raw_syntax_projection(
         raw_syntax_artifacts,
         cancelled,
@@ -212,6 +228,7 @@ struct ScopedLocalIndexPublicationPreparationContext<'a> {
     languages: SourceLanguageSelection,
     package_scope: &'a PackageScope,
     limits: LocalRustIndexLimits,
+    build_graph: bool,
     cancelled: &'a Arc<AtomicBool>,
     deadline: Instant,
 }
@@ -235,6 +252,7 @@ fn prepare_scoped_local_index_publication(
         languages: context.languages,
         package_scope: Some(context.package_scope),
         limits: remaining_preparation_limits(context.limits, context.deadline)?,
+        build_graph: context.build_graph,
         cancelled: context.cancelled,
         deadline: context.deadline,
     })?;
@@ -262,15 +280,20 @@ fn prepare_scoped_local_index_publication(
 
     let (prepared, graph_artifacts, raw_syntax_artifacts, _topology_paths) =
         preparation.into_prepared_parts();
-    let graph = prepare_local_rust_graph_projection_for_source_slot(
-        context.connected_workspace,
-        context.source_slot,
-        &prepared,
-        graph_artifacts,
-        context.cancelled.as_ref(),
-        context.deadline,
-    )
-    .map_err(|source| LocalIndexError::GraphPreparation { source })?;
+    let graph = context
+        .build_graph
+        .then(|| {
+            prepare_local_rust_graph_projection_for_source_slot(
+                context.connected_workspace,
+                context.source_slot,
+                &prepared,
+                graph_artifacts,
+                context.cancelled.as_ref(),
+                context.deadline,
+            )
+            .map_err(|source| LocalIndexError::GraphPreparation { source })
+        })
+        .transpose()?;
     let raw_syntax = prepare_local_raw_syntax_projection(
         raw_syntax_artifacts,
         context.cancelled.as_ref(),

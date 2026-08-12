@@ -88,7 +88,7 @@ fn empty_language_set_is_a_warning_but_unauthorized_mcp_profile_is_an_error() {
             None,
             None,
             None,
-            Some(McpToolProfile::IncumbentCompatible),
+            Some(McpToolProfile::Minimal),
         )
         .expect("preference should be valid"),
         ConfigurationPolicyOverrides::try_new(

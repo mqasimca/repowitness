@@ -21,7 +21,7 @@ mcp_tool_profile = "minimal"
 
 [policy]
 allowed_languages = ["rust", "go", "typescript", "tsx", "python"]
-allowed_mcp_tool_profiles = ["canonical", "minimal", "incumbent-compatible"]
+allowed_mcp_tool_profiles = ["canonical", "minimal"]
 max_source_file_bytes = 8000000
 max_source_files = 100000
 max_query_results = 24
@@ -57,12 +57,7 @@ follow_symlinks = false
     );
     assert_eq!(
         resolved.policy().allowed_mcp_tool_profiles().effective(),
-        &[
-            McpToolProfile::Canonical,
-            McpToolProfile::IncumbentCompatible,
-        ]
-        .into_iter()
-        .collect()
+        &[McpToolProfile::Canonical,].into_iter().collect()
     );
     assert_eq!(
         resolved.policy().allowed_languages().effective(),
@@ -211,7 +206,7 @@ fn enum_text_and_language_collections_are_independently_bounded() {
         "schema_version=1\n[policy]\nallowed_languages=[\"rust\",\"rust\"]\n",
         "schema_version=1\n[policy]\nallowed_languages=[\"rust\",\"go\",\"typescript\",\"tsx\",\"python\",\"rust\"]\n",
         "schema_version=1\n[policy]\nallowed_mcp_tool_profiles=[\"canonical\",\"canonical\"]\n",
-        "schema_version=1\n[policy]\nallowed_mcp_tool_profiles=[\"canonical\",\"minimal\",\"incumbent-compatible\",\"canonical\"]\n",
+        "schema_version=1\n[policy]\nallowed_mcp_tool_profiles=[\"canonical\",\"minimal\",\"canonical\"]\n",
         "schema_version=1\n[policy]\nallowed_mcp_tool_profiles=[\"unknown\"]\n",
         "schema_version=1\n[policy]\ndeny_memory_writes=\"true\"\n",
         "schema_version=1\n[policy]\nfollow_symlinks=true\n",
@@ -222,7 +217,7 @@ fn enum_text_and_language_collections_are_independently_bounded() {
         );
     }
 
-    for spelling in ["canonical", "minimal", "incumbent-compatible"] {
+    for spelling in ["canonical", "minimal"] {
         let input = format!("schema_version=1\n[preferences]\nmcp_tool_profile=\"{spelling}\"\n");
         parse_configuration_file(input.as_bytes(), ConfigurationFileLayer::User)
             .expect("supported tool profile");

@@ -5,12 +5,13 @@ mutations of both accepted version-1 golden profiles. For each accepted record,
 it generates and parses the record again. The domain value, canonical JSON, and
 canonical digest must stay the same.
 
-The `phase1_inputs` target sends bounded arbitrary bytes to each strict Phase 1
-native-graph and compatibility-MCP request decoder. It also sends these bytes
-to the three configuration-file layers. The target applies bounded byte changes
-to accepted synthetic configuration, status, search, and architecture request
-seeds. This lets validation code process accepted input. The target does not use
-the filesystem, database, Git, network, or MCP transport I/O.
+The `phase1_inputs` target sends bounded arbitrary bytes to the current strict
+MCP request decoders, including native-graph and catalog-FTI inputs. It also
+sends these bytes to the three configuration-file layers. The target applies
+bounded byte changes to accepted synthetic configuration, status, search, and
+architecture request seeds. This lets validation code process accepted input.
+The target does not use the filesystem, database, Git, network, or MCP
+transport I/O.
 
 Install the official runner and use a supported nightly toolchain:
 

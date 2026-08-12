@@ -402,7 +402,7 @@ never reports configuration paths or source text.
 
 ## MCP and CLI boundary
 
-The implemented canonical local stdio MCP surface exposes exactly twenty-four
+The implemented canonical local stdio MCP surface exposes exactly twenty
 read-only tools by default:
 
 - `architecture_map`
@@ -410,9 +410,12 @@ read-only tools by default:
 - `repository_topology`
 - `code_graph_query`
 - `code_search`
-- `locate_relevant_paths`
+- `relevant_paths`
+- `symbol_search`
+- `outbound_sites`
+- `syntax_site_search`
+- `change_review`
 - `context_build`
-- `verify`
 - `diagnostics`
 - `graph_architecture`
 - `graph_evidence`
@@ -420,27 +423,15 @@ read-only tools by default:
 - `graph_status`
 - `graph_trace`
 - `impact_analyze`
-- `historical_memory`
 - `memory_recall`
-- `outbound_sites`
-- `syntax_site_search`
-- `scip_evidence`
-- `scip_relationship_trace`
-- `scip_symbol_resolve`
 - `symbol_get`
-- `symbol_search`
 
-`scip_symbol_resolve` accepts one `symbol_search` candidate's immutable
-selector and name span, validates it against the selected source slot and
-workspace view, and maps only an exact canonical path/content/name-span occurrence in one pinned overlay to an
-opaque provider symbol. `scip_evidence` remains the separately bounded source
-of provider-declared relationship evidence. `scip_relationship_trace` follows
-only those persisted producer rows in one immutable overlay, source slot, and
-package scope. It exposes incoming or outgoing bounded breadth-first evidence
-with explicit depth, edge, symbol, and output coverage; it does not infer
-source calls, runtime behavior, or repository-wide completeness.
+The native graph tools expose only their bounded Rust graph evidence and
+coverage. FTI search, syntax observations, and same-name matches remain
+repository-scoped evidence; they do not infer source calls, runtime behavior,
+ownership, or repository-wide relationships.
 
-Explicit fixed-actor startup authorization adds `memory_manage` as the twenty-fifth
+Explicit fixed-actor startup authorization adds `memory_manage` as the twenty-first
 tool. An explicit compatibility profile adds only the bounded, schema-tested
 aliases listed by ADR-0030; it does not alter the native default inventory.
 The current receipts assert name compatibility only, report incompatible
@@ -450,32 +441,34 @@ only versioned, finite, bounded discovery envelope.
 
 Use a released, pinned MCP specification/SDK pair. MCP DTOs stay outside
 application and domain types. Local stdio is the Phase 0 transport. The current
-server pins MCP `2025-11-25` through `rmcp` 2.2.0 and exposes the twenty-four
-read-only tools listed above in deterministic name order. It adds
+server pins MCP `2025-11-25` through `rmcp` 2.2.0 and exposes the twenty
+read-only tools listed above in deterministic name order. Catalog mode adds one
+FTI-only cross-repository search tool. Single-repository
+startup fixes one repository. Catalog startup reads the private onboarding
+catalog, adds an optional bounded `repository_id` selector to each native tool
+schema, and routes each call to one isolated repository service; it does not
+scan or index at MCP startup. It adds
 `memory_manage` only when startup explicitly
 enables writes with one fixed validated local actor, the effective monotonic
 policy permits memory writes, and the requested canonical tool profile remains
 authorized. Unsupported or unauthorized profiles and effective write denials
 fail before runtime initialization. Repository identity, database, contained
 source root, actor, resolved configuration, and resource policy are fixed at
-process startup rather than accepted from tool callers. Proposed
-[ADR-0049](adr/0049-local-multi-repository-mcp-registry.md) adds a separate
-local read-only registry mode: a bounded no-follow startup registry fixes at
-most 32 independent repository/root/database triples, every native tool
+process startup rather than accepted from tool callers. The catalog is the
+supported one-connection multi-repository mode: a bounded private catalog fixes
+at most 32 independent repository/root/database triples, every repository-scoped
+native tool
 requires one exact registered opaque `repository_id`, and routing removes that
 selector before the normal request validation. It exposes neither registry
 paths nor a default repository, reloads only on process restart, and excludes
 memory mutation, personal memory, native tasks, compatibility aliases,
 connected-workspace source slots, shared-database workspace selection, and
-cross-repository queries. The single-repository process and its schemas remain
-unchanged. The proposed
-[ADR-0050](adr/0050-opt-in-codex-catalog-onboarding.md) catalog composition
-keeps the same canonical read-only surface and private-state boundary, but
-resolves only the process current directory to its containing Git worktree
-before stdio starts. It incrementally refreshes that one worktree, fixes it as
-the process default selector, and never accepts caller filesystem selection or
-scans a parent, sibling, home, or configured-root set. Other catalog entries
-still require an exact opaque selector. It excludes reload, background watches,
+semantic cross-repository relationship queries. Catalog mode adds one bounded
+FTI-only `cross_repository_search` tool that fans out over independent active
+generations and reports per-repository coverage. The single-repository process
+and its schemas remain unchanged. The catalog selects the process current directory as the default
+when it exactly matches an onboarded root; other catalog entries require an
+exact opaque selector. It excludes reload, background watches,
 daemon coordination, root scanning, remote/catalog mutation, source slots,
 compatibility aliases, and all write/task/personal-memory capabilities. The
 proposed [ADR-0051](adr/0051-explicit-codex-connected-workspace-catalog.md)

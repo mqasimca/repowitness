@@ -6,14 +6,6 @@ accepted or explicitly proposed ADRs.
 - [Local configuration version 1](configuration-v1.md) — strict bounded TOML
   admission, deterministic preference provenance, monotonic policy resolution,
   and canonical semantic identity under accepted ADR-0025
-- [Local MCP repository registry version 1](mcp-repository-registry-v1.md) —
-  strict bounded JSON admission and fixed read-only multi-repository routing
-  under proposed ADR-0049
-- [Local MCP catalog version 1](mcp-catalog-v1.md) — private bounded current-
-  worktree admission and process-fixed default selection under proposed ADR-0050
-- [Codex connected-workspace catalog version 1](codex-connected-workspace-catalog-v1.md) —
-  private explicit product-stack admission and atomic source-slot refresh under
-  proposed ADR-0051
 - [Phase 0 engineering-memory record version 1](phase0-memory-v1.md) — accepted
   production domain, parser, canonicalizer, generated-YAML format, and
   worktree-import/write boundary; bounded observation-only Git-tree history
@@ -21,12 +13,6 @@ accepted or explicitly proposed ADRs.
 - [Current engineering-memory profile](engineering-memory-current.md) — one
   user-facing YAML shape; omitted `schema_version` selects the current profile,
   while explicit version 1 remains a legacy compatibility input
-- [Phase 3 team-memory profile version 2](phase3-memory-profile-v2.md) — the
-  current profile's additional kinds, lifecycle dispositions, and compatibility
-  storage details
-- [Phase 2 SQLite schema version 4](phase2-sqlite-provisional-v4.md) — accepted
-  immutable SCIP overlay receipts, source-slot/view-scoped activation, and the
-  version-3 Phase 1 foundation under ADR-0035 and ADR-0037
 - [Phase 1 SQLite schema version 3](phase1-sqlite-provisional-v3.md) — accepted
   read/write format with connected-workspace source slots, immutable views,
   generation-scoped Rust graph publication, and deterministic bounded retention
@@ -36,6 +22,10 @@ accepted or explicitly proposed ADRs.
   ADR-0022 and ADR-0024
 - [Phase 0 SQLite baseline migration version 1](phase0-sqlite-baseline-v1.md) —
   immutable supported baseline and version-2 upgrade source
+
+The deferred registry, connected-workspace, Phase 3 memory, and
+SCIP-overlay schemas remain in the repository for historical provenance only;
+they are not active user-facing contracts.
 
 The owned production adapter creates version-15 databases and upgrades exact
 accepted migration ledgers through versions 1 through 7 and 9 through 15.

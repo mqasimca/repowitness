@@ -38,9 +38,9 @@ use crate::{
     sqlite::SqliteMutationLease,
 };
 
+pub(crate) mod connected_workspace;
 mod final_fence;
 use final_fence::LocalSourceSlotFinalFence;
-pub(crate) mod connected_workspace;
 pub(crate) mod polling_runner;
 mod post_commit;
 
@@ -358,7 +358,7 @@ pub fn reconcile_local_repository(
 struct PreparedLocalIndexPublication {
     identity: RustSourceSnapshotIdentity,
     prepared: repowitness_application::PreparedRustIndex,
-    graph: PreparedLocalRustGraphProjection,
+    graph: Option<PreparedLocalRustGraphProjection>,
     raw_syntax: crate::PreparedRawSyntaxGeneration,
     topology: Option<crate::PreparedRepositoryTopology>,
     coverage: RustIndexCoverage,
@@ -369,6 +369,7 @@ struct PreparedLocalIndexSource {
     preparation: crate::LocalRustIndexPreparation,
     coverage: RustIndexCoverage,
     report_input: ReportInput,
+    build_graph: bool,
 }
 
 #[cfg(test)]
@@ -533,17 +534,18 @@ fn publish_prepared_local_index_at_epoch(
         })
     })?;
     let generation = staged.generation();
-    let graph = publication
-        .graph
-        .into_generation(generation, cancelled.as_ref(), deadline)
-        .map_err(|source| LocalIndexError::GraphPreparation { source })?;
-    writer
-        .stage_rust_graph(generation, graph, Arc::clone(cancelled), deadline)
-        .map_err(|source| {
-            map_index_mutation_error(LocalIndexMutation::GraphStaging, source, |source| {
-                LocalIndexError::GraphPublicationStaging { source }
-            })
-        })?;
+    if let Some(graph) = publication.graph {
+        let graph = graph
+            .into_generation(generation, cancelled.as_ref(), deadline)
+            .map_err(|source| LocalIndexError::GraphPreparation { source })?;
+        writer
+            .stage_rust_graph(generation, graph, Arc::clone(cancelled), deadline)
+            .map_err(|source| {
+                map_index_mutation_error(LocalIndexMutation::GraphStaging, source, |source| {
+                    LocalIndexError::GraphPublicationStaging { source }
+                })
+            })?;
+    }
     writer
         .stage_raw_syntax_sites(
             generation,

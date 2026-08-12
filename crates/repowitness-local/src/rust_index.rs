@@ -443,6 +443,7 @@ struct LocalPreparationContext<'a> {
     selection: SelectionPolicy,
     package_scope: Option<&'a PackageScope>,
     limits: LocalRustIndexLimits,
+    build_graph: bool,
     cancelled: &'a AtomicBool,
     excluded_identity: Option<&'a FileIdentity>,
 }
@@ -469,6 +470,7 @@ struct LocalArtifactPreparationContext<'a> {
     graph_identity: RustArtifactIdentity,
     raw_syntax_identities: SourceArtifactIdentities,
     limits: LocalRustIndexLimits,
+    build_graph: bool,
     cancelled: &'a AtomicBool,
     deadline: Instant,
 }
@@ -533,23 +535,27 @@ fn prepare_selected_source_artifacts(
         context.deadline,
     )?;
     let reusable = load_reusable_artifacts(&requested_artifacts, context.deadline, load_reusable)?;
-    let requested_graph_artifacts = requested_local_rust_graph_artifact_digests(
-        &context.sources,
-        context.graph_identity,
-        context.cancelled,
-        context.deadline,
-    )
-    .map_err(map_graph_preparation_error)?;
-    let reusable_graph = load_reusable_graph(&requested_graph_artifacts, context.deadline)
-        .map_err(|source| LocalRustIndexError::ArtifactReuse { source })?;
-    let graph = prepare_local_rust_graph_artifacts(
-        &context.sources,
-        context.graph_identity,
-        &reusable_graph,
-        context.cancelled,
-        context.deadline,
-    )
-    .map_err(map_graph_preparation_error)?;
+    let graph = if context.build_graph {
+        let requested_graph_artifacts = requested_local_rust_graph_artifact_digests(
+            &context.sources,
+            context.graph_identity,
+            context.cancelled,
+            context.deadline,
+        )
+        .map_err(map_graph_preparation_error)?;
+        let reusable_graph = load_reusable_graph(&requested_graph_artifacts, context.deadline)
+            .map_err(|source| LocalRustIndexError::ArtifactReuse { source })?;
+        prepare_local_rust_graph_artifacts(
+            &context.sources,
+            context.graph_identity,
+            &reusable_graph,
+            context.cancelled,
+            context.deadline,
+        )
+        .map_err(map_graph_preparation_error)?
+    } else {
+        Box::default()
+    };
     let requested_raw_syntax_artifacts = requested_local_raw_syntax_artifact_digests(
         &context.sources,
         context.raw_syntax_identities,
@@ -670,6 +676,7 @@ fn revalidate_prepared_index(
     )
 }
 
+#[allow(clippy::too_many_lines)]
 fn prepare_local_index_with_exclusion_reuse_and_hook(
     context: LocalPreparationContext<'_>,
     mut load_reusable: impl FnMut(
@@ -705,6 +712,7 @@ fn prepare_local_index_with_exclusion_reuse_and_hook(
         selection,
         package_scope,
         limits,
+        build_graph,
         cancelled,
         excluded_identity,
     } = context;
@@ -758,6 +766,7 @@ fn prepare_local_index_with_exclusion_reuse_and_hook(
             graph_identity,
             raw_syntax_identities,
             limits,
+            build_graph,
             cancelled,
             deadline,
         },
