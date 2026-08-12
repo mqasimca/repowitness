@@ -38,7 +38,12 @@ fn run_symbol_search(
         Ok(configuration) => configuration,
         Err(_) => return emit_error(stderr, EXIT_SOFTWARE, "error: configuration resolution failed\n"),
     };
-    let GraphWorkspaceContext::SingleRepository(repository_identity) = &invocation.workspace;
+    let repository_identity = match &invocation.workspace {
+        GraphWorkspaceContext::SingleRepository(repository_identity) => repository_identity,
+        GraphWorkspaceContext::ConnectedWorkspace { .. } => {
+            return emit_error(stderr, EXIT_USAGE, "error: CLI symbol-search requires a repository workspace\n")
+        }
+    };
     let request = LocalSymbolSearchRequest::new(
         &invocation.database,
         repository_identity,

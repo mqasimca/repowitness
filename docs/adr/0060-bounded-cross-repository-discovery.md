@@ -107,7 +107,7 @@ worse than an explicit unresolved result.
 
 ### Build the full connected-workspace catalog first
 
-The existing proposed ADR-0051 covers atomic multi-source views, but that is a
+The existing accepted ADR-0051 covers atomic multi-source views, but that is a
 larger indexing and source-slot feature. Independent FTI fan-out solves the
 immediate discovery need without changing publication semantics.
 

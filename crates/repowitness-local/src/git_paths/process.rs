@@ -108,7 +108,8 @@ pub(crate) fn sanitized_git_base_command(worktree_root: &Path) -> Command {
     command
 }
 
-pub(crate) fn discovered_worktree_root(root: &Path) -> Result<PathBuf, GitPathDiscoveryError> {
+/// Resolves an explicit path to its containing Git worktree root.
+pub fn discovered_worktree_root(root: &Path) -> Result<PathBuf, GitPathDiscoveryError> {
     let mut current = fs::canonicalize(root)
         .map_err(|source| GitPathDiscoveryError::WorktreeRootResolve { source })?;
     loop {

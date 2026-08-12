@@ -480,14 +480,14 @@ valid service snapshot; in-flight requests retain their selected service. It
 excludes background watches,
 daemon coordination, root scanning, remote/catalog mutation, source slots,
 compatibility aliases, native tasks, and personal-memory capabilities. The
-proposed [ADR-0051](adr/0051-explicit-codex-connected-workspace-catalog.md)
+accepted [ADR-0051](adr/0051-explicit-codex-connected-workspace-catalog.md)
 adds a distinct explicit opt-in composition: a private catalog records only
 operator-supplied two-to-thirty-two-member connected workspaces and recognizes
 the process-current member at startup. It regenerates and atomically publishes
 the complete source-slot view before stdio starts; it never discovers sibling
 or dependency repositories. The member's opaque selector routes source-view-
 aware lexical search, relevant paths, typed declarations, architecture maps,
-graph/SCIP reads, and evidence-balanced context to its exact slot. Membership is not a cross-repository
+Rust graph reads, and evidence-balanced context to its exact slot. Membership is not a cross-repository
 relationship claim, and tools without a source-view receipt contract stay out
 of this mode until they have one. Catalog membership mutation,
 root scanning, and generic cross-repository queries remain excluded. The

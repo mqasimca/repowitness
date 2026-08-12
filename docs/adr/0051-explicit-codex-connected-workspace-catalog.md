@@ -1,7 +1,7 @@
 # ADR-0051: Compose an explicit Codex connected-workspace catalog
 
-- Status: Proposed
-- Date: 2026-08-02
+- Status: Accepted
+- Date: 2026-08-12
 - Owners: Project maintainers
 - Scope: Codex catalog admission, connected-workspace indexing, and MCP source routing
 
@@ -35,7 +35,8 @@ repowitness codex workspace remove --name <label>
 Creation accepts two through thirty-two explicitly supplied Git worktree
 paths. It resolves each only to its containing worktree root, creates opaque
 repository, source-slot, and connected-workspace identities, writes one exact
-generated connected-workspace manifest in private Codex-owned state, and
+generated connected-workspace manifest in the private shared user-state
+catalog, and
 performs the existing atomic connected-workspace index before publishing the
 new catalog membership. The private catalog stores labels and the canonical
 membership needed to recognize a future process current directory; it is not
@@ -52,13 +53,13 @@ member's exact connected-workspace and source-slot receipt rather than a
 repository-global active-generation fallback.
 
 The initial source-view-aware Catalog surface is bounded to lexical code
-search, relevant-path projection (including the finite code-graph envelope),
-typed declaration search, architecture maps, Rust graph reads, SCIP
-evidence/relationship reads, and Phase 2 context compilation. Each result
+search, relevant-path projection, typed declaration search, architecture maps,
+Rust graph reads, and evidence-balanced context compilation. Each result
 continues to report its normal concrete snapshot/generation evidence; tools
-whose current contracts are repository-active-generation-only remain outside
-the connected-workspace catalog selection until their receipt contracts are
-extended.
+whose current contracts are repository-active-generation-only, including
+architecture overview, symbol retrieval, change review, diagnostics, memory,
+and SCIP-specific reads, remain outside the connected-workspace selection until
+their receipt contracts are extended.
 
 Membership is not automatically inferred or updated. Adding, removing, or
 replacing a repository requires removing and recreating the named workspace;
@@ -132,6 +133,25 @@ relationship certainty and conflict with the source-slot attribution contract.
 - Run the private sibling-repository corpus only through the aggregate-only
   validation script; do not record its topology, source, or paths in public
   fixtures or documents.
+
+The implemented CLI lifecycle, private state ownership, atomic creation,
+catalog startup refresh, current-member default, explicit other-member
+selection, and source-view-aware lexical search are covered by unit, installed
+stdio, and synthetic two-worktree checks. The existing workspace coordinator
+and source-view local tests cover publication and immutable receipts.
+
+## Research
+
+Research verified on 2026-08-12:
+
+- The [MCP tools specification](https://modelcontextprotocol.io/specification/2025-06-18/server/tools)
+  defines tools as model-controlled and recommends a human ability to deny
+  invocations. Workspace membership therefore stays in an explicit CLI
+  lifecycle and is never accepted from MCP tool input.
+- The [Git worktree documentation](https://git-scm.com/docs/git-worktree.html)
+  defines worktrees as operator-managed checkout roots. RepoWitness records
+  only those explicitly supplied roots and does not infer product membership
+  from their filesystem neighbors.
 
 ## Follow-up
 

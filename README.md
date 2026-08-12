@@ -92,12 +92,14 @@ The server is read-only by default. Add
 process should manage team memory. Stdout is reserved for MCP JSON-RPC; startup
 help and errors go to stderr.
 
-There is no daemon, connected-workspace CLI, SCIP import surface,
-personal-memory surface, or durable task surface. The catalog is read-only by
-default; explicitly enabling memory writes adds the same fixed-actor
-`memory_manage` capability to each selected repository. It reloads its bounded
-control file at MCP request boundaries; run
-`onboard` and the next request sees the updated repository set without an MCP
+There is no daemon, SCIP import surface, personal-memory surface, or durable
+task surface. Explicit connected workspaces are managed with
+`repowitness codex workspace create|list|remove`; they use the same shared
+catalog and remain read-only through MCP. The catalog is read-only by default;
+explicitly enabling memory writes adds the same fixed-actor `memory_manage`
+capability to each selected repository. It reloads its bounded control file at
+MCP request boundaries; run `onboard` and the next request sees the updated
+repository set without an MCP
 restart. A malformed later catalog leaves the last valid snapshot in place.
 
 ## Development

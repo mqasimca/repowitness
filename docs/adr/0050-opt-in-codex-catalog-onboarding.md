@@ -60,7 +60,7 @@ Version 1 deliberately has no persistent daemon, background watcher,
 home-directory scan, root glob, automatic catalog synchronization, remote
 catalog, general cross-repository query, or MCP indexing mutation. A new Codex
 session performs the bounded incremental refresh of its own current worktree.
-The separately scoped ADR-0051 may recognize a current worktree only when an
+The separately scoped accepted ADR-0051 may recognize a current worktree only when an
 operator has already explicitly registered it as one member of a private
 connected workspace; it retains these exclusions and uses the accepted
 source-slot publication contract rather than ambient catalog discovery.

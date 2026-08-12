@@ -118,6 +118,7 @@ impl McpServerLauncher for TokioMcpServerLauncher {
                         state_dir.as_deref(),
                         &configuration,
                         invocation.memory_actor.as_deref(),
+                        true,
                     )
                         .map_err(|_| McpLaunchError::Catalog)?;
                 let loader_state_dir = state_dir.clone();
@@ -128,6 +129,7 @@ impl McpServerLauncher for TokioMcpServerLauncher {
                         loader_state_dir.as_deref(),
                         &loader_configuration,
                         loader_memory_actor.as_deref(),
+                        false,
                     )
                 });
                 let result = if invocation.memory_writes_enabled {
@@ -159,6 +161,7 @@ impl McpServerLauncher for TokioMcpServerLauncher {
                     database,
                     repository_identity,
                     graph_workspace,
+                    workspace: None,
                     memory_actor: invocation.memory_actor,
                     configuration,
                 });

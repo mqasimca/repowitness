@@ -1,6 +1,6 @@
 # Codex connected-workspace catalog version 1
 
-This document specifies the private control file used by proposed
+This document specifies the private control file used by accepted
 [ADR-0051](../adr/0051-explicit-codex-connected-workspace-catalog.md). It
 declares which explicitly created connected workspaces the one global Codex
 catalog may recognize. It is not an MCP response, a repository artifact, or a
@@ -8,12 +8,16 @@ user-editable integration surface.
 
 ## Location and lifecycle
 
-The file is named `mcp-connected-workspaces-v1.json` under the private
-Codex-owned state root:
+The file is named `mcp-connected-workspaces-v1.json` under the private shared
+user-state root:
 
 ```text
-<Codex-home>/repowitness-state/repowitness/mcp-connected-workspaces-v1.json
+$XDG_STATE_HOME/repowitness/mcp-connected-workspaces-v1.json
 ```
+
+When `XDG_STATE_HOME` is unset on Linux, the default is
+`~/.local/state/repowitness`. Other clients use this same catalog by passing
+the same state root to `mcp-serve --catalog --catalog-state-dir` when needed.
 
 Each workspace has a generated manifest at
 `workspaces/<connected-workspace-id>/connected-workspace.toml` and its shared
@@ -53,7 +57,8 @@ the manifest and database remain subject to normal retention/recovery policy.
 }
 ```
 
-The file is bounded to 64 KiB and is loaded once at MCP startup. It has exactly
+The file is bounded to 64 KiB and is reloaded at MCP catalog request boundaries
+alongside the existing catalog snapshot. It has exactly
 the shown fields: schema version is integer `1`; `workspaces` has at most 32
 entries; workspace names are one through 64 lowercase letters, digits, and
 interior hyphens; every workspace has two through 32 members. All opaque
@@ -79,5 +84,5 @@ contents are never returned.
 A catalog workspace is a shared immutable indexing view, not evidence of an
 inferred semantic relationship. Cross-source links require attributed output
 from a supported source-specific producer. Version 1 has no root scanning,
-membership inference, reload, watcher, daemon, remote/team state, arbitrary
+membership inference, watcher, daemon, remote/team state, arbitrary
 cross-repository query, or MCP mutation surface.

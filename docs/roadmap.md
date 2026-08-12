@@ -16,6 +16,11 @@ The supported source languages are Rust, Go, TypeScript, TSX, and Python.
 The native Rust graph is optional per index profile, while syntax-derived
 source facts remain the primary retrieval surface.
 
+An explicit connected-workspace lifecycle is also available for local product
+stacks: `repowitness codex workspace create/list/remove` maintains one private
+multi-source index behind the same catalog MCP connection. Membership is
+operator-supplied; it is never inferred from sibling repositories.
+
 ## Development priorities
 
 ### 1. Fast and predictable startup
@@ -44,7 +49,7 @@ source facts remain the primary retrieval surface.
 
 ## Deferred until demanded
 
-Daemons, connected workspaces, SCIP imports, personal memory, durable tasks,
+Daemons, SCIP imports, personal memory, durable tasks,
 remote MCP, PostgreSQL, vectors, plugins, telemetry, and UI are deliberately
 out of the current product. The local catalog remains explicitly
 onboarding-backed; its membership and control file are read-only to MCP, while

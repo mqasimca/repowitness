@@ -3,6 +3,7 @@ struct LocalMcpRepositoryService {
     database: PathBuf,
     repository_identity: String,
     graph_workspace: GraphWorkspaceContext,
+    workspace: Option<WorkspaceServiceSelection>,
     memory_actor: Option<String>,
     configuration: ResolvedConfiguration,
 }
@@ -25,6 +26,18 @@ impl LocalMcpRepositoryService {
             mcp_code_graph_query_output(result).map_err(|_| RepositoryServiceError::CodeGraphQuery)
         })
     }
+
+    fn code_search_request<'a>(&'a self, query: &'a str) -> LocalCodeSearchRequest<'a> {
+        match &self.workspace {
+            Some(workspace) => LocalCodeSearchRequest::for_connected_workspace(
+                &self.database,
+                &workspace.connected_workspace_id,
+                &workspace.source_slot_id,
+                query,
+            ),
+            None => LocalCodeSearchRequest::new(&self.database, &self.repository_identity, query),
+        }
+    }
 }
 
 impl RepositoryService for LocalMcpRepositoryService {
@@ -33,6 +46,9 @@ impl RepositoryService for LocalMcpRepositoryService {
         request: ChangeReviewServiceRequest,
         cancelled: Arc<AtomicBool>,
     ) -> Result<ChangeReviewOutput, RepositoryServiceError> {
+        if self.workspace.is_some() {
+            return Err(RepositoryServiceError::ChangeReview);
+        }
         let base = GitObjectId::try_from_hex(request.base())
             .map_err(|_| RepositoryServiceError::ChangeReview)?;
         build_local_change_review(
@@ -58,11 +74,7 @@ impl RepositoryService for LocalMcpRepositoryService {
         request: CodeSearchServiceRequest,
         cancelled: Arc<AtomicBool>,
     ) -> Result<CodeSearchOutput, RepositoryServiceError> {
-        let local_request = LocalCodeSearchRequest::new(
-            &self.database,
-            &self.repository_identity,
-            request.query(),
-        )
+        let local_request = self.code_search_request(request.query())
         .with_max_results(request.max_results())
         .map_err(|_| RepositoryServiceError::CodeSearch)?
         .with_configuration(&self.configuration)
@@ -79,11 +91,15 @@ impl RepositoryService for LocalMcpRepositoryService {
         request: RelevantPathsServiceRequest,
         cancelled: Arc<AtomicBool>,
     ) -> Result<RelevantPathsOutput, RepositoryServiceError> {
-        let local_request = LocalRelevantPathsRequest::new(
-            &self.database,
-            &self.repository_identity,
-            request.query(),
-        )
+        let local_request = match &self.workspace {
+            Some(workspace) => LocalRelevantPathsRequest::for_connected_workspace(
+                &self.database,
+                &workspace.connected_workspace_id,
+                &workspace.source_slot_id,
+                request.query(),
+            ),
+            None => LocalRelevantPathsRequest::new(&self.database, &self.repository_identity, request.query()),
+        }
         .with_max_paths(request.max_paths())
         .map_err(|_| RepositoryServiceError::RelevantPaths)?
         .with_configuration(&self.configuration)
@@ -100,12 +116,16 @@ impl RepositoryService for LocalMcpRepositoryService {
         request: SymbolSearchServiceRequest,
         cancelled: Arc<AtomicBool>,
     ) -> Result<SymbolSearchOutput, RepositoryServiceError> {
-        let local_request = LocalSymbolSearchRequest::new(
-            &self.database,
-            &self.repository_identity,
-            request.name(),
-            request.match_mode(),
-        )
+        let local_request = match &self.workspace {
+            Some(workspace) => LocalSymbolSearchRequest::for_connected_workspace(
+                &self.database,
+                &workspace.connected_workspace_id,
+                &workspace.source_slot_id,
+                request.name(),
+                request.match_mode(),
+            ),
+            None => LocalSymbolSearchRequest::new(&self.database, &self.repository_identity, request.name(), request.match_mode()),
+        }
         .with_filters(request.language(), request.kind(), request.path_prefix())
         .with_max_results(request.max_results())
         .map_err(|_| RepositoryServiceError::SymbolSearch)?
@@ -123,6 +143,9 @@ impl RepositoryService for LocalMcpRepositoryService {
         request: OutboundSitesServiceRequest,
         cancelled: Arc<AtomicBool>,
     ) -> Result<OutboundSitesOutput, RepositoryServiceError> {
+        if self.workspace.is_some() {
+            return Err(RepositoryServiceError::OutboundSites);
+        }
         let selector = LocalSymbolSelectorText::new(
             request.snapshot_sha256(),
             request.generation(),
@@ -151,6 +174,9 @@ impl RepositoryService for LocalMcpRepositoryService {
         request: SyntaxSiteSearchServiceRequest,
         cancelled: Arc<AtomicBool>,
     ) -> Result<SyntaxSiteSearchOutput, RepositoryServiceError> {
+        if self.workspace.is_some() {
+            return Err(RepositoryServiceError::SyntaxSiteSearch);
+        }
         let local_request = LocalSyntaxSiteSearchRequest::new(
             &self.database,
             &self.repository_identity,
@@ -173,6 +199,14 @@ impl RepositoryService for LocalMcpRepositoryService {
         request: CodeGraphQueryServiceRequest,
         cancelled: Arc<AtomicBool>,
     ) -> Result<CodeGraphQueryOutput, RepositoryServiceError> {
+        if self.workspace.is_some()
+            && !matches!(
+                &request,
+                CodeGraphQueryServiceRequest::Symbols(_) | CodeGraphQueryServiceRequest::RelevantPaths(_)
+            )
+        {
+            return Err(RepositoryServiceError::CodeGraphQuery);
+        }
         match request {
             CodeGraphQueryServiceRequest::Symbols(request) => self
                 .symbol_search(request, cancelled)
@@ -260,10 +294,14 @@ impl RepositoryService for LocalMcpRepositoryService {
         request: ArchitectureMapServiceRequest,
         cancelled: Arc<AtomicBool>,
     ) -> Result<ArchitectureMapOutput, RepositoryServiceError> {
-        let local_request = LocalArchitectureMapRequest::new(
-            &self.database,
-            &self.repository_identity,
-        )
+        let local_request = match &self.workspace {
+            Some(workspace) => LocalArchitectureMapRequest::for_connected_workspace(
+                &self.database,
+                &workspace.connected_workspace_id,
+                &workspace.source_slot_id,
+            ),
+            None => LocalArchitectureMapRequest::new(&self.database, &self.repository_identity),
+        }
             .with_max_files(request.max_files())
             .map_err(|_| RepositoryServiceError::ArchitectureMap)?
             .with_deadline(request.timeout());
@@ -280,6 +318,9 @@ impl RepositoryService for LocalMcpRepositoryService {
         request: ArchitectureOverviewServiceRequest,
         cancelled: Arc<AtomicBool>,
     ) -> Result<ArchitectureOverviewOutput, RepositoryServiceError> {
+        if self.workspace.is_some() {
+            return Err(RepositoryServiceError::ArchitectureOverview);
+        }
         let local_request = LocalArchitectureOverviewRequest::new(
             &self.database,
             &self.repository_identity,
@@ -304,6 +345,9 @@ impl RepositoryService for LocalMcpRepositoryService {
         request: RepositoryTopologyServiceRequest,
         cancelled: Arc<AtomicBool>,
     ) -> Result<RepositoryTopologyOutput, RepositoryServiceError> {
+        if self.workspace.is_some() {
+            return Err(RepositoryServiceError::RepositoryTopology);
+        }
         let local_request = LocalRepositoryTopologyRequest::new(&self.database, &self.repository_identity)
             .with_max_paths(request.max_paths())
             .map_err(|_| RepositoryServiceError::RepositoryTopology)?
@@ -321,12 +365,22 @@ impl RepositoryService for LocalMcpRepositoryService {
         request: EvidenceContextBuildServiceRequest,
         cancelled: Arc<AtomicBool>,
     ) -> Result<EvidenceContextBuildOutput, RepositoryServiceError> {
-        let local_request = LocalEvidenceContextBuildRequest::new(
-            &self.root,
-            &self.database,
-            &self.repository_identity,
-            request.intent(),
-        );
+        let local_request = match &self.workspace {
+            Some(workspace) => LocalEvidenceContextBuildRequest::for_connected_workspace(
+                &self.root,
+                &self.database,
+                &self.repository_identity,
+                &workspace.connected_workspace_id,
+                &workspace.source_slot_id,
+                request.intent(),
+            ),
+            None => LocalEvidenceContextBuildRequest::new(
+                &self.root,
+                &self.database,
+                &self.repository_identity,
+                request.intent(),
+            ),
+        };
         let local_request = local_request
         .with_budget_units(request.budget_units())
         .map_err(|_| RepositoryServiceError::ContextBuild)?
@@ -347,6 +401,9 @@ impl RepositoryService for LocalMcpRepositoryService {
         request: DiagnosticsServiceRequest,
         cancelled: Arc<AtomicBool>,
     ) -> Result<DiagnosticsOutput, RepositoryServiceError> {
+        if self.workspace.is_some() {
+            return Err(RepositoryServiceError::Diagnostics);
+        }
         let local_request =
             LocalRepositoryDiagnosticsRequest::new(&self.database, &self.repository_identity)
                 .with_deadline(request.timeout());
@@ -375,6 +432,9 @@ impl RepositoryService for LocalMcpRepositoryService {
         request: MemoryRecallServiceRequest,
         cancelled: Arc<AtomicBool>,
     ) -> Result<MemoryRecallOutput, RepositoryServiceError> {
+        if self.workspace.is_some() {
+            return Err(RepositoryServiceError::MemoryRecall);
+        }
         let selection = match request.selection() {
             MemoryRecallServiceSelection::All => LocalMemoryRecallSelection::All,
             MemoryRecallServiceSelection::Query(query) => {
@@ -399,6 +459,9 @@ impl RepositoryService for LocalMcpRepositoryService {
         request: MemoryManageServiceRequest,
         cancelled: Arc<AtomicBool>,
     ) -> Result<MemoryManageOutput, RepositoryServiceError> {
+        if self.workspace.is_some() {
+            return Err(RepositoryServiceError::MemoryManage);
+        }
         manage_mcp_memory(self, request, cancelled)
     }
 
@@ -407,6 +470,9 @@ impl RepositoryService for LocalMcpRepositoryService {
         request: SymbolGetServiceRequest,
         cancelled: Arc<AtomicBool>,
     ) -> Result<SymbolGetOutput, RepositoryServiceError> {
+        if self.workspace.is_some() {
+            return Err(RepositoryServiceError::SymbolGet);
+        }
         let selector = LocalSymbolSelectorText::new(
             request.snapshot_sha256(),
             request.generation(),

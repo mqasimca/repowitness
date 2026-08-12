@@ -1,6 +1,10 @@
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum GraphWorkspaceContext {
     SingleRepository(String),
+    ConnectedWorkspace {
+        connected_workspace: String,
+        source_slot: String,
+    },
 }
 
 fn read_local_graph_service(
@@ -17,6 +21,15 @@ fn read_local_graph_service(
         GraphWorkspaceContext::SingleRepository(repository_identity) => {
             LocalRustGraphReadRequest::new(database, repository_identity, operation)
         }
+        GraphWorkspaceContext::ConnectedWorkspace {
+            connected_workspace,
+            source_slot,
+        } => LocalRustGraphReadRequest::for_connected_workspace(
+            database,
+            connected_workspace,
+            source_slot,
+            operation,
+        ),
     }
     .with_configuration(configuration)
     .with_deadline(timeout);

@@ -26,6 +26,7 @@ const ONBOARD_HELP: &str = concat!(
 
 const ONBOARD_STATE_PRODUCT_DIRECTORY: &str = "repowitness";
 const ONBOARD_STATE_REPOSITORIES_DIRECTORY: &str = "repositories";
+const ONBOARD_STATE_WORKSPACES_DIRECTORY: &str = "workspaces";
 const ONBOARD_DATABASE_FILE: &str = "index.sqlite3";
 
 struct PreparedOnboardDatabase {
@@ -314,6 +315,36 @@ fn canonical_path_with_uncreated_suffix(path: &Path) -> Result<PathBuf, ()> {
         canonical.push(component);
     }
     Ok(canonical)
+}
+
+#[cfg(unix)]
+fn prepare_private_state_directory(
+    state_root: &Path,
+    product: &str,
+    child: &str,
+    identity: &str,
+) -> Result<PathBuf, ()> {
+    let state_root_directory = open_private_state_root(state_root)?;
+    let product_directory = open_or_create_private_directory(
+        &state_root_directory,
+        OsStr::new(product),
+    )?;
+    let child_directory = open_or_create_private_directory(
+        &product_directory,
+        OsStr::new(child),
+    )?;
+    open_or_create_private_directory(&child_directory, OsStr::new(identity))?;
+    Ok(state_root.join(product).join(child).join(identity))
+}
+
+#[cfg(not(unix))]
+fn prepare_private_state_directory(
+    _state_root: &Path,
+    _product: &str,
+    _child: &str,
+    _identity: &str,
+) -> Result<PathBuf, ()> {
+    Err(())
 }
 
 #[cfg(unix)]

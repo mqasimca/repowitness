@@ -23,9 +23,9 @@ accepted or explicitly proposed ADRs.
 - [Phase 0 SQLite baseline migration version 1](phase0-sqlite-baseline-v1.md) —
   immutable supported baseline and version-2 upgrade source
 
-The deferred registry, connected-workspace, Phase 3 memory, and
-SCIP-overlay schemas remain in the repository for historical provenance only;
-they are not active user-facing contracts.
+The deferred registry, Phase 3 memory, and SCIP-overlay schemas remain in the
+repository for historical provenance only; the connected-workspace catalog is
+an active private local contract governed by accepted ADR-0051.
 
 The owned production adapter creates version-15 databases and upgrades exact
 accepted migration ledgers through versions 1 through 7 and 9 through 15.

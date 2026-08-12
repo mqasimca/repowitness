@@ -77,6 +77,7 @@ pub use git_memory::{
 pub use git_paths::{
     DiscoveredRepositoryPaths, GitPathDiscoveryError, GitPathDiscoveryLimits,
     GitPathDiscoveryStats, discover_repository_paths, discover_repository_paths_with_cancel,
+    discovered_worktree_root,
 };
 pub use local_architecture_map::{
     DEFAULT_LOCAL_ARCHITECTURE_MAP_DEADLINE, LocalArchitectureMapError,

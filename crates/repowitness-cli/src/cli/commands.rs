@@ -78,6 +78,9 @@ fn run_with_adapters(
             &PrivateOnboardStateDirectory,
         );
     }
+    if command == OsStr::new("codex") {
+        return run_codex(args, &mut stdout, &mut stderr);
+    }
     if command == OsStr::new("config") {
         return run_config(args, &mut stdout, &mut stderr, configuration_loader);
     }

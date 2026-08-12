@@ -1,6 +1,7 @@
 //! Testable command parsing and human-facing reports for the RepoWitness CLI.
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::ffi::{OsStr, OsString};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -15,21 +16,23 @@ use repowitness_local::{
     ConfigurationLayerKind, ConnectedWorkspaceIdTextV1, DEFAULT_ARCHITECTURE_MAP_FILES,
     DEFAULT_ARCHITECTURE_OVERVIEW_ENTRY_POINT_CANDIDATES, DEFAULT_ARCHITECTURE_OVERVIEW_FILES,
     DEFAULT_ARCHITECTURE_OVERVIEW_ROOTS, DEFAULT_EVIDENCE_CONTEXT_BUDGET_UNITS,
-    DEFAULT_LOCAL_EVIDENCE_CONTEXT_PROVIDER_RESULTS, EvidenceContextCandidate, EvidenceContextTier,
-    EvidenceLocation, GeneratedLocalIdentity, GitObjectId, GitPathDiscoveryLimits,
-    GitPathDiscoveryStats, IndexedContext, LocalArchitectureMapRequest, LocalArchitectureMapResult,
-    LocalArchitectureOverviewRequest, LocalArchitectureOverviewResult, LocalChangeReviewReceipt,
-    LocalChangeReviewRequest, LocalCodeGraphQueryRequest, LocalCodeGraphQueryResult,
-    LocalCodeSearchRequest, LocalCodeSearchResult, LocalDoctorReport, LocalDoctorTargets,
-    LocalEvidenceContextBuildRequest, LocalEvidenceContextItem, LocalIdentityGenerationError,
-    LocalIdentityKind, LocalIndexReport, LocalIndexRequest, LocalMemoryApprovalRequest,
-    LocalMemoryCorrespondenceReviewRequest, LocalMemoryDatabaseIdentity,
-    LocalMemoryHistoryImportRequest, LocalMemoryMaintenance, LocalMemoryMaintenanceStep,
-    LocalMemoryManageError, LocalMemoryMutation, LocalMemoryRecallRequest, LocalMemoryRecallResult,
-    LocalMemoryRecallSelection, LocalMemoryRevalidationError, LocalMemoryRevalidationMutation,
-    LocalMemoryRevalidationReport, LocalMemoryRevalidationRequest, LocalMemoryWriteRequest,
-    LocalOutboundSitesRequest, LocalOutboundSitesResult, LocalRelevantPathsRequest,
-    LocalRelevantPathsResult, LocalRepositoryDiagnosticsRequest, LocalRepositoryDiagnosticsResult,
+    DEFAULT_LOCAL_CONNECTED_WORKSPACE_DEADLINE, DEFAULT_LOCAL_EVIDENCE_CONTEXT_PROVIDER_RESULTS,
+    EvidenceContextCandidate, EvidenceContextTier, EvidenceLocation, GeneratedLocalIdentity,
+    GitObjectId, GitPathDiscoveryLimits, GitPathDiscoveryStats, IndexedContext,
+    LocalArchitectureMapRequest, LocalArchitectureMapResult, LocalArchitectureOverviewRequest,
+    LocalArchitectureOverviewResult, LocalChangeReviewReceipt, LocalChangeReviewRequest,
+    LocalCodeGraphQueryRequest, LocalCodeGraphQueryResult, LocalCodeSearchRequest,
+    LocalCodeSearchResult, LocalConnectedWorkspaceIndexRequest, LocalDoctorReport,
+    LocalDoctorTargets, LocalEvidenceContextBuildRequest, LocalEvidenceContextItem,
+    LocalIdentityGenerationError, LocalIdentityKind, LocalIndexReport, LocalIndexRequest,
+    LocalMemoryApprovalRequest, LocalMemoryCorrespondenceReviewRequest,
+    LocalMemoryDatabaseIdentity, LocalMemoryHistoryImportRequest, LocalMemoryMaintenance,
+    LocalMemoryMaintenanceStep, LocalMemoryManageError, LocalMemoryMutation,
+    LocalMemoryRecallRequest, LocalMemoryRecallResult, LocalMemoryRecallSelection,
+    LocalMemoryRevalidationError, LocalMemoryRevalidationMutation, LocalMemoryRevalidationReport,
+    LocalMemoryRevalidationRequest, LocalMemoryWriteRequest, LocalOutboundSitesRequest,
+    LocalOutboundSitesResult, LocalRelevantPathsRequest, LocalRelevantPathsResult,
+    LocalRepositoryDiagnosticsRequest, LocalRepositoryDiagnosticsResult,
     LocalRepositoryTopologyRequest, LocalRetentionApplyReport, LocalRetentionApplyRequest,
     LocalRetentionPins, LocalRetentionPlanReport, LocalRetentionPlanRequest,
     LocalRustGraphReadOutput, LocalRustGraphReadRequest, LocalRustGraphReadResult,
@@ -58,9 +61,10 @@ use repowitness_local::{
     apply_local_retention, approve_local_memory, build_local_change_review,
     build_local_evidence_context, diagnose_local_repository, discover_repository_paths,
     generate_local_identity, get_local_outbound_sites, get_local_symbol,
-    import_local_memory_history, index_local_repository, inspect_local_doctor,
-    locate_local_relevant_paths, map_local_architecture, overview_local_architecture,
-    parse_configuration_file, plan_local_retention, read_local_code_graph_query,
+    import_local_memory_history, index_local_connected_workspace, index_local_repository,
+    inspect_local_doctor, locate_local_relevant_paths, map_local_architecture,
+    overview_local_architecture, parse_configuration_file, plan_local_retention,
+    read_bounded_regular_file_with_parent, read_local_code_graph_query,
     read_local_repository_topology, read_local_rust_graph, read_local_test_markers,
     recall_local_memory, resolve_configuration, revalidate_local_memory,
     review_local_memory_correspondence, search_local_index, search_local_symbols,
@@ -155,13 +159,14 @@ const HELP: &str = concat!(
     "\n\n",
     "Usage:\n  repowitness <command> [options]\n\n",
     "Commands:\n",
-    "  config explain, doctor, identity, onboard, inspect-paths\n",
+    "  config explain, doctor, identity, onboard, codex, inspect-paths\n",
     "  index, watch, gc, context-build, verify, diagnostics\n",
     "  architecture-map, architecture-overview, repository-topology, graph\n",
     "  search, locate-relevant-paths, symbol-search, symbol-get\n",
     "  outbound-sites, syntax-site-search, test-markers\n",
     "  memory-revalidate, memory-recall, memory-manage\n",
-    "  mcp-serve --repository-id <id> --database <path> --root <path>\n\n",
+    "  mcp-serve --repository-id <id> --database <path> --root <path>\n",
+    "  codex workspace create|list|remove ...\n\n",
     "Run `repowitness <command> --help` for command details.\n",
     "Configuration: --user-config <path> --workspace-config <path> --repository-config <path>\n",
 );
@@ -213,8 +218,9 @@ const MCP_SERVE_HELP: &str = concat!(
     "  $XDG_STATE_HOME/repowitness/config.toml\n",
     "or ~/.local/state/repowitness/config.toml when XDG_STATE_HOME is unset.\n",
     "--user-config overrides that automatic user config.\n\n",
-    "Catalog mode exposes every repository registered by `onboard` through one MCP\n",
-    "connection. Tool calls may select an opaque repository_id; the current catalog\n",
+    "Catalog mode exposes every repository registered by `onboard` and every\n",
+    "explicit `codex workspace` member through one MCP connection. Tool calls may\n",
+    "select an opaque repository_id; the current catalog\n",
     "repository is the default when available. Catalog mode reloads the bounded\n",
     "catalog at request boundaries, so onboarding changes do not require restart.\n",
     "It is read-only by default; explicit memory-write startup adds the fixed-actor\n",
@@ -434,6 +440,7 @@ include!("cli/graph_output.rs");
 include!("cli/identity_commands.rs");
 include!("cli/identity_output.rs");
 include!("cli/onboard_commands.rs");
+include!("cli/workspace_commands.rs");
 include!("cli/bounded_file.rs");
 include!("cli/configuration.rs");
 include!("cli/config_commands.rs");
