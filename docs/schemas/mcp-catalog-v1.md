@@ -1,9 +1,9 @@
 # Local MCP catalog version 1
 
-This document defines the private control file used only by the proposed
-[ADR-0050](../adr/0050-opt-in-codex-catalog-onboarding.md) `mcp-serve --catalog`
-startup mode. It is not an MCP response, repository artifact, or user-editable
-registry.
+This document defines the private control file used by the local
+`mcp-serve --catalog` mode described by
+[ADR-0050](../adr/0050-opt-in-codex-catalog-onboarding.md). It is not an MCP
+response, repository artifact, or user-editable registry.
 
 ## Location and admission
 
@@ -14,13 +14,14 @@ directory is created through the same private no-follow Unix capability path as
 uses the normal onboarding user-state selection, defaulting to
 `$XDG_STATE_HOME/repowitness` or `~/.local/state/repowitness` on Linux. The
 catalog has a 64 KiB byte limit, must be a regular no-follow UTF-8
-JSON file, and is loaded once before the MCP runtime starts.
+JSON file. It is loaded before the MCP runtime starts and reloaded at each
+MCP request boundary.
 
 `onboard` is the catalog admission point. It indexes one explicit root and
 atomically adds that root and its private database to the catalog after
-successful activation. MCP startup only reads the catalog; it does not scan,
-index, or mutate repositories. It does not accept a root or database from MCP
-input, traverse siblings, scan parents, or load configured roots.
+successful activation. MCP only reads the catalog; it does not scan, index, or
+mutate repositories. It does not accept a root or database from MCP input,
+traverse siblings, scan parents, or load configured roots.
 
 The separately versioned connected-workspace catalog may be present beneath
 the same private state root. It is admitted only after this current-worktree
@@ -52,16 +53,17 @@ must equal the private onboarding convention for its identity.
 
 ## MCP selection
 
-Each server process captures the identity of the worktree it admitted at
-startup. Its native read-tool schemas enumerate all catalog identities but make
-`repository_id` optional only for the captured identity; omission selects that
-one fixed entry. Selecting any other entry requires one exact opaque identity.
-The catalog, host paths, and database paths are never returned. The static
-registry schema and behavior remain separate: all registry calls require an
-explicit selector and no static registry process gains a default.
+Each catalog reload identifies the process-current worktree when it exactly
+matches an admitted root. Its native read-tool schemas enumerate all catalog
+identities but make `repository_id` optional only for that current identity;
+omission selects it. Selecting any other entry requires one exact opaque
+identity.
+The catalog, host paths, and database paths are never returned. All registry
+calls require an explicit selector unless the current worktree has a default
+entry.
 
-Catalog v1 has no reload, status/list API, manual edit guarantee, background
-watcher, daemon, root scan, remote catalog, semantic cross-repository query,
+Catalog v1 has no status/list API, manual edit guarantee, background watcher,
+daemon, root scan, remote catalog, semantic cross-repository query,
 compatibility aliases, mutation, tasks, or personal-memory surface. Explicit
 connected-workspace source-slot selection is available only through the
 separate private catalog and its bounded source-view-aware tool subset.

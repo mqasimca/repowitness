@@ -953,6 +953,91 @@ async fn catalog_routes_one_mcp_connection_to_the_selected_repository() {
 }
 
 #[tokio::test]
+async fn reloadable_catalog_refreshes_repository_ids_and_default_selection() {
+    let first = Arc::new(FakeService::new());
+    let second = Arc::new(FakeService::new());
+    let first_id = "rwi1:h:11".to_owned();
+    let second_id = "rwi1:h:22".to_owned();
+    let mut initial: McpRepositoryCatalog = BTreeMap::new();
+    initial.insert(first_id, first.clone());
+    let mut refreshed = initial.clone();
+    refreshed.insert(second_id.clone(), second.clone());
+    let loader_second_id = second_id.clone();
+    let loader: McpRepositoryCatalogLoader =
+        Arc::new(move || Ok((refreshed.clone(), Some(loader_second_id.clone()))));
+
+    let (server_transport, client_transport) = tokio::io::duplex(64 * 1024);
+    let server = RepoWitnessMcpServer::with_reloadable_repository_catalog(initial, None, loader)
+        .expect("catalog is valid");
+    let server_task = tokio::spawn(async move {
+        server
+            .serve(server_transport)
+            .await
+            .expect("server starts")
+            .waiting()
+            .await
+            .expect("server stops")
+    });
+    let client = ().serve(client_transport).await.expect("client starts");
+    let code_search = client
+        .list_all_tools()
+        .await
+        .expect("tools list")
+        .into_iter()
+        .find(|tool| tool.name.as_ref() == CODE_SEARCH_TOOL_NAME)
+        .expect("code search tool");
+    let repository_ids = code_search
+        .input_schema
+        .get("properties")
+        .and_then(serde_json::Value::as_object)
+        .and_then(|properties| properties.get("repository_id"))
+        .and_then(|value| value.get("enum"))
+        .and_then(serde_json::Value::as_array)
+        .expect("repository selector enum");
+    assert!(repository_ids.iter().any(|value| value == &second_id));
+
+    let response = client
+        .call_tool(
+            CallToolRequestParams::new(CODE_SEARCH_TOOL_NAME)
+                .with_arguments(json_object(serde_json::json!({"query": "run"}))),
+        )
+        .await
+        .expect("catalog response");
+    assert_eq!(response.is_error, Some(false));
+    assert_eq!(first.search_calls.load(Ordering::Relaxed), 0);
+    assert_eq!(second.search_calls.load(Ordering::Relaxed), 1);
+
+    client.cancel().await.expect("client closes");
+    server_task.await.expect("server task");
+}
+
+#[tokio::test]
+async fn failed_catalog_refresh_keeps_the_last_valid_snapshot() {
+    let service = Arc::new(FakeService::new());
+    let repository_id = "rwi1:h:11".to_owned();
+    let mut registry: McpRepositoryCatalog = BTreeMap::new();
+    registry.insert(repository_id.clone(), service);
+    let loader: McpRepositoryCatalogLoader = Arc::new(|| Err(()));
+    let server = RepoWitnessMcpServer::with_reloadable_repository_catalog(
+        registry,
+        Some(repository_id.clone()),
+        loader,
+    )
+    .expect("catalog is valid");
+
+    assert!(server.refresh_catalog().await.is_err());
+    let state = server
+        .catalog_snapshot()
+        .expect("catalog state")
+        .expect("catalog mode");
+    assert_eq!(state.registry.len(), 1);
+    assert_eq!(
+        state.default_repository_id.as_deref(),
+        Some(repository_id.as_str())
+    );
+}
+
+#[tokio::test]
 async fn catalog_cross_repository_search_fans_out_and_keeps_repository_receipts() {
     let first = Arc::new(FakeService::new());
     let second = Arc::new(FakeService::new());

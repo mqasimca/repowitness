@@ -4,7 +4,7 @@ use std::{
     fmt,
     future::Future,
     sync::{
-        Arc,
+        Arc, RwLock,
         atomic::{AtomicBool, Ordering},
     },
     time::Duration,
@@ -21,7 +21,7 @@ use rmcp::{
 };
 use serde::{Serialize, de::DeserializeOwned};
 use tokio::{
-    sync::{OwnedSemaphorePermit, Semaphore},
+    sync::{Mutex, OwnedSemaphorePermit, Semaphore},
     task::JoinHandle,
     task::JoinSet,
     time::Instant,
@@ -158,12 +158,67 @@ impl fmt::Display for McpServeError {
 
 impl Error for McpServeError {}
 
-/// Bounded MCP server over an injected path-confined repository service.
+/// Bounded repository services keyed by opaque catalog identity.
+pub type McpRepositoryCatalog = BTreeMap<String, Arc<dyn RepositoryService>>;
+
+/// Bounded loader used by a reloadable local MCP catalog.
+pub type McpRepositoryCatalogLoader =
+    Arc<dyn Fn() -> Result<(McpRepositoryCatalog, Option<String>), ()> + Send + Sync>;
+
 #[derive(Clone)]
+struct CatalogState {
+    registry: Arc<McpRepositoryCatalog>,
+    default_repository_id: Option<Arc<str>>,
+}
+
+impl CatalogState {
+    fn new(
+        registry: McpRepositoryCatalog,
+        default_repository_id: Option<String>,
+    ) -> Result<Self, McpRepositoryRegistryError> {
+        if registry.is_empty() {
+            return Err(McpRepositoryRegistryError::Empty);
+        }
+        if registry.len() > MAX_MCP_REGISTERED_REPOSITORIES {
+            return Err(McpRepositoryRegistryError::TooMany);
+        }
+        if let Some(default) = default_repository_id.as_deref()
+            && !registry.contains_key(default)
+        {
+            return Err(McpRepositoryRegistryError::DefaultMissing);
+        }
+        Ok(Self {
+            registry: Arc::new(registry),
+            default_repository_id: default_repository_id.as_deref().map(Arc::from),
+        })
+    }
+}
+
+struct CatalogRuntime {
+    state: RwLock<CatalogState>,
+    loader: Option<McpRepositoryCatalogLoader>,
+    refresh: Mutex<()>,
+}
+
+impl CatalogRuntime {
+    fn new(
+        registry: McpRepositoryCatalog,
+        default_repository_id: Option<String>,
+        loader: Option<McpRepositoryCatalogLoader>,
+    ) -> Result<Self, McpRepositoryRegistryError> {
+        Ok(Self {
+            state: RwLock::new(CatalogState::new(registry, default_repository_id)?),
+            loader,
+            refresh: Mutex::new(()),
+        })
+    }
+}
+
+#[derive(Clone)]
+/// Bounded MCP server over an injected path-confined repository service.
 pub struct RepoWitnessMcpServer {
     service: Arc<dyn RepositoryService>,
-    registry: Option<Arc<BTreeMap<String, Arc<dyn RepositoryService>>>>,
-    default_repository_id: Option<Arc<str>>,
+    catalog: Option<Arc<CatalogRuntime>>,
     operations: Arc<Semaphore>,
     tools: Arc<[Tool]>,
     memory_writes_enabled: bool,
@@ -176,7 +231,11 @@ impl fmt::Debug for RepoWitnessMcpServer {
             .field("service", &"<injected-repository-service>")
             .field(
                 "registered_repository_count",
-                &self.registry.as_ref().map_or(0, |registry| registry.len()),
+                &self
+                    .catalog
+                    .as_ref()
+                    .and_then(|catalog| catalog.state.read().ok().map(|state| state.registry.len()))
+                    .unwrap_or(0),
             )
             .field("available_permits", &self.operations.available_permits())
             .field("tool_count", &self.tools.len())
@@ -223,8 +282,7 @@ impl RepoWitnessMcpServer {
         );
         Self {
             service,
-            registry: None,
-            default_repository_id: None,
+            catalog: None,
             operations: Arc::new(Semaphore::new(operation_concurrency)),
             tools: Arc::from(tools(memory_writes_enabled)),
             memory_writes_enabled,
@@ -258,18 +316,26 @@ impl RepoWitnessMcpServer {
         request: CrossRepositorySearchServiceRequest,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        let registry = self.registry.as_ref().ok_or_else(|| {
+        let registry = self.catalog_snapshot()?.ok_or_else(|| {
             McpError::invalid_params("cross_repository_search requires catalog mode", None)
         })?;
-        let mut repository_ids = request
-            .repository_ids()
-            .map_or_else(|| registry.keys().cloned().collect(), ToOwned::to_owned);
+        let mut repository_ids = request.repository_ids().map_or_else(
+            || registry.registry.keys().cloned().collect(),
+            ToOwned::to_owned,
+        );
         repository_ids.sort();
         let mut jobs = JoinSet::new();
         for repository_id in repository_ids {
-            let service = registry.get(&repository_id).cloned().ok_or_else(|| {
-                McpError::invalid_params("repository_ids contains an unregistered repository", None)
-            })?;
+            let service = registry
+                .registry
+                .get(&repository_id)
+                .cloned()
+                .ok_or_else(|| {
+                    McpError::invalid_params(
+                        "repository_ids contains an unregistered repository",
+                        None,
+                    )
+                })?;
             let selected = self.with_selected_service(service);
             let search = request.clone().code_search_request();
             let job_context = context.clone();
@@ -650,36 +716,84 @@ impl RepoWitnessMcpServer {
     /// Constructs one read-only MCP surface over a bounded repository catalog.
     /// Tool calls select an opaque repository ID; the default may be omitted.
     pub fn with_repository_catalog(
-        registry: BTreeMap<String, Arc<dyn RepositoryService>>,
+        registry: McpRepositoryCatalog,
         default_repository_id: Option<String>,
     ) -> Result<Self, McpRepositoryRegistryError> {
-        if registry.is_empty() {
-            return Err(McpRepositoryRegistryError::Empty);
-        }
-        if registry.len() > MAX_MCP_REGISTERED_REPOSITORIES {
-            return Err(McpRepositoryRegistryError::TooMany);
-        }
-        if let Some(default) = default_repository_id.as_deref()
-            && !registry.contains_key(default)
-        {
-            return Err(McpRepositoryRegistryError::DefaultMissing);
-        }
-        let service = registry
+        Self::from_catalog(
+            CatalogRuntime::new(registry, default_repository_id, None)?,
+            false,
+        )
+    }
+
+    /// Constructs a read-only MCP surface that reloads its catalog at each
+    /// request boundary and keeps the last valid snapshot on reload failure.
+    pub fn with_reloadable_repository_catalog(
+        registry: McpRepositoryCatalog,
+        default_repository_id: Option<String>,
+        loader: McpRepositoryCatalogLoader,
+    ) -> Result<Self, McpRepositoryRegistryError> {
+        Self::with_reloadable_repository_catalog_capability(
+            registry,
+            default_repository_id,
+            loader,
+            false,
+        )
+    }
+
+    /// Constructs a reloadable catalog with explicitly authorized memory writes.
+    pub fn with_reloadable_repository_catalog_with_memory_writes(
+        registry: McpRepositoryCatalog,
+        default_repository_id: Option<String>,
+        loader: McpRepositoryCatalogLoader,
+    ) -> Result<Self, McpRepositoryRegistryError> {
+        Self::with_reloadable_repository_catalog_capability(
+            registry,
+            default_repository_id,
+            loader,
+            true,
+        )
+    }
+
+    fn with_reloadable_repository_catalog_capability(
+        registry: McpRepositoryCatalog,
+        default_repository_id: Option<String>,
+        loader: McpRepositoryCatalogLoader,
+        memory_writes_enabled: bool,
+    ) -> Result<Self, McpRepositoryRegistryError> {
+        Self::from_catalog(
+            CatalogRuntime::new(registry, default_repository_id, Some(loader))?,
+            memory_writes_enabled,
+        )
+    }
+
+    fn from_catalog(
+        runtime: CatalogRuntime,
+        memory_writes_enabled: bool,
+    ) -> Result<Self, McpRepositoryRegistryError> {
+        let catalog = Arc::new(runtime);
+        let state = catalog
+            .state
+            .read()
+            .map_err(|_| McpRepositoryRegistryError::Empty)?;
+        let service = state
+            .registry
             .values()
             .next()
             .expect("catalog is non-empty")
             .clone();
-        let repository_ids = registry.keys().cloned().collect::<Vec<_>>();
+        let repository_ids = state.registry.keys().cloned().collect::<Vec<_>>();
+        let selector_optional = state.default_repository_id.is_some();
+        drop(state);
         Ok(Self {
             service,
-            registry: Some(Arc::new(registry)),
-            default_repository_id: default_repository_id.as_deref().map(Arc::from),
+            catalog: Some(catalog),
             operations: Arc::new(Semaphore::new(DEFAULT_MCP_OPERATION_CONCURRENCY)),
             tools: Arc::from(tools_with_repository_selector(
                 &repository_ids,
-                default_repository_id.is_some(),
+                selector_optional,
+                memory_writes_enabled,
             )),
-            memory_writes_enabled: false,
+            memory_writes_enabled,
         })
     }
 
@@ -687,13 +801,16 @@ impl RepoWitnessMcpServer {
         &self,
         arguments: Option<JsonObject>,
     ) -> Result<(Arc<dyn RepositoryService>, Option<JsonObject>), McpError> {
-        let Some(registry) = &self.registry else {
+        let Some(state) = self.catalog_snapshot()? else {
             return Ok((Arc::clone(&self.service), arguments));
         };
         let mut arguments = arguments.unwrap_or_default();
         let repository_id = match arguments.remove("repository_id") {
             Some(value) => value.as_str().map(ToOwned::to_owned),
-            None => self.default_repository_id.as_deref().map(ToOwned::to_owned),
+            None => state
+                .default_repository_id
+                .as_deref()
+                .map(ToOwned::to_owned),
         }
         .ok_or_else(|| {
             McpError::invalid_params(
@@ -701,7 +818,7 @@ impl RepoWitnessMcpServer {
                 None,
             )
         })?;
-        let service = registry.get(&repository_id).cloned().ok_or_else(|| {
+        let service = state.registry.get(&repository_id).cloned().ok_or_else(|| {
             McpError::invalid_params("repository_id does not name a registered repository", None)
         })?;
         Ok((service, Some(arguments)))
@@ -710,12 +827,44 @@ impl RepoWitnessMcpServer {
     fn with_selected_service(&self, service: Arc<dyn RepositoryService>) -> Self {
         Self {
             service,
-            registry: None,
-            default_repository_id: None,
+            catalog: None,
             operations: Arc::clone(&self.operations),
             tools: Arc::clone(&self.tools),
             memory_writes_enabled: self.memory_writes_enabled,
         }
+    }
+
+    fn catalog_snapshot(&self) -> Result<Option<CatalogState>, McpError> {
+        let Some(catalog) = &self.catalog else {
+            return Ok(None);
+        };
+        catalog
+            .state
+            .read()
+            .map(|state| Some(state.clone()))
+            .map_err(|_| McpError::internal_error("catalog state is unavailable", None))
+    }
+
+    async fn refresh_catalog(&self) -> Result<(), McpError> {
+        let Some(catalog) = &self.catalog else {
+            return Ok(());
+        };
+        let Some(loader) = &catalog.loader else {
+            return Ok(());
+        };
+        let _refresh = catalog.refresh.lock().await;
+        let loader = Arc::clone(loader);
+        let loaded = tokio::task::spawn_blocking(move || loader())
+            .await
+            .map_err(|_| McpError::internal_error("catalog refresh failed", None))?
+            .map_err(|_| McpError::internal_error("catalog refresh failed", None))?;
+        let state = CatalogState::new(loaded.0, loaded.1)
+            .map_err(|_| McpError::internal_error("catalog refresh failed", None))?;
+        *catalog
+            .state
+            .write()
+            .map_err(|_| McpError::internal_error("catalog state is unavailable", None))? = state;
+        Ok(())
     }
 }
 
@@ -739,9 +888,21 @@ fn server_instructions(
 ) -> String {
     if multi_repository {
         return if has_default_repository {
-            "RepoWitness exposes bounded read-only source evidence, context, diagnostics, memory recall, and catalog-wide FTI search. The current repository is the default; pass repository_id to select another registered repository.".to_owned()
+            if memory_writes_enabled {
+                "RepoWitness exposes bounded source evidence, context, diagnostics, memory recall, explicitly authorized memory management, and catalog-wide FTI search. The current repository is the default; pass repository_id to select another registered repository."
+                    .to_owned()
+            } else {
+                "RepoWitness exposes bounded read-only source evidence, context, diagnostics, memory recall, and catalog-wide FTI search. The current repository is the default; pass repository_id to select another registered repository."
+                    .to_owned()
+            }
         } else {
-            "RepoWitness exposes bounded read-only source evidence, context, diagnostics, memory recall, and catalog-wide FTI search for registered repositories. Repository-scoped calls require repository_id.".to_owned()
+            if memory_writes_enabled {
+                "RepoWitness exposes bounded source evidence, context, diagnostics, memory recall, explicitly authorized memory management, and catalog-wide FTI search for registered repositories. Repository-scoped calls require repository_id."
+                    .to_owned()
+            } else {
+                "RepoWitness exposes bounded read-only source evidence, context, diagnostics, memory recall, and catalog-wide FTI search for registered repositories. Repository-scoped calls require repository_id."
+                    .to_owned()
+            }
         };
     }
     if memory_writes_enabled {
@@ -846,6 +1007,13 @@ impl RepoWitnessMcpServer {
                     .map_err(|message| McpError::invalid_params(message, None))?;
                 self.call_memory_recall(request, context).await
             }
+            MEMORY_MANAGE_TOOL_NAME if self.memory_writes_enabled => {
+                let input = parse_arguments::<MemoryManageInput>(request.arguments)?;
+                let request = input
+                    .validate()
+                    .map_err(|message| McpError::invalid_params(message, None))?;
+                self.call_memory_manage(request, context).await
+            }
             SYMBOL_GET_TOOL_NAME => {
                 let input = parse_arguments::<SymbolGetInput>(request.arguments)?;
                 let request = input
@@ -868,8 +1036,11 @@ impl ServerHandler for RepoWitnessMcpServer {
             ))
             .with_instructions(server_instructions(
                 self.memory_writes_enabled,
-                self.registry.is_some(),
-                self.default_repository_id.is_some(),
+                self.catalog.is_some(),
+                self.catalog
+                    .as_ref()
+                    .and_then(|catalog| catalog.state.read().ok())
+                    .is_some_and(|state| state.default_repository_id.is_some()),
             ))
     }
 
@@ -878,8 +1049,18 @@ impl ServerHandler for RepoWitnessMcpServer {
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
+        self.refresh_catalog().await?;
+        let tools = if let Some(state) = self.catalog_snapshot()? {
+            tools_with_repository_selector(
+                &state.registry.keys().cloned().collect::<Vec<_>>(),
+                state.default_repository_id.is_some(),
+                self.memory_writes_enabled,
+            )
+        } else {
+            self.tools.iter().cloned().collect()
+        };
         Ok(ListToolsResult {
-            tools: self.tools.iter().cloned().collect(),
+            tools,
             ..ListToolsResult::default()
         })
     }
@@ -893,7 +1074,8 @@ impl ServerHandler for RepoWitnessMcpServer {
         mut request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        if self.registry.is_some() {
+        self.refresh_catalog().await?;
+        if self.catalog.is_some() {
             if request.name.as_ref() == CROSS_REPOSITORY_SEARCH_TOOL_NAME {
                 let input = parse_arguments::<CrossRepositorySearchInput>(request.arguments)?;
                 let request = input
@@ -960,13 +1142,69 @@ pub async fn serve_stdio_with_memory_writes(
 
 /// Serves one read-only MCP process over a bounded repository catalog.
 pub async fn serve_stdio_with_repository_catalog(
-    registry: BTreeMap<String, Arc<dyn RepositoryService>>,
+    registry: McpRepositoryCatalog,
     default_repository_id: Option<String>,
 ) -> Result<(), McpServeError> {
     let input = BoundedLineReader::try_new(tokio::io::stdin(), MAX_MCP_INPUT_LINE_BYTES)
         .expect("the fixed MCP input-line limit is positive");
     let server = RepoWitnessMcpServer::with_repository_catalog(registry, default_repository_id)
         .map_err(|_| McpServeError::Initialize)?;
+    let running = server
+        .serve((input, tokio::io::stdout()))
+        .await
+        .map_err(|_| McpServeError::Initialize)?;
+    running
+        .waiting()
+        .await
+        .map_err(|_| McpServeError::Runtime)?;
+    Ok(())
+}
+
+/// Serves a read-only MCP process over a catalog reloaded at request boundaries.
+pub async fn serve_stdio_with_reloadable_repository_catalog(
+    registry: McpRepositoryCatalog,
+    default_repository_id: Option<String>,
+    loader: McpRepositoryCatalogLoader,
+) -> Result<(), McpServeError> {
+    serve_stdio_with_reloadable_repository_catalog_configured(
+        registry,
+        default_repository_id,
+        loader,
+        false,
+    )
+    .await
+}
+
+/// Serves a reloadable catalog with explicitly authorized memory mutation enabled.
+pub async fn serve_stdio_with_reloadable_repository_catalog_with_memory_writes(
+    registry: McpRepositoryCatalog,
+    default_repository_id: Option<String>,
+    loader: McpRepositoryCatalogLoader,
+) -> Result<(), McpServeError> {
+    serve_stdio_with_reloadable_repository_catalog_configured(
+        registry,
+        default_repository_id,
+        loader,
+        true,
+    )
+    .await
+}
+
+async fn serve_stdio_with_reloadable_repository_catalog_configured(
+    registry: McpRepositoryCatalog,
+    default_repository_id: Option<String>,
+    loader: McpRepositoryCatalogLoader,
+    memory_writes_enabled: bool,
+) -> Result<(), McpServeError> {
+    let input = BoundedLineReader::try_new(tokio::io::stdin(), MAX_MCP_INPUT_LINE_BYTES)
+        .expect("the fixed MCP input-line limit is positive");
+    let server = RepoWitnessMcpServer::with_reloadable_repository_catalog_capability(
+        registry,
+        default_repository_id,
+        loader,
+        memory_writes_enabled,
+    )
+    .map_err(|_| McpServeError::Initialize)?;
     let running = server
         .serve((input, tokio::io::stdout()))
         .await
@@ -1177,8 +1415,12 @@ fn tools(memory_writes_enabled: bool) -> Vec<Tool> {
     tools
 }
 
-fn tools_with_repository_selector(repository_ids: &[String], selector_optional: bool) -> Vec<Tool> {
-    let mut tools = tools(false);
+fn tools_with_repository_selector(
+    repository_ids: &[String],
+    selector_optional: bool,
+    memory_writes_enabled: bool,
+) -> Vec<Tool> {
+    let mut tools = tools(memory_writes_enabled);
     tools.push(cross_repository_search_tool());
     for tool in &mut tools {
         if tool.name.as_ref() == CROSS_REPOSITORY_SEARCH_TOOL_NAME {

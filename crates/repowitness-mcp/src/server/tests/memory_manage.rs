@@ -112,6 +112,61 @@ async fn enabled_server_validates_and_forwards_memory_manage() {
 }
 
 #[tokio::test]
+async fn enabled_catalog_routes_memory_manage_to_selected_repository() {
+    let service = Arc::new(FakeService::new());
+    let repository_id = "rwi1:h:11".to_owned();
+    let mut registry = BTreeMap::new();
+    registry.insert(
+        repository_id.clone(),
+        service.clone() as Arc<dyn RepositoryService>,
+    );
+    let loader_registry = registry.clone();
+    let loader_repository_id = repository_id.clone();
+    let loader: McpRepositoryCatalogLoader =
+        Arc::new(move || Ok((loader_registry.clone(), Some(loader_repository_id.clone()))));
+    let server = RepoWitnessMcpServer::with_reloadable_repository_catalog_with_memory_writes(
+        registry, None, loader,
+    )
+    .expect("catalog is valid");
+    let (server_transport, client_transport) = tokio::io::duplex(32 * 1024);
+    let server_task = tokio::spawn(async move {
+        server
+            .serve(server_transport)
+            .await
+            .expect("server starts")
+            .waiting()
+            .await
+            .expect("server stops")
+    });
+    let client = ().serve(client_transport).await.expect("client starts");
+    assert!(
+        client
+            .list_all_tools()
+            .await
+            .expect("tools list")
+            .iter()
+            .any(|tool| tool.name.as_ref() == MEMORY_MANAGE_TOOL_NAME)
+    );
+    let response = client
+        .call_tool(
+            CallToolRequestParams::new(MEMORY_MANAGE_TOOL_NAME).with_arguments(json_object(
+                serde_json::json!({
+                    "repository_id": repository_id,
+                    "operation": "approve",
+                    "record_id": "mem_00000000000000000000000000",
+                    "timeout_ms": 1000,
+                }),
+            )),
+        )
+        .await
+        .expect("memory management response");
+    assert_eq!(response.is_error, Some(false));
+    assert_eq!(service.manage_calls.load(Ordering::Relaxed), 1);
+    client.cancel().await.expect("client closes");
+    server_task.await.expect("server task");
+}
+
+#[tokio::test]
 async fn read_only_server_rejects_unlisted_memory_manage_without_invocation() {
     let service = Arc::new(FakeService::new());
     let (server_transport, client_transport) = tokio::io::duplex(32 * 1024);

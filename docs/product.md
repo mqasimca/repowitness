@@ -28,6 +28,8 @@ management, context compilation, and revision-pinned change review.
 - `watch` is a foreground reconciler, not a daemon.
 - `mcp-serve` accepts one explicit repository or one private catalog of
   onboarded repositories and is read-only by default.
+- The catalog reloads its bounded onboarding control file at MCP request
+  boundaries; malformed later updates preserve the last valid snapshot.
 - Catalog MCP provides bounded FTI search across registered repositories;
   matching results do not claim semantic relationships.
 - `repowitness --help` lists only commands that can be invoked.

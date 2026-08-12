@@ -91,9 +91,12 @@ process should manage team memory. Stdout is reserved for MCP JSON-RPC; startup
 help and errors go to stderr.
 
 There is no daemon, connected-workspace CLI, SCIP import surface,
-personal-memory surface, or durable task surface. The catalog is intentionally
-static for the lifetime of one MCP process and read-only; re-run onboarding and
-restart MCP after adding a repository.
+personal-memory surface, or durable task surface. The catalog is read-only by
+default; explicitly enabling memory writes adds the same fixed-actor
+`memory_manage` capability to each selected repository. It reloads its bounded
+control file at MCP request boundaries; run
+`onboard` and the next request sees the updated repository set without an MCP
+restart. A malformed later catalog leaves the last valid snapshot in place.
 
 ## Development
 

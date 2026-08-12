@@ -1,0 +1,39 @@
+schema_version: 1
+record_id: mem_00041061050R3GG28A1C60T3GF
+display_revision: 4
+parent_revision_digests:
+  - "e929c69eb3e4078906eb93807de03fdc9135671df1e09ff0b7b4a31ba457542f"
+kind: decision
+title: "Analysis reuse requires explicit artifact semantics"
+body: "RepoWitness reuses analysis only when analyzer, configuration, schema, and canonicalization identities match."
+scope:
+  repository_id: rwi1:h:FF6C7D7CAA36762D648B189E69C8FD52EFD0D229200545B6810576D4723CB203
+  subject_evidence: 0
+provenance:
+  origin: human
+  actor_kind: local_asserted
+  actor_id: "codex"
+assurance: locally_approved
+lifecycle: active
+validity:
+  kind: worktree
+  source_snapshot_digest: "7d908b946e9be71e83a667510a0913db624c71ac57cf0a1ec5cc451fc88b746a"
+evidence:
+  - kind: rust_symbol
+    source_snapshot_digest: "7d908b946e9be71e83a667510a0913db624c71ac57cf0a1ec5cc451fc88b746a"
+    path: rwp1:h:6372617465732F7265706F7769746E6573732D616E616C797369732F7372632F61727469666163745F72657573652E7273
+    content_digest: "285597b557f91478030b9757a88941fe8ef470a606ab0efaa38f11b3ddb6b924"
+    artifact_digest: "c78169a153d46f44d0941ca9671aab2ed3f6adc648993820231bf5a59845685b"
+    fact_ordinal: 1
+    symbol_kind: struct
+    name: "ArtifactKeySemantics"
+    qualified_name: "ArtifactKeySemantics"
+    name_start: 610
+    name_length: 20
+    declaration_start: 599
+    declaration_length: 161
+    declaration_digest: "a61d72a178e7fe3bbc581934d967f3008761f60d6d576dff00aac98cb8dd22cb"
+    producer_id: "repowitness.rust.syntax"
+    producer_version: "phase0-rust-syntax-v1"
+relationships: []
+tombstone: false

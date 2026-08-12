@@ -450,30 +450,36 @@ FTI-only cross-repository search tool. Single-repository
 startup fixes one repository. Catalog startup reads the private onboarding
 catalog, adds an optional bounded `repository_id` selector to each native tool
 schema, and routes each call to one isolated repository service; it does not
-scan or index at MCP startup. It adds
+scan or index at MCP startup or during catalog reload. It adds
 `memory_manage` only when startup explicitly
 enables writes with one fixed validated local actor, the effective monotonic
 policy permits memory writes, and the requested canonical tool profile remains
 authorized. Unsupported or unauthorized profiles and effective write denials
 fail before runtime initialization. Repository identity, database, contained
-source root, actor, resolved configuration, and resource policy are fixed at
-process startup rather than accepted from tool callers. The catalog is the
+source root, actor, resolved configuration, and resource policy are fixed for
+each admitted service rather than accepted from tool callers. The catalog is the
 supported one-connection multi-repository mode: a bounded private catalog fixes
 at most 32 independent repository/root/database triples, every repository-scoped
 native tool
 requires one exact registered opaque `repository_id`, and routing removes that
 selector before the normal request validation. It exposes neither registry
-paths nor a default repository, reloads only on process restart, and excludes
-memory mutation, personal memory, native tasks, compatibility aliases,
+paths nor a default repository, reloads the bounded catalog at request
+boundaries, and excludes
+personal memory, native tasks, compatibility aliases,
 connected-workspace source slots, shared-database workspace selection, and
 semantic cross-repository relationship queries. Catalog mode adds one bounded
 FTI-only `cross_repository_search` tool that fans out over independent active
-generations and reports per-repository coverage. The single-repository process
+generations and reports per-repository coverage. With the same explicit
+memory-write startup capability, catalog routing also exposes `memory_manage`
+with the fixed actor on the selected repository; catalog membership itself
+remains read-only. The single-repository process
 and its schemas remain unchanged. The catalog selects the process current directory as the default
 when it exactly matches an onboarded root; other catalog entries require an
-exact opaque selector. It excludes reload, background watches,
+exact opaque selector. A complete valid reload atomically replaces the last
+valid service snapshot; in-flight requests retain their selected service. It
+excludes background watches,
 daemon coordination, root scanning, remote/catalog mutation, source slots,
-compatibility aliases, and all write/task/personal-memory capabilities. The
+compatibility aliases, native tasks, and personal-memory capabilities. The
 proposed [ADR-0051](adr/0051-explicit-codex-connected-workspace-catalog.md)
 adds a distinct explicit opt-in composition: a private catalog records only
 operator-supplied two-to-thirty-two-member connected workspaces and recognizes
@@ -483,7 +489,7 @@ or dependency repositories. The member's opaque selector routes source-view-
 aware lexical search, relevant paths, typed declarations, architecture maps,
 graph/SCIP reads, and evidence-balanced context to its exact slot. Membership is not a cross-repository
 relationship claim, and tools without a source-view receipt contract stay out
-of this mode until they have one. Catalog membership mutation, reload,
+of this mode until they have one. Catalog membership mutation,
 root scanning, and generic cross-repository queries remain excluded. The
 separate proposed ADR-0056 local-daemon option applies only to one Linux
 single-repository catalog entry; it does not extend connected workspaces.

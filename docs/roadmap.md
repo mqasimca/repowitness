@@ -44,10 +44,12 @@ source facts remain the primary retrieval surface.
 
 Daemons, connected workspaces, SCIP imports, personal memory, durable tasks,
 remote MCP, PostgreSQL, vectors, plugins, telemetry, and UI are deliberately
-out of the current product. The local catalog is intentionally static,
-onboarding-backed, and read-only; reload, scanning, and semantic
-cross-repository relationships remain deferred. Catalog-wide bounded FTI
-search is implemented without a shared graph. Any future addition needs a concrete user need, a
+out of the current product. The local catalog remains explicitly
+onboarding-backed; its membership and control file are read-only to MCP, while
+the optional fixed-actor memory capability remains explicit. It reloads its
+bounded control file at MCP request boundaries but does not scan repositories
+or infer semantic cross-repository relationships. Catalog-wide bounded FTI
+search is implemented without a shared graph. Any future addition needs a
 narrow design, a benchmark, and a superseding ADR when it changes an accepted
 contract.
 

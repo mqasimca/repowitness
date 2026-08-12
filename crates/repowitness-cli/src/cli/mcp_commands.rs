@@ -86,9 +86,6 @@ fn validate_mcp_startup_configuration(
     {
         return Err("error: MCP memory writes are denied by configuration\n");
     }
-    if matches!(invocation.target, McpServeTarget::Catalog { .. }) && invocation.memory_writes_enabled {
-        return Err("error: MCP memory writes are not supported in catalog mode\n");
-    }
     Ok(())
 }
 
@@ -116,13 +113,39 @@ impl McpServerLauncher for TokioMcpServerLauncher {
             .map_err(|_| McpLaunchError::RuntimeInitialization)?;
         match invocation.target {
             McpServeTarget::Catalog { state_dir } => {
-                let repositories = read_mcp_catalog(state_dir.as_deref())
-                    .map_err(|_| McpLaunchError::Catalog)?;
-                let default_repository_id = catalog_default_repository_id(&repositories);
-                let services = build_mcp_catalog_services(repositories, &configuration)
-                    .map_err(|_| McpLaunchError::Catalog)?;
-                runtime
-                    .block_on(serve_stdio_with_repository_catalog(services, default_repository_id))
+                let (services, default_repository_id) =
+                    load_mcp_catalog(
+                        state_dir.as_deref(),
+                        &configuration,
+                        invocation.memory_actor.as_deref(),
+                    )
+                        .map_err(|_| McpLaunchError::Catalog)?;
+                let loader_state_dir = state_dir.clone();
+                let loader_configuration = configuration.clone();
+                let loader_memory_actor = invocation.memory_actor.clone();
+                let loader: McpRepositoryCatalogLoader = Arc::new(move || {
+                    load_mcp_catalog(
+                        loader_state_dir.as_deref(),
+                        &loader_configuration,
+                        loader_memory_actor.as_deref(),
+                    )
+                });
+                let result = if invocation.memory_writes_enabled {
+                    runtime.block_on(
+                        serve_stdio_with_reloadable_repository_catalog_with_memory_writes(
+                            services,
+                            default_repository_id,
+                            loader,
+                        ),
+                    )
+                } else {
+                    runtime.block_on(serve_stdio_with_reloadable_repository_catalog(
+                        services,
+                        default_repository_id,
+                        loader,
+                    ))
+                };
+                result
                     .map_err(McpLaunchError::Serve)
             }
             McpServeTarget::Single {

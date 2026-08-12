@@ -81,6 +81,7 @@ fn absolute_catalog_path(value: &str) -> Result<PathBuf, ()> {
 fn build_mcp_catalog_services(
     repositories: Vec<RegisteredMcpRepository>,
     configuration: &ResolvedConfiguration,
+    memory_actor: Option<&str>,
 ) -> Result<std::collections::BTreeMap<String, Arc<dyn RepositoryService>>, ()> {
     let mut services = std::collections::BTreeMap::new();
     for repository in repositories {
@@ -90,7 +91,7 @@ fn build_mcp_catalog_services(
             database: repository.database,
             repository_identity: identity.clone(),
             graph_workspace: repository.graph_workspace,
-            memory_actor: None,
+            memory_actor: memory_actor.map(str::to_owned),
             configuration: configuration.clone(),
         });
         if services.insert(identity, service).is_some() {
@@ -98,6 +99,17 @@ fn build_mcp_catalog_services(
         }
     }
     Ok(services)
+}
+
+fn load_mcp_catalog(
+    state_dir: Option<&Path>,
+    configuration: &ResolvedConfiguration,
+    memory_actor: Option<&str>,
+) -> Result<(McpRepositoryCatalog, Option<String>), ()> {
+    let repositories = read_mcp_catalog(state_dir)?;
+    let default_repository_id = catalog_default_repository_id(&repositories);
+    let services = build_mcp_catalog_services(repositories, configuration, memory_actor)?;
+    Ok((services, default_repository_id))
 }
 
 fn catalog_default_repository_id(

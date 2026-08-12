@@ -104,6 +104,8 @@ passed, so maintainers accepted ADR-0018 and then ADR-0021.
 | [0058](0058-internal-memory-trust-boundary.md) | Keep memory trust receipts internal and minimal | Accepted |
 | [0059](0059-fast-development-indexing-profile.md) | Use a fast source-only catalog refresh during development | Proposed |
 | [0060](0060-bounded-cross-repository-discovery.md) | Add bounded cross-repository FTI discovery over the local catalog | Proposed |
+| [0061](0061-live-local-mcp-catalog-reload.md) | Reload the bounded local MCP catalog at request boundaries | Accepted |
+| [0062](0062-catalog-memory-management.md) | Enable explicit memory management in catalog MCP | Accepted |
 
 Use [0000-template.md](0000-template.md) for a new decision.
 
