@@ -20,7 +20,7 @@ use super::super::{
 // own complete graph, otherwise a small requested trace fails before the
 // traversal can report its bounded result.
 const DEFAULT_INPUT_EDGES: u64 = 200_000;
-const DEFAULT_INPUT_BYTES: u64 = 64 * 1024 * 1024;
+const DEFAULT_INPUT_BYTES: u64 = 256 * 1024 * 1024;
 const DEFAULT_DEPTH: u32 = 8;
 const DEFAULT_RESULTS: u32 = 100;
 const DEFAULT_VISITED_NODES: u64 = 10_000;
@@ -627,6 +627,7 @@ mod tests {
             .validate()
             .expect("compiled graph defaults");
         assert_eq!(defaults.max_input_edges(), DEFAULT_INPUT_EDGES);
+        assert_eq!(defaults.max_input_bytes(), DEFAULT_INPUT_BYTES);
         assert_eq!(defaults.max_visited_edges(), DEFAULT_VISITED_EDGES);
     }
 

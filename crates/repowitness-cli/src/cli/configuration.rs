@@ -100,6 +100,13 @@ trait ConfigurationLoader {
         &self,
         invocation: &ConfigurationInvocation,
     ) -> Result<ResolvedConfiguration, ConfigurationLoadError>;
+
+    fn load_mcp(
+        &self,
+        invocation: &ConfigurationInvocation,
+    ) -> Result<ResolvedConfiguration, ConfigurationLoadError> {
+        self.load(invocation)
+    }
 }
 
 struct LocalConfigurationLoader;
@@ -127,6 +134,51 @@ impl ConfigurationLoader for LocalConfigurationLoader {
         )?;
         resolve_configuration(&layers).map_err(|_| ConfigurationLoadError::Invalid)
     }
+
+    fn load_mcp(
+        &self,
+        invocation: &ConfigurationInvocation,
+    ) -> Result<ResolvedConfiguration, ConfigurationLoadError> {
+        let default_path = default_mcp_user_configuration_path();
+        self.load_mcp_with_default_path(invocation, default_path.as_deref())
+    }
+}
+
+impl LocalConfigurationLoader {
+    fn load_mcp_with_default_path(
+        &self,
+        invocation: &ConfigurationInvocation,
+        default_path: Option<&Path>,
+    ) -> Result<ResolvedConfiguration, ConfigurationLoadError> {
+        if invocation.user.is_some() {
+            return self.load(invocation);
+        }
+
+        let Some(default_path) = default_path else {
+            return self.load(invocation);
+        };
+        match std::fs::symlink_metadata(default_path) {
+            Ok(_) => {
+                let mut invocation = invocation.clone();
+                invocation.user = Some(default_path.to_owned());
+                self.load(&invocation)
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => self.load(invocation),
+            Err(_) => Err(ConfigurationLoadError::Unavailable),
+        }
+    }
+}
+
+fn default_mcp_user_configuration_path() -> Option<PathBuf> {
+    default_onboard_state_root()
+        .ok()
+        .map(|state_root| default_user_configuration_path(&state_root))
+}
+
+fn default_user_configuration_path(state_root: &Path) -> PathBuf {
+    state_root
+        .join(ONBOARD_STATE_PRODUCT_DIRECTORY)
+        .join("config.toml")
 }
 
 fn load_optional_configuration(

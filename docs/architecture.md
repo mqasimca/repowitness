@@ -389,16 +389,19 @@ validates the resolved schema, explicit repository/database paths and
 placement, compiled adapters, SQLite capabilities and schema, and incompatible
 settings before indexing.
 
-The local composition root accepts only explicit `--user-config`,
-`--workspace-config`, and `--repository-config` paths. It reads each bounded
-file, resolves the fixed user/workspace/repository order once, and passes the
-same path-free `ResolvedConfiguration` to indexing, search, graph reads,
-context building, memory recall, diagnostics, and MCP service requests. A configuration failure
-stops before repository/database work or MCP runtime construction. Query and
-context requests can only be tightened by their caller bounds and the
-effective resolved limits. Diagnostics wire schema 3/profile 3 reports only the
-configuration digest, schema version, resolver version, and named profile; it
-never reports configuration paths or source text.
+The local composition root accepts explicit `--user-config`,
+`--workspace-config`, and `--repository-config` paths. MCP additionally loads
+the shared user file at `$XDG_STATE_HOME/repowitness/config.toml`, or
+`~/.local/state/repowitness/config.toml` when `XDG_STATE_HOME` is unset, when
+present and not overridden by `--user-config`. It reads each bounded file,
+resolves the fixed user/workspace/repository order once, and passes the same
+path-free `ResolvedConfiguration` to indexing, search, graph reads, context
+building, memory recall, diagnostics, and MCP service requests. A
+configuration failure stops before repository/database work or MCP runtime
+construction. Query and context requests can only be tightened by their caller
+bounds and the effective resolved limits. Diagnostics wire schema 3/profile 3
+reports only the configuration digest, schema version, resolver version, and
+named profile; it never reports configuration paths or source text.
 
 ## MCP and CLI boundary
 

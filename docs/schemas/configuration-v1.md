@@ -150,13 +150,17 @@ text are excluded. Equal effective semantics therefore produce the same
 
 ## Runtime binding
 
-The CLI admits these files only through explicit `--user-config`,
-`--workspace-config`, and `--repository-config` options. The options are
-available on `index`, `watch`, `gc`, `search`, `graph`, `memory-recall`,
-`context-build`, `diagnostics`, and `mcp-serve`; `config explain` and `doctor`
-accept the same three paths for inspection. Configuration options may be
-interleaved with other named options, but an index repository path after `--`
-is always positional and is never reinterpreted as configuration.
+The CLI admits these files through explicit `--user-config`,
+`--workspace-config`, and `--repository-config` options. MCP additionally loads
+`$XDG_STATE_HOME/repowitness/config.toml`, or
+`~/.local/state/repowitness/config.toml` when `XDG_STATE_HOME` is unset, when
+the file exists and `--user-config` was not supplied. The explicit user path
+therefore overrides the MCP default. The options are available on `index`,
+`watch`, `gc`, `search`, `graph`, `memory-recall`, `context-build`,
+`diagnostics`, and `mcp-serve`; `config explain` and `doctor` accept the same
+three paths for inspection. Configuration options may be interleaved with
+other named options, but an index repository path after `--` is always
+positional and is never reinterpreted as configuration.
 
 Resolution completes before an operation adapter is invoked. The resulting
 object is passed to local request builders so indexing applies the effective

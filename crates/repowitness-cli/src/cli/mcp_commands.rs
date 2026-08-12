@@ -41,7 +41,7 @@ fn run_mcp_server_with_adapters(
         Ok(invocation) => invocation,
         Err(message) => return emit_error(stderr, EXIT_USAGE, message),
     };
-    let configuration = match configuration_loader.load(&configuration_invocation) {
+    let configuration = match configuration_loader.load_mcp(&configuration_invocation) {
         Ok(configuration) => configuration,
         Err(_) => return emit_error(stderr, EXIT_SOFTWARE, "error: configuration resolution failed\n"),
     };

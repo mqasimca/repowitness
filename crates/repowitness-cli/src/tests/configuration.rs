@@ -274,6 +274,48 @@ fn local_loader_bounds_reads_and_resolves_explicit_layers() {
     assert_eq!(stderr, b"error: configuration resolution failed\n");
 }
 
+#[test]
+fn mcp_loads_shared_user_config_and_explicit_user_config_wins() {
+    let directory = TempDirectory::new();
+    let shared = directory.path().join("config.toml");
+    std::fs::write(
+        &shared,
+        b"schema_version = 1\n[preferences]\nquery_results = 7\n",
+    )
+    .expect("write shared configuration");
+
+    let configuration = LocalConfigurationLoader
+        .load_mcp_with_default_path(&ConfigurationInvocation::default(), Some(&shared))
+        .expect("shared configuration");
+    assert_eq!(*configuration.preferences().query_results().effective(), 7);
+
+    let explicit = directory.path().join("explicit.toml");
+    std::fs::write(
+        &explicit,
+        b"schema_version = 1\n[preferences]\nquery_results = 9\n",
+    )
+    .expect("write explicit configuration");
+    let configuration = LocalConfigurationLoader
+        .load_mcp_with_default_path(
+            &ConfigurationInvocation {
+                user: Some(explicit),
+                workspace: None,
+                repository: None,
+            },
+            Some(&shared),
+        )
+        .expect("explicit configuration");
+    assert_eq!(*configuration.preferences().query_results().effective(), 9);
+}
+
+#[test]
+fn default_mcp_user_configuration_path_uses_shared_state_root() {
+    assert_eq!(
+        default_user_configuration_path(Path::new("/state")),
+        Path::new("/state/repowitness/config.toml")
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn local_loader_rejects_a_fifo_without_waiting_for_a_writer() {

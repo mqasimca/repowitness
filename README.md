@@ -81,6 +81,10 @@ The catalog defaults to the shared user state location
 client can use the same catalog. Use `--catalog-state-dir` only to deliberately
 select another state root.
 
+MCP also loads the optional shared user configuration from
+`$XDG_STATE_HOME/repowitness/config.toml` (or
+`~/.local/state/repowitness/config.toml`); `--user-config` overrides it.
+
 The server is read-only by default. Add
 `--enable-memory-writes --memory-actor <validated-actor>` only when the local
 process should manage team memory. Stdout is reserved for MCP JSON-RPC; startup
