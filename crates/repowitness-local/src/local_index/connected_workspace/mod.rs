@@ -106,11 +106,13 @@ pub(crate) fn index_connected_workspace(
     request: ConnectedWorkspaceIndexRequest<'_>,
     cancelled: Arc<AtomicBool>,
 ) -> Result<ConnectedWorkspaceIndexReport, ConnectedWorkspaceIndexError> {
-    index_connected_workspace_with_control_hooks(
+    index_connected_workspace_with_parent_control_hooks_and_reuse(
         request,
         cancelled,
+        None,
         |_, _| {},
         |_, deadline| deadline,
+        true,
     )
 }
 
@@ -118,13 +120,15 @@ pub(crate) fn index_connected_workspace_with_manifest_parent(
     request: ConnectedWorkspaceIndexRequest<'_>,
     cancelled: Arc<AtomicBool>,
     manifest_parent: &AdmittedFileParent,
+    fast_reuse: bool,
 ) -> Result<ConnectedWorkspaceIndexReport, ConnectedWorkspaceIndexError> {
-    index_connected_workspace_with_parent_control_hooks(
+    index_connected_workspace_with_parent_control_hooks_and_reuse(
         request,
         cancelled,
         Some(manifest_parent),
         |_, _| {},
         |_, deadline| deadline,
+        fast_reuse,
     )
 }
 
@@ -155,12 +159,35 @@ fn index_connected_workspace_with_control_hooks(
     )
 }
 
+#[cfg(test)]
 fn index_connected_workspace_with_parent_control_hooks(
+    request: ConnectedWorkspaceIndexRequest<'_>,
+    cancelled: Arc<AtomicBool>,
+    manifest_parent: Option<&AdmittedFileParent>,
+    after_phase: impl FnMut(CoordinatorPhase, u64),
+    maintenance_deadline: impl FnMut(PostCommitMaintenancePhase, Instant) -> Instant,
+) -> Result<ConnectedWorkspaceIndexReport, ConnectedWorkspaceIndexError> {
+    index_connected_workspace_with_parent_control_hooks_and_reuse(
+        request,
+        cancelled,
+        manifest_parent,
+        after_phase,
+        maintenance_deadline,
+        false,
+    )
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "the atomic connected-workspace path keeps probe, fallback, fencing, and publication order visible"
+)]
+fn index_connected_workspace_with_parent_control_hooks_and_reuse(
     request: ConnectedWorkspaceIndexRequest<'_>,
     cancelled: Arc<AtomicBool>,
     manifest_parent: Option<&AdmittedFileParent>,
     mut after_phase: impl FnMut(CoordinatorPhase, u64),
     mut maintenance_deadline: impl FnMut(PostCommitMaintenancePhase, Instant) -> Instant,
+    fast_reuse: bool,
 ) -> Result<ConnectedWorkspaceIndexReport, ConnectedWorkspaceIndexError> {
     let operation_started = Instant::now();
     let whole_deadline = operation_started
@@ -183,14 +210,81 @@ fn index_connected_workspace_with_parent_control_hooks(
     )?;
     let StartedConnectedWorkspace { writer, startup } = started;
     let resolved = resolve_connected_sources(&request, worktrees, &cancelled, &mut after_phase)?;
-    let prepared = prepare_connected_sources(
-        &request,
-        &database,
-        Some(writer.opened_database_identity()),
-        resolved,
-        &cancelled,
-        &mut after_phase,
-    )?;
+    let active_view = if fast_reuse {
+        writer
+            .active_workspace_view(
+                request.connected_workspace(),
+                Arc::clone(&cancelled),
+                whole_deadline,
+            )
+            .map_err(|source| ConnectedWorkspaceIndexError::WorkspaceRegistration { source })?
+    } else {
+        None
+    };
+    let prepared = if let Some(active_view) = active_view {
+        let probe = prepare_connected_sources(
+            &request,
+            &database,
+            Some(writer.opened_database_identity()),
+            resolved.clone(),
+            false,
+            &cancelled,
+            &mut after_phase,
+        )?;
+        if let Some((view, view_receipt_digest, source_reports)) = try_reuse_active_view(
+            &writer,
+            &request,
+            &database,
+            Some(writer.opened_database_identity()),
+            active_view,
+            &probe,
+            &cancelled,
+            whole_deadline,
+        )? {
+            let maintenance =
+                finish_index_writer(writer, false, whole_deadline, |phase, deadline| {
+                    after_phase(
+                        match phase {
+                            PostCommitMaintenancePhase::Checkpoint => {
+                                CoordinatorPhase::ViewPublished
+                            }
+                            PostCommitMaintenancePhase::Shutdown => {
+                                CoordinatorPhase::CheckpointAttempted
+                            }
+                        },
+                        0,
+                    );
+                    maintenance_deadline(phase, deadline)
+                });
+            return Ok(ConnectedWorkspaceIndexReport::new(
+                view,
+                startup.recovered_generations(),
+                request.configuration_digest(),
+                view_receipt_digest,
+                maintenance,
+                source_reports,
+            ));
+        }
+        prepare_connected_sources(
+            &request,
+            &database,
+            Some(writer.opened_database_identity()),
+            resolved,
+            true,
+            &cancelled,
+            &mut after_phase,
+        )?
+    } else {
+        prepare_connected_sources(
+            &request,
+            &database,
+            Some(writer.opened_database_identity()),
+            resolved,
+            true,
+            &cancelled,
+            &mut after_phase,
+        )?
+    };
     let completed = stage_and_complete_sources(
         &writer,
         request.connected_workspace(),
@@ -261,6 +355,95 @@ fn index_connected_workspace_with_parent_control_hooks(
         maintenance,
         source_reports,
     ))
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "active-view reuse must retain writer, manifest request, database authority, source probe, and bounded control"
+)]
+fn try_reuse_active_view(
+    writer: &OwnedSqliteIndex,
+    request: &ConnectedWorkspaceIndexRequest<'_>,
+    database: &std::path::Path,
+    database_identity: Option<&FileIdentity>,
+    active_view: crate::PinnedWorkspaceView,
+    prepared: &[PreparedConnectedSource],
+    cancelled: &Arc<AtomicBool>,
+    deadline: Instant,
+) -> Result<
+    Option<(
+        crate::WorkspaceViewId,
+        ConnectedWorkspaceViewDigest,
+        Vec<ConnectedSourceSlotReport>,
+    )>,
+    ConnectedWorkspaceIndexError,
+> {
+    if active_view.members().len() != prepared.len() {
+        return Ok(None);
+    }
+    let mut receipts = Vec::with_capacity(prepared.len());
+    let mut reports = Vec::with_capacity(prepared.len());
+    for source in prepared {
+        let Some(member) = active_view
+            .members()
+            .iter()
+            .find(|member| member.source_slot() == source.source_slot)
+        else {
+            return Ok(None);
+        };
+        let state = writer
+            .source_slot_state(
+                request.connected_workspace(),
+                source.source_slot,
+                Arc::clone(cancelled),
+                deadline,
+            )
+            .map_err(|source| ConnectedWorkspaceIndexError::WorkspaceRegistration { source })?;
+        let expected_snapshot = hash_source_snapshot(
+            source.publication.identity,
+            source.publication.prepared.manifest_digest(),
+        );
+        let Some(active) = state.active().filter(|active| {
+            active.source_epoch() == member.source_epoch()
+                && active.generation() == member.generation()
+                && active.snapshot() == expected_snapshot
+        }) else {
+            return Ok(None);
+        };
+        let fence = ConnectedSourceSlotFinalFence::new(
+            source.resolved_selector.worktree_root(),
+            database,
+            database_identity,
+            &source.resolved_selector,
+            source.selector_limits,
+            &source.package_scope,
+            source.publication.identity,
+            source.languages,
+            source.limits,
+        );
+        if fence
+            .confirm_source_snapshot(expected_snapshot, Arc::clone(cancelled), deadline)
+            .is_err()
+        {
+            return Ok(None);
+        }
+        receipts.push(CanonicalViewMemberReceipt::new(
+            source.source_slot,
+            active.source_epoch(),
+            source.publication.identity.repository(),
+            expected_snapshot,
+            source.publication.identity.configuration(),
+        ));
+        reports.push(connected_source_report_for_generation(
+            source,
+            active.generation(),
+        )?);
+    }
+    Ok(Some((
+        active_view.view(),
+        canonical_view_receipt_digest(request.connected_workspace(), &receipts),
+        reports,
+    )))
 }
 
 fn revalidate_manifest_parent(
@@ -625,6 +808,24 @@ fn connected_source_report(source: &CompletedConnectedSource) -> ConnectedSource
         source.report.reused_files,
         source.report.analyzed_files,
     )
+}
+
+fn connected_source_report_for_generation(
+    source: &PreparedConnectedSource,
+    generation: crate::GenerationId,
+) -> Result<ConnectedSourceSlotReport, ConnectedWorkspaceIndexError> {
+    let report = slot_report_totals(source.slot_ordinal, &source.report)?;
+    Ok(ConnectedSourceSlotReport::new(
+        source.source_slot,
+        generation,
+        report.discovered_paths,
+        report.indexed_files,
+        report.skipped_paths,
+        report.skipped_policy_paths,
+        report.skipped_unsupported_paths,
+        report.reused_files,
+        report.analyzed_files,
+    ))
 }
 
 fn map_store_startup_error(source: SqliteStoreError) -> ConnectedWorkspaceIndexError {

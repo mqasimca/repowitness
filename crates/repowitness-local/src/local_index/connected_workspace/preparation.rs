@@ -32,6 +32,7 @@ pub(super) struct AuthorizedWorktree {
     deadline: Instant,
 }
 
+#[derive(Clone)]
 pub(super) struct ResolvedConnectedSource {
     slot_index: usize,
     slot_ordinal: u64,
@@ -138,6 +139,7 @@ pub(super) fn prepare_connected_sources(
     database: &Path,
     database_identity: Option<&FileIdentity>,
     resolved: Vec<ResolvedConnectedSource>,
+    build_graph: bool,
     cancelled: &Arc<AtomicBool>,
     mut after_phase: impl FnMut(CoordinatorPhase, u64),
 ) -> Result<Vec<PreparedConnectedSource>, ConnectedWorkspaceIndexError> {
@@ -162,7 +164,7 @@ pub(super) fn prepare_connected_sources(
                 languages,
                 package_scope: slot.package_scope(),
                 limits,
-                build_graph: true,
+                build_graph,
                 cancelled,
                 deadline: resolved_source.deadline,
             })

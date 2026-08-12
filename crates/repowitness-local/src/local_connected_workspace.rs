@@ -122,6 +122,7 @@ fn index_local_connected_workspace_with_hook(
         coordinator,
         cancelled,
         request.manifest_parent,
+        true,
     )
     .map_err(LocalConnectedWorkspaceIndexError::from_internal)?;
     Ok(LocalConnectedWorkspaceIndexReport::from_internal(

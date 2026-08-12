@@ -563,6 +563,11 @@ fn phase0_local_source_snapshot_profile(
     hasher.update(LOCAL_SNAPSHOT_PRODUCER_DOMAIN);
     hasher.update(LOCAL_SNAPSHOT_PRODUCER_VERSION.to_be_bytes());
     hasher.update(base.producer_manifest().as_bytes());
+    let graph = phase1_rust_graph_artifact_identity();
+    hasher.update(graph.producer_manifest().as_bytes());
+    hasher.update(graph.configuration().as_bytes());
+    hasher.update(graph.schema().as_bytes());
+    hasher.update(graph.canonicalization_version().to_be_bytes());
     for input in local_snapshot_implementation_fingerprint_inputs() {
         update_length_prefixed(&mut hasher, input);
     }

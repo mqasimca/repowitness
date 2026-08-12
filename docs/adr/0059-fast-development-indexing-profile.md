@@ -33,6 +33,14 @@ production. The graph state remains explicit and generation-pinned; callers
 see `not_produced` until an explicit full index creates a graph for a
 generation.
 
+Catalog startup applies the same source-first idea to an existing connected
+workspace: it performs a bounded source-only revalidation, and keeps the
+current immutable graph view when every source still matches. A changed source
+falls back to the normal atomic full graph publication path.
+
+The local snapshot producer identity includes the current graph artifact
+identity, so graph semantic changes cannot silently keep an older graph view.
+
 ## Alternatives considered
 
 ### Keep graph work on the startup path
@@ -61,6 +69,8 @@ observable.
 - Existing graph-capable indexes remain readable until a new source-only
   generation is activated; this is acceptable because development indexes are
   disposable.
+- Unchanged connected-workspace startup does not create a new view or rebuild
+  its graph; changed workspaces retain the existing full refresh behavior.
 - No database migration is required; development indexes can be recreated.
 
 ## Validation
@@ -71,3 +81,5 @@ observable.
 - CLI onboarding defaults to source-only and reports `index_profile`; `--full`
   requests graph production.
 - Existing graph status and read contracts remain unchanged.
+- Repeated startup on an unchanged connected workspace retains the active view
+  and skips graph reconstruction; source changes still use the full path.

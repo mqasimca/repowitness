@@ -1,3 +1,5 @@
+use std::fs;
+
 use repowitness_application::{PackageScope, SourceLanguage, phase1_rust_graph_artifact_identity};
 
 use super::fixtures::{
@@ -88,9 +90,29 @@ fn unchanged_scope_reuses_but_scope_change_never_reuses_mismatched_artifacts() {
             &configuration,
         )],
     ));
-    assert_ne!(unchanged_scope.view(), changed_scope.view());
+    assert_eq!(unchanged_scope.view(), changed_scope.view());
     assert_eq!(unchanged_scope.source_slots()[0].analyzed_files(), 0);
     assert_eq!(unchanged_scope.source_slots()[0].reused_files(), 1);
+
+    fs::write(
+        repository_path.join("pkg_b/src/lib.rs"),
+        b"pub struct PackageB;\nimpl PackageB { pub fn changed() {} }\n",
+    )
+    .expect("source change should be written");
+    let changed_source = index(request(
+        connected_workspace,
+        &database,
+        vec![slot(
+            source_slot(1),
+            repository(1),
+            &repository_path,
+            "worktree-head",
+            scope(b"pkg_b"),
+            &configuration,
+        )],
+    ));
+    assert_ne!(changed_source.view(), unchanged_scope.view());
+    assert_eq!(changed_source.source_slots()[0].analyzed_files(), 1);
 }
 
 #[test]
