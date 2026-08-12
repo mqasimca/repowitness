@@ -1,6 +1,6 @@
-# ADR-0059: Use a fast source-only catalog refresh during development
+# ADR-0059: Use a fast source-only onboarding profile during development
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-08-12
 - Owners: Project maintainers
 - Scope: local indexing and Codex catalog startup
@@ -19,17 +19,19 @@ graph publication. Such a generation reports graph availability as
 
 ## Decision
 
-Catalog refreshes use a fast source-only indexing profile. They retain atomic
-source facts, raw syntax sites, and repository topology, but skip Rust graph
+Private onboarding uses a fast source-only indexing profile by default. It
+retains atomic source facts, raw syntax sites, and repository topology, but
+skips Rust graph
 analysis, resolution, candidate persistence, and graph staging.
 
 Explicit normal `index` operations continue to build the complete graph. This
 keeps graph production opt-in at the expensive boundary without adding a new
 storage backend, background service, or compatibility migration.
 
-The source-only profile is also available to connected-workspace catalog
-refreshes. The graph state remains explicit and generation-pinned; callers see
-`not_produced` until an explicit full index creates a graph for a generation.
+`onboard --full` and normal `index` explicitly request complete graph
+production. The graph state remains explicit and generation-pinned; callers
+see `not_produced` until an explicit full index creates a graph for a
+generation.
 
 ## Alternatives considered
 
@@ -51,13 +53,14 @@ observable.
 
 ## Consequences
 
-- Catalog startup is source-first and avoids the largest CPU and write cost.
+- Private onboarding is source-first and avoids the largest CPU and write cost.
 - Search, symbol retrieval, raw syntax, topology, diagnostics, and context
   remain available with explicit coverage.
-- Graph-specific reads can legitimately return `not_produced` after a catalog
-  refresh; users who need graph evidence run the normal full index command.
+- Graph-specific reads can legitimately return `not_produced` after source-only
+  onboarding; users who need graph evidence run the normal full index command.
 - Existing graph-capable indexes remain readable until a new source-only
-  generation is activated.
+  generation is activated; this is acceptable because development indexes are
+  disposable.
 - No database migration is required; development indexes can be recreated.
 
 ## Validation
@@ -65,4 +68,6 @@ observable.
 - Source-only indexing has no graph requirement or publication rows.
 - Searchable source facts remain available.
 - A later normal full index publishes a complete graph.
+- CLI onboarding defaults to source-only and reports `index_profile`; `--full`
+  requests graph production.
 - Existing graph status and read contracts remain unchanged.

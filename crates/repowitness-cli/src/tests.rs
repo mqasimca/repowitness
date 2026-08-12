@@ -39,6 +39,7 @@ struct FakeIndexer {
     database: RefCell<Option<PathBuf>>,
     repository_identity: RefCell<Option<OsString>>,
     configuration: RefCell<Option<ResolvedConfiguration>>,
+    build_graph: Cell<Option<bool>>,
 }
 
 #[derive(Clone, Copy)]
@@ -128,6 +129,7 @@ impl FakeIndexer {
             database: RefCell::new(None),
             repository_identity: RefCell::new(None),
             configuration: RefCell::new(None),
+            build_graph: Cell::new(None),
         }
     }
 
@@ -139,6 +141,7 @@ impl FakeIndexer {
             database: RefCell::new(None),
             repository_identity: RefCell::new(None),
             configuration: RefCell::new(None),
+            build_graph: Cell::new(None),
         }
     }
 }
@@ -156,6 +159,7 @@ impl RepositoryIndexer for FakeIndexer {
         self.repository_identity
             .replace(Some(invocation.repository_identity.clone()));
         self.configuration.replace(Some(configuration.clone()));
+        self.build_graph.set(Some(invocation.build_graph));
         match self.outcome {
             FakeIndexOutcome::Success(report) => Ok(report),
             FakeIndexOutcome::Failure(error) => Err(error.to_owned()),

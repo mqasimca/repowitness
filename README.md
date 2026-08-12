@@ -40,7 +40,9 @@ Useful read commands are `search`, `symbol-search`, `symbol-get`,
 `repository-topology`, `graph`, `context-build`, `diagnostics`, `verify`, and
 `memory-recall`. Use `repowitness <command> --help` for exact bounds.
 
-`onboard --root <repository>` is the explicit private-state shortcut. `watch`
+`onboard --root <repository>` is the explicit private-state shortcut. It uses
+a fast source-only index by default; add `--full` when graph evidence is
+needed. `watch`
 keeps one repository current in the foreground; it never starts a daemon.
 
 Memory writes are explicit and local:

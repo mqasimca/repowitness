@@ -21,6 +21,8 @@ source facts remain the primary retrieval surface.
 ### 1. Fast and predictable startup
 
 - keep indexing work out of MCP startup where possible;
+- use source-only onboarding for the common development path and explicit full
+  indexing when graph evidence is needed;
 - reuse artifacts only when every semantics-affecting input matches;
 - recreate disposable development indexes after schema changes;
 - keep `--help` short, accurate, and command-driven.

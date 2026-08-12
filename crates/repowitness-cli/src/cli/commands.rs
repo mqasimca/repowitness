@@ -611,6 +611,7 @@ fn parse_index_arguments(arguments: &[OsString]) -> Result<IndexInvocation, &'st
         repository_root,
         database,
         repository_identity,
+        build_graph: true,
     })
 }
 

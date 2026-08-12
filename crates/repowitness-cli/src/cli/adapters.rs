@@ -16,6 +16,7 @@ struct IndexInvocation {
     repository_root: PathBuf,
     database: PathBuf,
     repository_identity: OsString,
+    build_graph: bool,
 }
 
 trait RepositoryIndexer {
@@ -44,14 +45,18 @@ impl RepositoryIndexer for LocalRepositoryIndexer {
             .map_err(|_| "system clock is before the Unix epoch".to_owned())?;
         let applied_at_unix_ms = u64::try_from(elapsed.as_millis())
             .map_err(|_| "system clock is outside the supported range".to_owned())?;
-        index_local_repository(
-            LocalIndexRequest::new(
+        let mut request = LocalIndexRequest::new(
                 &invocation.repository_root,
                 &invocation.database,
                 repository_identity,
                 applied_at_unix_ms,
             )
-            .with_configuration(configuration),
+            .with_configuration(configuration);
+        if !invocation.build_graph {
+            request = request.without_graph();
+        }
+        index_local_repository(
+            request,
             Arc::new(AtomicBool::new(false)),
         )
         .map(CliIndexReport::from)

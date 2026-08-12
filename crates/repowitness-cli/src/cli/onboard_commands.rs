@@ -12,13 +12,16 @@ use cap_std::{
 };
 
 const ONBOARD_HELP: &str = concat!(
-    "Index one explicit repository into a private local state directory.\n\n",
+    "Fast-index one explicit repository into a private local state directory.\n\n",
     "Usage:\n",
-    "  repowitness onboard --root <path> [--state-dir <path>] [--repository-id <id>]\n\n",
-    "The command never searches parent or sibling repositories, writes repository\n",
-    "configuration. If --repository-id is omitted, it\n",
+    "  repowitness onboard --root <path> [--state-dir <path>] [--repository-id <id>]\n",
+    "      [--full]\n\n",
+    "The command never searches parent or sibling repositories or writes repository\n",
+    "configuration, and it builds no native graph by default. If\n",
+    "--repository-id is omitted, it\n",
     "uses operating-system secure randomness. The database is stored under the\n",
-    "documented private-state convention named by that opaque identity.\n",
+    "documented private-state convention named by that opaque identity. Use\n",
+    "--full when graph reads are needed; normal `index` is always full.\n",
 );
 
 const ONBOARD_STATE_PRODUCT_DIRECTORY: &str = "repowitness";
@@ -33,6 +36,7 @@ struct OnboardInvocation {
     root: PathBuf,
     state_dir: Option<PathBuf>,
     repository_identity: Option<String>,
+    build_graph: bool,
 }
 
 trait OnboardStateDirectory {
@@ -174,11 +178,13 @@ fn run_onboard(
     };
     let repository_root = invocation.root.clone();
     let state_dir = invocation.state_dir.clone();
+    let build_graph = invocation.build_graph;
     let index_report = match indexer.index(
         &IndexInvocation {
             repository_root,
             database: prepared_database.database.clone(),
             repository_identity: OsString::from(&repository_identity),
+            build_graph,
         },
         &configuration,
     ) {
@@ -196,17 +202,25 @@ fn run_onboard(
     {
         return emit_error(stderr, EXIT_SOFTWARE, "error: onboarding catalog registration failed\n");
     }
-    emit_onboard_report(stdout, &repository_identity, index_report)
+    emit_onboard_report(stdout, &repository_identity, index_report, build_graph)
 }
 
 fn parse_onboard_arguments(arguments: &[OsString]) -> Result<OnboardInvocation, &'static str> {
     let mut root = None;
     let mut state_dir = None;
     let mut repository_identity = None;
+    let mut build_graph = false;
     let mut index = 0_usize;
     while index < arguments.len() {
         let option = &arguments[index];
         index += 1;
+        if option == OsStr::new("--full") {
+            if build_graph {
+                return Err("error: onboard accepts --full only once\n");
+            }
+            build_graph = true;
+            continue;
+        }
         let value = arguments
             .get(index)
             .ok_or("error: onboard options require values; use onboard --help\n")?;
@@ -227,7 +241,7 @@ fn parse_onboard_arguments(arguments: &[OsString]) -> Result<OnboardInvocation, 
                 return Err("error: onboard accepts --repository-id only once\n");
             }
         } else {
-            return Err("error: onboard accepts only --root, --state-dir, and --repository-id\n");
+            return Err("error: onboard accepts only --root, --state-dir, --repository-id, and --full\n");
         }
     }
     let root = root.ok_or("error: onboard requires --root; use onboard --help\n")?;
@@ -237,7 +251,7 @@ fn parse_onboard_arguments(arguments: &[OsString]) -> Result<OnboardInvocation, 
     if state_dir.as_ref().is_some_and(|path| path.as_os_str().is_empty()) {
         return Err("error: onboard state directory must not be empty\n");
     }
-    Ok(OnboardInvocation { root, state_dir, repository_identity })
+    Ok(OnboardInvocation { root, state_dir, repository_identity, build_graph })
 }
 
 fn default_onboard_state_root() -> Result<PathBuf, ()> {
@@ -370,6 +384,7 @@ fn emit_onboard_report(
     writer: &mut impl Write,
     repository_identity: &str,
     report: CliIndexReport,
+    build_graph: bool,
 ) -> u8 {
     if !index_report_is_consistent(&report) {
         return EXIT_SOFTWARE;
@@ -377,6 +392,13 @@ fn emit_onboard_report(
     let result = writeln!(writer, "status=ok")
         .and_then(|()| writeln!(writer, "operation=onboard"))
         .and_then(|()| writeln!(writer, "repository_id={repository_identity}"))
+        .and_then(|()| {
+            writeln!(
+                writer,
+                "index_profile={}",
+                if build_graph { "full" } else { "source-only" }
+            )
+        })
         .and_then(|()| {
             writeln!(
                 writer,

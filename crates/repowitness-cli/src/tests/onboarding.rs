@@ -121,13 +121,14 @@ fn onboard_uses_one_explicit_root_and_generated_identity_without_leaking_paths()
     assert_eq!(
         stdout,
         format!(
-            "status=ok\noperation=onboard\nrepository_id={REPOSITORY_ID}\nstate_directory_convention=repowitness/repositories/<repository-id>/index.sqlite3\ngeneration_activated=true\ngeneration=3\nsource_epoch=0\nrepository_paths=8\n"
+            "status=ok\noperation=onboard\nrepository_id={REPOSITORY_ID}\nindex_profile=source-only\nstate_directory_convention=repowitness/repositories/<repository-id>/index.sqlite3\ngeneration_activated=true\ngeneration=3\nsource_epoch=0\nrepository_paths=8\n"
         )
     );
     assert!(stderr.is_empty());
     assert_eq!(identity.calls.get(), 1);
     assert_eq!(state.prepare_calls.get(), 1);
     assert_eq!(indexer.calls.get(), 1);
+    assert_eq!(indexer.build_graph.get(), Some(false));
     assert_eq!(
         state.root.borrow().as_deref(),
         Some(Path::new("/private/repository"))
@@ -175,10 +176,33 @@ fn caller_supplied_canonical_identity_is_reused_without_entropy_or_repository_di
     assert_eq!(state.prepare_calls.get(), 1);
     assert_eq!(state.state_dir.borrow().as_ref(), Some(&None));
     assert_eq!(indexer.calls.get(), 1);
+    assert_eq!(indexer.build_graph.get(), Some(false));
     assert_eq!(
         indexer.repository_root.borrow().as_deref(),
         Some(Path::new("/private/only-this-root"))
     );
+}
+
+#[test]
+fn full_onboarding_explicitly_requests_graph_indexing() {
+    let indexer = FakeIndexer::success(index_report());
+    let identity = RecordingIdentityGenerator {
+        identity: Ok(REPOSITORY_ID.to_owned()),
+        calls: Cell::new(0),
+    };
+    let state = RecordingStateDirectory::success("/private/state/index.sqlite3");
+
+    let (code, stdout, stderr) = invoke_onboard(
+        &["--root", "/private/repository", "--full"],
+        &indexer,
+        &identity,
+        &state,
+    );
+
+    assert_eq!(code, EXIT_SUCCESS);
+    assert!(stderr.is_empty());
+    assert!(stdout.contains("index_profile=full\n"));
+    assert_eq!(indexer.build_graph.get(), Some(true));
 }
 
 #[test]
