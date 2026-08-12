@@ -240,14 +240,58 @@ fn every_memory_projection_stage_failure_preserves_the_previous_active_projectio
     }
 }
 
-fn prepared_memory_projection_fixture(
+#[test]
+fn profile_v2_memory_projection_uses_unified_normalized_evidence() {
+    let directory = TempDirectory::new();
+    let yaml = String::from_utf8(COMMIT_MEMORY_YAML.to_vec())
+        .expect("memory fixture should be UTF-8")
+        .replacen("schema_version: 1", "schema_version: 2", 1)
+        .replacen("kind: decision", "kind: fact", 1);
+    let (store, prepared, _repository) =
+        prepared_memory_projection_fixture_with_record(&directory.database(), yaml.as_bytes());
+    let publication = store
+        .publish_memory_projection(
+            prepared,
+            Arc::new(AtomicBool::new(false)),
+            deadline(),
+        )
+        .expect("v2 projection should publish");
+    assert_eq!(publication.projected_records(), 1);
+    store.shutdown(deadline()).expect("store should stop");
+
+    let connection = Connection::open(directory.database()).expect("database should reopen");
+    let state: (i64, i64, i64) = connection
+        .query_row(
+            "SELECT
+                 (SELECT count(*) FROM active_memory_projections
+                  WHERE workspace_id = 1),
+                 (SELECT count(*) FROM memory_projection_records
+                  WHERE effective_state = 'needs_review'),
+                 (SELECT count(*) FROM memory_projection_evidence)",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("v2 projection state should be readable");
+    assert_eq!(state, (1, 1, 1));
+}
+
+fn prepared_memory_projection_fixture(database: &Path) -> (
+    OwnedSqliteIndex,
+    PreparedMemoryProjection,
+    RepositoryIdentityDigest,
+) {
+    prepared_memory_projection_fixture_with_record(database, COMMIT_MEMORY_YAML)
+}
+
+fn prepared_memory_projection_fixture_with_record(
     database: &Path,
+    memory_yaml: &[u8],
 ) -> (
     OwnedSqliteIndex,
     PreparedMemoryProjection,
     RepositoryIdentityDigest,
 ) {
-    let (record, revision, presentation) = memory_input(COMMIT_MEMORY_YAML);
+    let (record, revision, presentation) = memory_input(memory_yaml);
     let repository = record.scope().repository();
     let identity = RustSourceSnapshotIdentity::new(
         repository,

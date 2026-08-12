@@ -144,7 +144,7 @@ pub enum MemoryFileImportError {
     MultipleLinks,
     /// The file exceeded the inclusive 64 KiB YAML limit.
     InputTooLarge,
-    /// File bytes did not form one accepted version-1 memory record.
+    /// File bytes did not form one accepted memory-profile record.
     InvalidRecord,
     /// The decoded record identity did not match its canonical filename.
     RecordIdMismatch,

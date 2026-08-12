@@ -84,9 +84,10 @@ impl MemoryClaim {
     }
 }
 
-/// Complete validated semantic version-1 engineering-memory record.
+/// Complete validated semantic engineering-memory record for an accepted profile.
 #[derive(Clone, Eq, PartialEq)]
 pub struct MemoryRecord {
+    schema_version: u32,
     header: MemoryRecordHeader,
     claim: MemoryClaim,
     scope: MemoryScope,
@@ -115,9 +116,56 @@ impl MemoryRecord {
         lifecycle: MemoryLifecycle,
         validity: MemoryValidity,
         evidence: Vec<MemoryEvidence>,
+        relationships: Vec<MemoryRelationship>,
+        tombstone: bool,
+    ) -> Result<Self, MemoryRecordError> {
+        Self::try_new_profile(
+            MEMORY_RECORD_SCHEMA_VERSION,
+            header,
+            claim,
+            scope,
+            provenance,
+            assurance,
+            lifecycle,
+            validity,
+            evidence,
+            relationships,
+            tombstone,
+        )
+    }
+
+    /// Constructs a record under an explicitly selected compatible profile.
+    ///
+    /// Version 1 remains restricted to its original two kinds. Version 2
+    /// admits the additional kinds without changing the v1 constructor or
+    /// its canonical fixtures.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "profile and versioned memory fields are independent semantic inputs"
+    )]
+    pub fn try_new_profile(
+        schema_version: u32,
+        header: MemoryRecordHeader,
+        claim: MemoryClaim,
+        scope: MemoryScope,
+        provenance: MemoryProvenance,
+        assurance: MemoryAssurance,
+        lifecycle: MemoryLifecycle,
+        validity: MemoryValidity,
+        evidence: Vec<MemoryEvidence>,
         mut relationships: Vec<MemoryRelationship>,
         tombstone: bool,
     ) -> Result<Self, MemoryRecordError> {
+        if schema_version != MEMORY_RECORD_SCHEMA_VERSION
+            && schema_version != MEMORY_RECORD_PROFILE_V2_SCHEMA_VERSION
+        {
+            return Err(MemoryRecordError::InvalidSchemaVersion);
+        }
+        if schema_version == MEMORY_RECORD_SCHEMA_VERSION && !claim.kind().is_v1()
+            || schema_version == MEMORY_RECORD_PROFILE_V2_SCHEMA_VERSION && !claim.kind().is_v2()
+        {
+            return Err(MemoryRecordError::InvalidSchemaVersion);
+        }
         if evidence.is_empty() || evidence.len() > MAX_MEMORY_EVIDENCE {
             return Err(MemoryRecordError::InvalidCollection(
                 MemoryCollectionField::Evidence,
@@ -151,6 +199,7 @@ impl MemoryRecord {
             return Err(MemoryRecordError::InvalidTombstone);
         }
         Ok(Self {
+            schema_version,
             header,
             claim,
             scope,
@@ -167,7 +216,7 @@ impl MemoryRecord {
     /// Returns the fixed semantic schema version.
     #[must_use]
     pub const fn schema_version(&self) -> u32 {
-        MEMORY_RECORD_SCHEMA_VERSION
+        self.schema_version
     }
 
     /// Returns version identity and parentage.
@@ -235,7 +284,7 @@ impl fmt::Debug for MemoryRecord {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("MemoryRecord")
-            .field("schema_version", &MEMORY_RECORD_SCHEMA_VERSION)
+            .field("schema_version", &self.schema_version)
             .field("record_id", &self.header.record_id)
             .field("display_revision", &self.header.display_revision)
             .field("parent_count", &self.header.parents.len())

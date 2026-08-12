@@ -175,7 +175,7 @@ implemented. Its local memory-management base is also implemented:
   producer evidence can claim a cross-repository relationship. It never
   infers stack membership from layout or imports, exposes paths, or adds a
   generic cross-repository query;
-- the accepted bounded version-1 memory domain, hostile-YAML parser,
+- the accepted current engineering-memory domain, hostile-YAML parser,
   canonicalizer, deterministic writer, and capability-contained exact-file
   worktree admission;
 - a scope-checked import use case and owned-writer SQLite baseline journal with

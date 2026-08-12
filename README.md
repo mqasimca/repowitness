@@ -116,7 +116,7 @@ Codex evaluation gives the correct result at both source revisions. It uses
 current memory, ignores stale memory, and marks the context packet as useful.
 
 The SQLite store has one immutable Phase 0 baseline and compatible migrations
-through version 12. They define the five-language artifact format, append-only
+through version 15. They define the five-language artifact format, append-only
 memory journal, memory-revalidation projection, reviewed correspondence,
 idempotent review events, raw syntax observations, and a separate path-only
 repository-topology receipt. Version 3 adds bounded source-slot membership,
@@ -125,8 +125,13 @@ explicit plan/apply operations for bounded generation retention; version 9
 requires a complete topology publication before activating an ordinary local
 generation; version 10 adds an exact immutable raw-target SQLite index for
 bounded syntax-observation navigation; version 11 adds directional SCIP
-relationship-trace indexes; and version 12 makes SCIP overlay completion
-validation linear while preserving its exact completeness invariant.
+relationship-trace indexes; version 12 makes SCIP overlay completion
+validation linear while preserving its exact completeness invariant; and
+version 13 adds current-profile team-memory kinds, parentage, and lifecycle;
+version 14 exposes one logical memory read boundary over legacy and current
+physical tables; and version 15 materializes current-profile records in the
+unified normalized journal while retaining legacy tables as archival
+compatibility storage.
 
 The store saves the exact language and prepared facts for each artifact. Owned
 writer and reader connections control access. The store does the following:
@@ -619,8 +624,9 @@ list remain team-only. An owner may expose the separate `personal_memory` MCP
 tool only with both `--enable-personal-memory` and a fixed
 `--personal-memory-profile`; tool callers can never select another profile.
 
-Create or replace one canonical shared record from a complete strict
-version-1 YAML input:
+Create or replace one canonical shared record from one current-profile YAML
+input. Omit `schema_version` for ordinary authoring; explicit version-1 YAML
+remains accepted for legacy records:
 
 ```text
 target/debug/repowitness memory-manage write \

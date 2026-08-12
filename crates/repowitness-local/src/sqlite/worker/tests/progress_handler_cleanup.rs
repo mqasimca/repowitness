@@ -114,6 +114,35 @@ fn review_commit_failure_reports_unknown_and_rolls_back_the_audit() {
 fn prepared_memory_review_fixture(
     database: &Path,
 ) -> (OwnedSqliteIndex, PreparedMemoryCorrespondenceReview) {
+    prepared_memory_review_fixture_with_profile(database, false)
+}
+
+#[test]
+fn profile_v2_correspondence_review_loads_unified_source_evidence() {
+    let directory = TempDirectory::new();
+    let (store, review) = prepared_memory_review_fixture_with_profile(&directory.database(), true);
+    store
+        .append_memory_correspondence_review(
+            review,
+            Arc::new(AtomicBool::new(false)),
+            deadline(),
+        )
+        .expect("v2 correspondence review should append");
+    store.shutdown(deadline()).expect("store should stop");
+
+    let connection = Connection::open(directory.database()).expect("database should reopen");
+    let count: i64 = connection
+        .query_row("SELECT count(*) FROM memory_correspondence_audit", [], |row| {
+            row.get(0)
+        })
+        .expect("correspondence audit should be readable");
+    assert_eq!(count, 1);
+}
+
+fn prepared_memory_review_fixture_with_profile(
+    database: &Path,
+    current_profile: bool,
+) -> (OwnedSqliteIndex, PreparedMemoryCorrespondenceReview) {
     let (base_record, _, _) = memory_input(COMMIT_MEMORY_YAML);
     let repository = base_record.scope().repository();
     let source_identity = RustSourceSnapshotIdentity::new(
@@ -127,6 +156,13 @@ fn prepared_memory_review_fixture(
     );
     let source_index = prepared("review_source");
     let memory_yaml = aligned_memory_yaml(source_identity, &source_index);
+    let memory_yaml = if current_profile {
+        memory_yaml
+            .replacen("schema_version: 1", "schema_version: 2", 1)
+            .replacen("kind: decision", "kind: fact", 1)
+    } else {
+        memory_yaml
+    };
     let (record, revision, presentation) = memory_input(memory_yaml.as_bytes());
     let (store, _) =
         OwnedSqliteIndex::start(database, 123, deadline()).expect("store should start");

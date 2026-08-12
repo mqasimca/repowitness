@@ -713,7 +713,8 @@ fn prepare_memory_import(
         canonical_memory_json(&record, MemoryFormatControl::new(cancelled, deadline))
             .map_err(map_memory_format_error)?;
     check_memory_control(cancelled, deadline)?;
-    let revision = digest_canonical_bytes(&canonical_json).map_err(map_memory_format_error)?;
+    let revision = digest_canonical_bytes_for_schema(&canonical_json, record.schema_version())
+        .map_err(map_memory_format_error)?;
     check_memory_control(cancelled, deadline)?;
     Ok(PreparedMemoryImport::new(
         repository,

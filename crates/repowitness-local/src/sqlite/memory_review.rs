@@ -427,11 +427,10 @@ fn load_source_occurrence(
                AND evidence.revision_digest = ?3
                AND evidence.ordinal = ?4
                AND EXISTS (
-                    SELECT 1 FROM memory_audit AS audit
+                    SELECT 1 FROM memory_current_trust AS audit
                     WHERE audit.workspace_id = evidence.workspace_id
                       AND audit.record_id = evidence.record_id
                       AND audit.revision_digest = evidence.revision_digest
-                      AND audit.operation = 'locally_approved'
                )",
             params![
                 source.workspace_id(),

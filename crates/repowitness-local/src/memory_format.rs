@@ -13,20 +13,22 @@ use repowitness_application::{
 };
 use repowitness_domain::{
     AnalysisArtifactDigest, ByteOffset, ByteSpan, CanonicalMemoryDigest, DeclarationDigest,
-    MAX_MEMORY_INTEROPERABLE_INTEGER, MAX_MEMORY_SOURCE_BYTES, MEMORY_RECORD_SCHEMA_VERSION,
-    MemoryActorId, MemoryActorKind, MemoryAssurance, MemoryBody, MemoryClaim, MemoryCommitId,
-    MemoryDisplayRevision, MemoryEvidence, MemoryEvidenceIndex, MemoryFactOrdinal, MemoryKind,
-    MemoryLifecycle, MemoryObjectFormat, MemoryProducerId, MemoryProducerVersion, MemoryProvenance,
-    MemoryProvenanceOrigin, MemoryQualifiedName, MemoryRecord, MemoryRecordError,
-    MemoryRecordHeader, MemoryRelationship, MemoryRelationshipKind, MemoryScope, MemorySymbolName,
-    MemoryTitle, MemoryValidity, ProducerIdentity, RepositoryPathLimits, RustMemorySymbolKind,
-    RustSymbolMemoryEvidence, SourceContentDigest, SourceSnapshotDigest,
+    MAX_MEMORY_INTEROPERABLE_INTEGER, MAX_MEMORY_SOURCE_BYTES,
+    MEMORY_RECORD_CURRENT_SCHEMA_VERSION, MEMORY_RECORD_PROFILE_V2_SCHEMA_VERSION,
+    MEMORY_RECORD_SCHEMA_VERSION, MemoryActorId, MemoryActorKind, MemoryAssurance, MemoryBody,
+    MemoryClaim, MemoryCommitId, MemoryDisplayRevision, MemoryEvidence, MemoryEvidenceIndex,
+    MemoryFactOrdinal, MemoryKind, MemoryLifecycle, MemoryObjectFormat, MemoryProducerId,
+    MemoryProducerVersion, MemoryProvenance, MemoryProvenanceOrigin, MemoryQualifiedName,
+    MemoryRecord, MemoryRecordError, MemoryRecordHeader, MemoryRelationship,
+    MemoryRelationshipKind, MemoryScope, MemorySymbolName, MemoryTitle, MemoryValidity,
+    ProducerIdentity, RepositoryPathLimits, RustMemorySymbolKind, RustSymbolMemoryEvidence,
+    SourceContentDigest, SourceSnapshotDigest,
 };
 use serde::{Deserialize, Serialize};
 use serde_saphyr::{DuplicateKeyPolicy, MergeKeyPolicy};
 use sha2::{Digest, Sha256};
 
-/// Maximum admitted UTF-8 YAML bytes for one version-1 memory record.
+/// Maximum admitted UTF-8 YAML bytes for one accepted memory profile.
 pub const MAX_MEMORY_YAML_BYTES: usize = 64 * 1024;
 /// Maximum aggregate decoded YAML scalar bytes for one memory record.
 pub const MAX_MEMORY_SCALAR_BYTES: usize = 48 * 1024;
@@ -88,7 +90,7 @@ pub enum MemoryFormatError {
     InputTooLarge,
     /// YAML encoding, syntax, feature, or parser-budget validation failed.
     InvalidYaml,
-    /// The decoded semantic object violated the version-1 domain contract.
+    /// The decoded semantic object violated an accepted memory-profile contract.
     InvalidRecord(MemoryRecordError),
     /// Persisted canonical JSON was malformed, non-canonical, or misidentified.
     InvalidCanonicalRecord,
@@ -132,7 +134,7 @@ impl From<MemoryRecordError> for MemoryFormatError {
     }
 }
 
-/// One fully parsed version-1 record with its exact canonical identity material.
+/// One fully parsed accepted-profile record with its exact canonical identity material.
 #[derive(Clone, Eq, PartialEq)]
 pub struct ParsedMemoryRecord {
     record: MemoryRecord,
@@ -230,6 +232,11 @@ impl fmt::Write for MemoryYamlOutput {
 enum MemoryKindDto {
     Decision,
     Failure,
+    Fact,
+    Procedure,
+    Episode,
+    Preference,
+    Policy,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -301,6 +308,7 @@ enum RelationshipKindDto {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct MemoryRecordDto {
+    #[serde(default = "default_memory_schema_version")]
     schema_version: u32,
     record_id: String,
     display_revision: u32,
@@ -316,6 +324,10 @@ struct MemoryRecordDto {
     evidence: Vec<RustSymbolEvidenceDto>,
     relationships: Vec<RelationshipDto>,
     tombstone: bool,
+}
+
+const fn default_memory_schema_version() -> u32 {
+    MEMORY_RECORD_CURRENT_SCHEMA_VERSION
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

@@ -54,7 +54,7 @@ WHERE NOT EXISTS (
             AND source.generation_id != eligible.generation_id
       )
   AND NOT EXISTS (
-          SELECT 1 FROM memory_versions
+          SELECT 1 FROM memory_versions_all
           WHERE validity_source_snapshot = generation.snapshot_digest
       )
   AND NOT EXISTS (
@@ -62,7 +62,7 @@ WHERE NOT EXISTS (
           WHERE source_snapshot_digest = generation.snapshot_digest
       )
   AND NOT EXISTS (
-          SELECT 1 FROM memory_audit
+          SELECT 1 FROM memory_audit_all
           WHERE source_format = 'source_snapshot'
             AND source_revision = generation.snapshot_digest
       )

@@ -30,7 +30,7 @@ const ENFORCED_RETENTION_ROOT_QUERIES: &[RetentionRootQuery] = &[
         domain: b"memory-version-snapshot",
         sql: "SELECT workspace_id, record_id, revision_digest,
                      validity_source_snapshot
-              FROM memory_versions
+              FROM memory_versions_all
               WHERE validity_source_snapshot IS NOT NULL
               ORDER BY workspace_id, record_id, revision_digest",
     },
@@ -51,7 +51,7 @@ const ENFORCED_RETENTION_ROOT_QUERIES: &[RetentionRootQuery] = &[
     RetentionRootQuery {
         domain: b"memory-audit-snapshot",
         sql: "SELECT workspace_id, record_id, revision_digest, source_revision
-              FROM memory_audit
+              FROM memory_audit_all
               WHERE source_format = 'source_snapshot'
               ORDER BY workspace_id, record_id, revision_digest,
                        source_revision",

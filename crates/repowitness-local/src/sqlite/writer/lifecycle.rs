@@ -610,10 +610,14 @@ fn verify_team_merge_heads(
         return Ok(());
     }
     let record_id = prepared.record.header().record_id();
+    let (version_table, audit_table, parent_table) =
+        ("memory_versions", "memory_audit", "memory_version_parents");
     let already_present = transaction
         .query_row(
-            "SELECT 1 FROM memory_versions
-             WHERE workspace_id = ?1 AND record_id = ?2 AND revision_digest = ?3",
+            &format!(
+                "SELECT 1 FROM {version_table}
+                 WHERE workspace_id = ?1 AND record_id = ?2 AND revision_digest = ?3"
+            ),
             params![
                 workspace_id,
                 record_id.as_bytes().as_slice(),
@@ -632,14 +636,15 @@ fn verify_team_merge_heads(
         check_control(control)?;
         let valid_parent = transaction
             .query_row(
-                "SELECT EXISTS (
+                &format!(
+                    "SELECT EXISTS (
                     SELECT 1
-                    FROM memory_versions AS parent
+                    FROM {version_table} AS parent
                     WHERE parent.workspace_id = ?1
                       AND parent.record_id = ?2
                       AND parent.revision_digest = ?3
                       AND EXISTS (
-                          SELECT 1 FROM memory_audit AS observed
+                          SELECT 1 FROM {audit_table} AS observed
                           WHERE observed.workspace_id = parent.workspace_id
                             AND observed.record_id = parent.record_id
                             AND observed.revision_digest = parent.revision_digest
@@ -647,12 +652,13 @@ fn verify_team_merge_heads(
                             AND observed.display_revision < ?4
                       )
                       AND NOT EXISTS (
-                          SELECT 1 FROM memory_version_parents AS child
+                          SELECT 1 FROM {parent_table} AS child
                           WHERE child.workspace_id = parent.workspace_id
                             AND child.record_id = parent.record_id
                             AND child.parent_revision_digest = parent.revision_digest
                       )
-                )",
+                )"
+                ),
                 params![
                     workspace_id,
                     record_id.as_bytes().as_slice(),
@@ -680,10 +686,13 @@ fn import_memory_version_in_transaction(
         return Err(SqliteStoreError::InvalidMemoryImport);
     }
     let record_id = prepared.record.header().record_id();
+    let version_table = "memory_versions";
     let persisted_canonical = transaction
         .query_row(
-            "SELECT canonical_json FROM memory_versions
-             WHERE workspace_id = ?1 AND record_id = ?2 AND revision_digest = ?3",
+            &format!(
+                "SELECT canonical_json FROM {version_table}
+                 WHERE workspace_id = ?1 AND record_id = ?2 AND revision_digest = ?3"
+            ),
             params![
                 workspace_id,
                 record_id.as_bytes().as_slice(),
@@ -705,8 +714,7 @@ fn import_memory_version_in_transaction(
     };
     verify_memory_version(transaction, workspace_id, prepared, control)?;
     check_control(control)?;
-    let observation_inserted =
-        insert_memory_audit(transaction, workspace_id, prepared, "observed")?;
+    let observation_inserted = insert_memory_audit(transaction, workspace_id, prepared, "observed")?;
     check_control(control)?;
     let approval_inserted = match prepared.approval {
         repowitness_application::MemoryImportApproval::ObservedOnly => false,

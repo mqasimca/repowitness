@@ -1,27 +1,60 @@
-/// Phase 0 engineering-memory claim kind.
+/// Engineering-memory claim kind.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum MemoryKind {
     /// A reviewed engineering decision.
     Decision,
     /// A reviewed failed approach or failure mode.
     Failure,
+    /// A bounded source-grounded or otherwise explicitly evidenced fact.
+    Fact,
+    /// A reusable procedure requiring independent verification for guidance.
+    Procedure,
+    /// A bounded historical occurrence, attempt, or outcome.
+    Episode,
+    /// An explicit preference whose scope controls where it may be used.
+    Preference,
+    /// A reviewed constraint or guardrail; never execution authority by itself.
+    Policy,
 }
 
-/// Repository-authored provenance origin supported by schema version 1.
+impl MemoryKind {
+    /// Reports whether this kind is admitted by the immutable v1 team profile.
+    #[must_use]
+    pub const fn is_v1(self) -> bool {
+        matches!(self, Self::Decision | Self::Failure)
+    }
+
+    /// Reports whether this kind is admitted by the compatible v2 profile.
+    #[must_use]
+    pub const fn is_v2(self) -> bool {
+        matches!(
+            self,
+            Self::Decision
+                | Self::Failure
+                | Self::Fact
+                | Self::Procedure
+                | Self::Episode
+                | Self::Preference
+                | Self::Policy
+        )
+    }
+}
+
+    /// Repository-authored provenance origin supported by the accepted profiles.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum MemoryProvenanceOrigin {
     /// Authored by a human.
     Human,
 }
 
-/// Repository-authored actor strength supported by schema version 1.
+    /// Repository-authored actor strength supported by the accepted profiles.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum MemoryActorKind {
     /// A local label that is not an authenticated organization principal.
     LocalAsserted,
 }
 
-/// Repository-authored assurance claim supported by schema version 1.
+    /// Repository-authored assurance claim supported by the accepted profiles.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum MemoryAssurance {
     /// The file claims local approval; trusted audit state must verify it.

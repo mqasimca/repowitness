@@ -376,7 +376,7 @@ fn count_matching_records(
     let sql = format!(
         "SELECT count(*)
          FROM memory_projection_records AS record
-         LEFT JOIN memory_versions AS version
+         LEFT JOIN memory_versions_all AS version
            ON version.workspace_id = record.workspace_id
           AND version.record_id = record.record_id
           AND version.revision_digest = record.revision_digest
@@ -416,16 +416,15 @@ fn select_matching_records(
             version.canonical_json,
             (
                 SELECT audit.display_revision
-                FROM memory_audit AS audit
+                FROM memory_current_trust AS audit
                 WHERE audit.workspace_id = record.workspace_id
                   AND audit.record_id = record.record_id
                   AND audit.revision_digest = record.revision_digest
-                  AND audit.operation = 'locally_approved'
                 ORDER BY audit.event_id
                 LIMIT 1
             )
          FROM memory_projection_records AS record
-         LEFT JOIN memory_versions AS version
+         LEFT JOIN memory_versions_all AS version
            ON version.workspace_id = record.workspace_id
           AND version.record_id = record.record_id
           AND version.revision_digest = record.revision_digest

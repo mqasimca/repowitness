@@ -73,7 +73,7 @@ fn read_trusted_git_history_evidence_transaction(
              JOIN memory_projection_records AS record
                ON record.projection_id = projection.projection_id
               AND record.workspace_id = workspace.workspace_id
-             JOIN memory_audit AS audit
+             JOIN memory_audit_all AS audit
                ON audit.workspace_id = record.workspace_id
               AND audit.record_id = record.record_id
               AND audit.revision_digest = record.revision_digest
@@ -197,14 +197,14 @@ fn read_known_at_trusted_git_history_evidence_transaction(
             "SELECT observed.record_id, observed.revision_digest,
                     observed.source_format, observed.source_revision
                FROM workspaces AS workspace
-               JOIN memory_audit AS observed
+               JOIN memory_audit_all AS observed
                  ON observed.workspace_id = workspace.workspace_id
                 AND observed.operation = 'observed'
                 AND observed.source_kind = 'git'
                 AND observed.recorded_at_unix_ms <= ?2
               WHERE workspace.repository_identity = ?1
                 AND EXISTS (
-                    SELECT 1 FROM memory_audit AS approved
+                    SELECT 1 FROM memory_audit_all AS approved
                      WHERE approved.workspace_id = observed.workspace_id
                        AND approved.record_id = observed.record_id
                        AND approved.revision_digest = observed.revision_digest
@@ -329,7 +329,7 @@ const KNOWN_AT_HISTORY_EVIDENCE_QUERY: &str = "SELECT record_id, revision_digest
                'observation' AS basis,
                observed.event_id AS event_id
           FROM workspaces AS workspace
-          JOIN memory_audit AS observed
+          JOIN memory_audit_all AS observed
             ON observed.workspace_id = workspace.workspace_id
            AND observed.operation = 'observed'
            AND observed.recorded_at_unix_ms <= ?2
@@ -338,7 +338,7 @@ const KNOWN_AT_HISTORY_EVIDENCE_QUERY: &str = "SELECT record_id, revision_digest
            AND observed.source_revision = ?5
          WHERE workspace.repository_identity = ?1
            AND EXISTS (
-               SELECT 1 FROM memory_audit AS approved
+               SELECT 1 FROM memory_audit_all AS approved
                 WHERE approved.workspace_id = observed.workspace_id
                   AND approved.record_id = observed.record_id
                   AND approved.revision_digest = observed.revision_digest
@@ -358,7 +358,7 @@ const KNOWN_AT_HISTORY_EVIDENCE_QUERY: &str = "SELECT record_id, revision_digest
            AND review.recorded_at_unix_ms <= ?2
          WHERE workspace.repository_identity = ?1
            AND EXISTS (
-               SELECT 1 FROM memory_audit AS approved
+               SELECT 1 FROM memory_audit_all AS approved
                 WHERE approved.workspace_id = review.workspace_id
                   AND approved.record_id = review.record_id
                   AND approved.revision_digest = review.revision_digest

@@ -273,6 +273,230 @@ fn memory_import_is_append_only_idempotent_and_survives_backup_and_reopen() {
 }
 
 #[test]
+fn profile_v2_additional_kind_is_persisted_in_the_upgraded_team_journal() {
+    let directory = TempDirectory::new();
+    let yaml = String::from_utf8(COMMIT_MEMORY_YAML.to_vec())
+        .expect("memory fixture should be UTF-8")
+        .replacen("schema_version: 1", "schema_version: 2", 1)
+        .replacen("kind: decision", "kind: fact", 1);
+    let (record, revision, presentation) = memory_input(yaml.as_bytes());
+    assert_eq!(record.schema_version(), 2);
+    let repository = record.scope().repository();
+    let database = directory.database();
+    let (store, _) = OwnedSqliteIndex::start(&database, 123, deadline())
+        .expect("profile v2 migration should succeed");
+    store
+        .register_workspace(repository, 0, deadline())
+        .expect("workspace should register");
+    let receipt = store
+        .import_memory_version(
+            repository,
+            record,
+            presentation,
+            memory_source(),
+            memory_actor(),
+            memory_recorded_at(),
+            MemoryImportApproval::ObservedOnly,
+            Arc::new(AtomicBool::new(false)),
+            deadline(),
+        )
+        .expect("profile v2 fact should import");
+    assert_eq!(receipt.revision(), revision);
+    assert!(receipt.version_inserted());
+    store.shutdown(deadline()).expect("store should shut down");
+
+    let connection = Connection::open(database).expect("database should reopen");
+    let persisted: (i64, String, Vec<u8>) = connection
+        .query_row(
+            "SELECT schema_version, kind, canonical_json FROM memory_versions",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("v2 row should be readable");
+    assert_eq!(persisted.0, 2);
+    assert_eq!(persisted.1, "fact");
+    assert!(!persisted.2.is_empty());
+    let normalized_evidence_count: i64 = connection
+        .query_row(
+            "SELECT count(*) FROM memory_evidence
+             WHERE record_id = (SELECT record_id FROM memory_versions)",
+            [],
+            |row| row.get(0),
+        )
+        .expect("normalized v2 evidence should be readable");
+    assert_eq!(normalized_evidence_count, 1);
+    let current_trust_count: i64 = connection
+        .query_row(
+            "SELECT count(*) FROM memory_current_trust
+             WHERE record_id = (SELECT record_id FROM memory_versions)",
+            [],
+            |row| row.get(0),
+        )
+        .expect("current trust view should be readable");
+    assert_eq!(current_trust_count, 0);
+}
+
+#[test]
+fn profile_v2_reimport_detects_normalized_row_corruption() {
+    let directory = TempDirectory::new();
+    let yaml = String::from_utf8(COMMIT_MEMORY_YAML.to_vec())
+        .expect("memory fixture should be UTF-8")
+        .replacen("schema_version: 1", "schema_version: 2", 1)
+        .replacen("kind: decision", "kind: fact", 1);
+    let (record, _, presentation) = memory_input(yaml.as_bytes());
+    let repository = record.scope().repository();
+    let database = directory.database();
+    let (store, _) = OwnedSqliteIndex::start(&database, 123, deadline())
+        .expect("profile v2 migration should succeed");
+    store
+        .register_workspace(repository, 0, deadline())
+        .expect("workspace should register");
+    store
+        .import_memory_version(
+            repository,
+            record.clone(),
+            presentation,
+            memory_source(),
+            memory_actor(),
+            memory_recorded_at(),
+            MemoryImportApproval::ObservedOnly,
+            Arc::new(AtomicBool::new(false)),
+            deadline(),
+        )
+        .expect("profile v2 fact should import");
+    store.shutdown(deadline()).expect("writer should stop");
+
+    let raw = Connection::open(&database).expect("fixture database should open");
+    raw.execute("DROP TRIGGER memory_versions_no_update", [])
+        .expect("fixture should remove the immutable version guard");
+    assert_eq!(
+        raw.execute(
+            "UPDATE memory_versions SET kind = 'policy'",
+            []
+        )
+        .expect("fixture should alter normalized v2 data"),
+        1
+    );
+    drop(raw);
+
+    let (store, _) = OwnedSqliteIndex::start(&database, 456, deadline())
+        .expect("store should reopen");
+    assert_eq!(
+        store
+            .import_memory_version(
+                repository,
+                record,
+                presentation,
+                memory_source(),
+                memory_actor(),
+                memory_recorded_at(),
+                MemoryImportApproval::ObservedOnly,
+                Arc::new(AtomicBool::new(false)),
+                deadline(),
+            )
+            .expect_err("normalized v2 corruption must fail re-import"),
+        SqliteStoreError::IntegrityCheckFailed
+    );
+    store.shutdown(deadline()).expect("writer should stop");
+}
+
+#[test]
+fn profile_v2_merge_heads_use_the_unified_parent_and_audit_tables() {
+    let directory = TempDirectory::new();
+    let base_yaml = String::from_utf8(COMMIT_MEMORY_YAML.to_vec())
+        .expect("memory fixture should be UTF-8")
+        .replacen("schema_version: 1", "schema_version: 2", 1)
+        .replacen("kind: decision", "kind: fact", 1);
+    let (base, base_revision, base_presentation) = memory_input(base_yaml.as_bytes());
+    let repository = base.scope().repository();
+    let (store, _) = OwnedSqliteIndex::start(&directory.database(), 123, deadline())
+        .expect("store should start");
+    store
+        .register_workspace(repository, 0, deadline())
+        .expect("workspace should register");
+    store
+        .import_memory_version(
+            repository,
+            base,
+            base_presentation,
+            memory_source(),
+            memory_actor(),
+            memory_recorded_at(),
+            MemoryImportApproval::ObservedOnly,
+            Arc::new(AtomicBool::new(false)),
+            deadline(),
+        )
+        .expect("v2 base should be observed");
+
+    let v2_branch = |display_revision, parent, body| {
+        let yaml = memory_with_parents_and_body(display_revision, &[parent], body)
+            .replacen("schema_version: 1", "schema_version: 2", 1)
+            .replacen("kind: decision", "kind: fact", 1);
+        memory_input(yaml.as_bytes())
+    };
+    let (parent_a, parent_a_revision, parent_a_presentation) =
+        v2_branch(2, base_revision, "First v2 branch.");
+    let (parent_b, parent_b_revision, parent_b_presentation) =
+        v2_branch(3, base_revision, "Second v2 branch.");
+    for (record, presentation) in [
+        (parent_a, parent_a_presentation),
+        (parent_b, parent_b_presentation),
+    ] {
+        store
+            .import_memory_version(
+                repository,
+                record,
+                presentation,
+                memory_source(),
+                memory_actor(),
+                memory_recorded_at(),
+                MemoryImportApproval::ObservedOnly,
+                Arc::new(AtomicBool::new(false)),
+                deadline(),
+            )
+            .expect("v2 branch should be observed");
+    }
+    let parents = [parent_a_revision, parent_b_revision]
+        .iter()
+        .map(|parent| {
+            let mut encoded = String::with_capacity(64);
+            for byte in parent.as_bytes() {
+                use std::fmt::Write as _;
+                let _ = write!(encoded, "{byte:02x}");
+            }
+            format!("  - \"{encoded}\"")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let merge_yaml = String::from_utf8(COMMIT_MEMORY_YAML.to_vec())
+        .expect("memory fixture should be UTF-8")
+        .replacen("schema_version: 1", "schema_version: 2", 1)
+        .replacen("kind: decision", "kind: fact", 1)
+        .replacen("display_revision: 1", "display_revision: 4", 1)
+        .replacen("parent_revision_digests: []", &format!("parent_revision_digests:\n{parents}"), 1)
+        .replacen(
+            "Readers must never observe a partially staged generation.",
+            "Reviewed v2 merge.",
+            1,
+        );
+    let (merge, merge_revision, merge_presentation) = memory_input(merge_yaml.as_bytes());
+    let receipt = store
+        .sync_team_memory(
+            repository,
+            merge,
+            merge_presentation,
+            memory_source(),
+            memory_actor(),
+            memory_recorded_at(),
+            Arc::new(AtomicBool::new(false)),
+            deadline(),
+        )
+        .expect("v2 observed merge should be admitted");
+    assert_eq!(receipt.revision(), merge_revision);
+    store.shutdown(deadline()).expect("store should stop");
+}
+
+#[test]
 #[allow(
     clippy::too_many_lines,
     reason = "one end-to-end adversarial fixture keeps merge admission, retry, stale-parent, and missing-parent assertions together"

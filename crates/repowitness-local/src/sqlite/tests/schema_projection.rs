@@ -1,4 +1,8 @@
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "the migration ledger golden vectors are intentionally kept in one exact fixture"
+)]
 fn migration_checksums_are_stable_golden_vectors() {
     assert_eq!(
         migration_checksum(MIGRATION_1),
@@ -81,6 +85,30 @@ fn migration_checksums_are_stable_golden_vectors() {
         ]
     );
     assert_eq!(
+        migration_checksum(MIGRATION_13),
+        [
+            0xcf, 0x82, 0xa1, 0x16, 0xff, 0xcc, 0x98, 0x4d, 0x88, 0x1a, 0x7b, 0xa5, 0x8a, 0xac,
+            0x04, 0xeb, 0x09, 0xe2, 0x32, 0x1f, 0x56, 0xe3, 0xaf, 0xf6, 0x0e, 0x12, 0x22, 0xda,
+            0xea, 0x47, 0x6c, 0xf6,
+        ]
+    );
+    assert_eq!(
+        migration_checksum(MIGRATION_14),
+        [
+            0xba, 0x68, 0xd9, 0xe1, 0x8f, 0xac, 0x77, 0xe0, 0x35, 0x81, 0x08, 0x66, 0x55, 0xbb,
+            0x3e, 0x39, 0x81, 0xec, 0x2a, 0xf8, 0xd7, 0x3b, 0xaf, 0xe7, 0x8a, 0x28, 0x41, 0x8c,
+            0x74, 0x8c, 0x5d, 0x5d,
+        ]
+    );
+    assert_eq!(
+        migration_checksum(MIGRATION_15),
+        [
+            0x24, 0x7f, 0xb2, 0x7c, 0xf2, 0x46, 0x70, 0x0b, 0x2e, 0x99, 0xfa, 0x83, 0x94, 0x26,
+            0xe2, 0x82, 0xc3, 0x31, 0x90, 0x82, 0xc8, 0x98, 0x9c, 0x19, 0x33, 0x9f, 0xb7, 0xba,
+            0x1b, 0x39, 0xf7, 0xc7,
+        ]
+    );
+    assert_eq!(
         migrations(),
         [
             (1, MIGRATION_1_NAME, MIGRATION_1),
@@ -94,6 +122,9 @@ fn migration_checksums_are_stable_golden_vectors() {
             (10, MIGRATION_10_NAME, MIGRATION_10),
             (11, MIGRATION_11_NAME, MIGRATION_11),
             (12, MIGRATION_12_NAME, MIGRATION_12),
+            (13, MIGRATION_13_NAME, MIGRATION_13),
+            (14, MIGRATION_14_NAME, MIGRATION_14),
+            (15, MIGRATION_15_NAME, MIGRATION_15),
         ]
     );
     for transitional_statement in ["CREATE TEMP", "ALTER TABLE", "DROP TABLE"] {
@@ -102,7 +133,7 @@ fn migration_checksums_are_stable_golden_vectors() {
 }
 
 #[test]
-fn current_catalog_matches_the_version_twelve_golden() {
+fn current_catalog_matches_the_current_schema_golden() {
     let directory = TempDirectory::new();
     let connection =
         open_index_writer(&directory.database(), 123).expect("baseline should succeed");
@@ -135,9 +166,9 @@ fn current_catalog_matches_the_version_twelve_golden() {
     assert_eq!(
         migration_checksum(&canonical_catalog),
         [
-            0x7c, 0xe9, 0x65, 0x11, 0x00, 0x9e, 0xfd, 0x7e, 0x88, 0x29, 0xf0, 0x0b, 0xaa, 0x84,
-            0x2c, 0x67, 0xcb, 0xc0, 0x18, 0xe5, 0x4b, 0x1c, 0xa6, 0x29, 0x5e, 0x7c, 0xc0, 0xb7,
-            0x15, 0x88, 0xd8, 0xc9,
+            0x95, 0x0b, 0xf9, 0xff, 0xfb, 0x00, 0x22, 0x26, 0x5d, 0x2e, 0x92, 0x44, 0xd2, 0x92,
+            0xa9, 0x03, 0x63, 0xee, 0x47, 0x08, 0x6d, 0x57, 0xad, 0x16, 0x18, 0x25, 0xe9, 0xc9,
+            0xc4, 0x26, 0x1f, 0xcf,
         ]
     );
 }
@@ -353,6 +384,8 @@ fn fresh_database_has_exact_identity_ledger_and_required_schema() {
                     'generation_files', 'generation_facts', 'generation_search',
                     'generation_search_rebuild', 'search_projection_state',
                     'memory_versions', 'memory_version_parents',
+                    'memory_profile_v2_versions', 'memory_profile_v2_audit',
+                    'memory_profile_v2_parents',
                     'memory_validity_commits', 'memory_evidence',
                     'memory_relationships', 'memory_audit',
                     'artifact_fact_correspondence',
@@ -404,6 +437,8 @@ fn fresh_database_has_exact_identity_ledger_and_required_schema() {
                        AND name IN (
                            'unique_memory_observation',
                            'unique_memory_local_approval',
+                           'unique_memory_profile_v2_observation',
+                           'unique_memory_profile_v2_local_approval',
                            'memory_evidence_occurrence_identity',
                            'unique_memory_correspondence_event'
                        )),
@@ -520,10 +555,28 @@ fn fresh_database_has_exact_identity_ledger_and_required_schema() {
                 migration_checksum(MIGRATION_12).to_vec(),
                 123
             ),
+            (
+                13,
+                MIGRATION_13_NAME.to_owned(),
+                migration_checksum(MIGRATION_13).to_vec(),
+                123
+            ),
+            (
+                14,
+                MIGRATION_14_NAME.to_owned(),
+                migration_checksum(MIGRATION_14).to_vec(),
+                123
+            ),
+            (
+                15,
+                MIGRATION_15_NAME.to_owned(),
+                migration_checksum(MIGRATION_15).to_vec(),
+                123
+            ),
         ]
     );
-    assert_eq!(tables, 60);
-    assert_eq!(memory_schema_objects, (4, 30));
+    assert_eq!(tables, 63);
+    assert_eq!(memory_schema_objects, (6, 39));
     assert_eq!(graph_schema_objects, (2, 26));
     assert_eq!(retention_schema_objects, (7, 15));
     let payload_column: (String, i64) = connection

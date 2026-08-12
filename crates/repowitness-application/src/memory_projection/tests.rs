@@ -206,6 +206,51 @@ fn validity_and_authored_lifecycle_short_circuit_evidence() {
 }
 
 #[test]
+fn profile_v2_procedures_require_a_separate_verification_receipt() {
+    let base = record(1, 1, Vec::new(), MemoryLifecycle::Active);
+    let procedure = MemoryRecord::try_new_profile(
+        2,
+        base.header().clone(),
+        MemoryClaim::new(
+            MemoryKind::Procedure,
+            base.claim().title().clone(),
+            base.claim().body().clone(),
+        ),
+        base.scope(),
+        base.provenance().clone(),
+        base.assurance(),
+        base.lifecycle(),
+        base.validity().clone(),
+        base.evidence().to_vec(),
+        base.relationships().to_vec(),
+        base.tombstone(),
+    )
+    .expect("profile v2 procedure should validate");
+    let decision = evaluate_memory_projection(
+        &procedure,
+        Some(MemoryProjectValidity::Valid),
+        &[MemoryEvidenceOutcome::Exact],
+    )
+    .expect("procedure policy should produce a decision");
+    assert_eq!(
+        decision.effective_state(),
+        MemoryEffectiveState::NeedsReview
+    );
+    assert_eq!(
+        decision.validity_state(),
+        MemoryProjectionValidityState::NotEvaluated
+    );
+    assert_eq!(
+        decision.evidence_state(),
+        MemoryProjectionEvidenceState::NotEvaluated
+    );
+    assert_eq!(
+        decision.reason(),
+        MemoryProjectionReason::AuthoredNeedsReview
+    );
+}
+
+#[test]
 fn mixed_records_duplicate_revisions_and_mismatched_evidence_fail_closed() {
     let first = record(1, 1, Vec::new(), MemoryLifecycle::Active);
     let other = record(2, 1, Vec::new(), MemoryLifecycle::Active);

@@ -17,7 +17,7 @@ fn load_memory_journal_inner(
                 "SELECT version.record_id, version.revision_digest, version.canonical_json,
                         (
                             SELECT audit.display_revision
-                            FROM memory_audit AS audit
+                            FROM memory_audit_all AS audit
                             WHERE audit.workspace_id = version.workspace_id
                               AND audit.record_id = version.record_id
                               AND audit.revision_digest = version.revision_digest
@@ -28,13 +28,12 @@ fn load_memory_journal_inner(
                         ),
                         EXISTS (
                             SELECT 1
-                            FROM memory_audit AS audit
+                            FROM memory_current_trust AS audit
                             WHERE audit.workspace_id = version.workspace_id
                               AND audit.record_id = version.record_id
                               AND audit.revision_digest = version.revision_digest
-                              AND audit.operation = 'locally_approved'
                         )
-                 FROM memory_versions AS version
+                 FROM memory_versions_all AS version
                  WHERE version.workspace_id = ?1
                  ORDER BY version.record_id, version.revision_digest
                  LIMIT ?2",
@@ -212,11 +211,10 @@ fn unique_approval_git_source(
     let mut statement = connection
         .prepare(
             "SELECT source_kind, source_format, source_revision
-             FROM memory_audit
+             FROM memory_current_trust
              WHERE workspace_id = ?1
                AND record_id = ?2
                AND revision_digest = ?3
-               AND operation = 'locally_approved'
              GROUP BY source_kind, source_format, source_revision
              ORDER BY source_kind, source_format, source_revision
              LIMIT 2",

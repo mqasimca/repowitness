@@ -108,7 +108,7 @@ fn hostile_yaml_and_unknown_semantics_fail_closed() {
         parse_memory_record(crlf.as_bytes(), control(&cancelled)),
         Err(MemoryFormatError::InvalidYaml)
     );
-    let bad_schema = source.replacen("schema_version: 1", "schema_version: 2", 1);
+    let bad_schema = source.replacen("schema_version: 1", "schema_version: 3", 1);
     assert_eq!(
         parse_memory_record(bad_schema.as_bytes(), control(&cancelled)),
         Err(MemoryFormatError::InvalidRecord(
@@ -132,6 +132,76 @@ fn presentation_revision_is_not_semantic_but_claim_text_is() {
     let semantic =
         parse_memory_record(semantic.as_bytes(), control(&cancelled)).expect("valid claim");
     assert_ne!(baseline.digest(), semantic.digest());
+}
+
+#[test]
+fn profile_v2_admits_additional_kinds_without_changing_v1() {
+    let cancelled = AtomicBool::new(false);
+    let source = String::from_utf8(COMMIT_YAML.to_vec()).expect("fixture is UTF-8");
+    let v2 = source
+        .replacen("schema_version: 1", "schema_version: 2", 1)
+        .replacen("kind: decision", "kind: procedure", 1);
+    let parsed = parse_memory_record(v2.as_bytes(), control(&cancelled))
+        .expect("profile v2 procedure should parse");
+    assert_eq!(parsed.record().schema_version(), 2);
+    assert_eq!(
+        parsed.record().claim().kind(),
+        repowitness_domain::MemoryKind::Procedure
+    );
+    assert_eq!(
+        canonical_memory_digest(parsed.record(), control(&cancelled)).expect("v2 digest"),
+        parsed.digest()
+    );
+    assert_ne!(
+        parsed.digest(),
+        parse_memory_record(COMMIT_YAML, control(&cancelled))
+            .unwrap()
+            .digest()
+    );
+    assert_eq!(
+        generate_memory_yaml(parsed.record(), control(&cancelled)).expect("v2 should generate"),
+        v2.as_bytes()
+    );
+    let persisted = parse_persisted_canonical_memory_record(
+        parsed.canonical_json(),
+        MemoryDisplayRevision::try_new(7).expect("display revision"),
+        parsed.digest(),
+        control(&cancelled),
+    )
+    .expect("v2 canonical record should reconstruct");
+    assert_eq!(persisted.record().schema_version(), 2);
+    assert_eq!(
+        persisted.record().claim().kind(),
+        repowitness_domain::MemoryKind::Procedure
+    );
+
+    let v1_with_new_kind = v2.replacen("schema_version: 2", "schema_version: 1", 1);
+    assert!(matches!(
+        parse_memory_record(v1_with_new_kind.as_bytes(), control(&cancelled)),
+        Err(MemoryFormatError::InvalidRecord(
+            MemoryRecordError::InvalidSchemaVersion
+        ))
+    ));
+}
+
+#[test]
+fn omitted_schema_version_selects_the_single_current_profile() {
+    let cancelled = AtomicBool::new(false);
+    let source = String::from_utf8(COMMIT_YAML.to_vec()).expect("fixture is UTF-8");
+    let current =
+        source
+            .replacen("schema_version: 1\n", "", 1)
+            .replacen("kind: decision", "kind: fact", 1);
+    let parsed = parse_memory_record(current.as_bytes(), control(&cancelled))
+        .expect("omitted version should select the current profile");
+    assert_eq!(parsed.record().schema_version(), 2);
+    assert_eq!(
+        parsed.record().claim().kind(),
+        repowitness_domain::MemoryKind::Fact
+    );
+    let generated = generate_memory_yaml(parsed.record(), control(&cancelled))
+        .expect("current profile should generate");
+    assert!(generated.starts_with(b"schema_version: 2\n"));
 }
 
 #[test]

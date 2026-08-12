@@ -1,4 +1,4 @@
-/// Emits the deterministic version-1 human-facing YAML presentation.
+/// Emits the deterministic human-facing YAML presentation for an accepted profile.
 #[allow(
     clippy::too_many_lines,
     reason = "the fixed schema order is intentionally visible in one writer"
@@ -281,6 +281,11 @@ fn memory_kind_text(kind: MemoryKindDto) -> &'static str {
     match kind {
         MemoryKindDto::Decision => "decision",
         MemoryKindDto::Failure => "failure",
+        MemoryKindDto::Fact => "fact",
+        MemoryKindDto::Procedure => "procedure",
+        MemoryKindDto::Episode => "episode",
+        MemoryKindDto::Preference => "preference",
+        MemoryKindDto::Policy => "policy",
     }
 }
 

@@ -401,6 +401,25 @@ pub fn evaluate_memory_projection(
     if record.evidence().len() > MAX_MEMORY_EVIDENCE {
         return Err(MemoryProjectionError::InvalidEvaluation);
     }
+    // Profile-v2 procedures are never promoted to current guidance until a
+    // separate successful verification receipt is wired to this revision.
+    // Keeping that gate here prevents an adapter from accidentally treating
+    // authored approval as execution evidence.
+    if record.schema_version() == 2
+        && record.claim().kind() == repowitness_domain::MemoryKind::Procedure
+        && record.lifecycle() == MemoryLifecycle::Active
+    {
+        return decision(
+            MemoryEffectiveState::NeedsReview,
+            MemoryProjectionValidityState::NotEvaluated,
+            MemoryProjectionEvidenceState::NotEvaluated,
+            MemoryProjectionReason::AuthoredNeedsReview,
+            record.evidence().len(),
+            0,
+            0,
+            0,
+        );
+    }
     if record.lifecycle() != MemoryLifecycle::Active {
         if project_validity.is_some() || !evidence.is_empty() {
             return Err(MemoryProjectionError::InvalidEvaluation);

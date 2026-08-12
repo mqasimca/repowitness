@@ -446,6 +446,11 @@ fn memory_kind(kind: MemoryKind) -> &'static str {
     match kind {
         MemoryKind::Decision => "decision",
         MemoryKind::Failure => "failure",
+        MemoryKind::Fact => "fact",
+        MemoryKind::Procedure => "procedure",
+        MemoryKind::Episode => "episode",
+        MemoryKind::Preference => "preference",
+        MemoryKind::Policy => "policy",
     }
 }
 

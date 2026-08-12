@@ -76,8 +76,10 @@ A versioned relationship connecting occurrences or logical symbols across revisi
 
 A scoped engineering claim whose kind may be decision, failure, procedure, episode, preference, policy, or non-source-derivable fact. Records have immutable versions, provenance, lifecycle, validity, and audit history.
 
-The strict Phase 0 version-1 record is accepted in ADR-0014. Its domain model,
-hostile-YAML parser, canonical digest, and deterministic writer are implemented;
+The current engineering-memory profile is defined by ADR-0057. Its domain
+model, hostile-YAML parser, canonical digest, and deterministic writer are
+implemented; explicit version-1 records remain accepted as legacy compatibility
+inputs;
 capability-contained worktree admission, trusted import, and append-only SQLite
 persistence are also implemented. The versioned SQLite schema contains the
 five-language artifact format, derivation and atomic publication of a

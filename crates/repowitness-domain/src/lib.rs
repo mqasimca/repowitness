@@ -11,6 +11,7 @@ mod evidence;
 mod evidence_context;
 mod git;
 mod memory;
+mod memory_policy;
 mod memory_revalidation;
 mod path;
 mod personal_memory;
@@ -46,7 +47,8 @@ pub use evidence_context::{
 pub use git::{GitObjectId, GitObjectIdError, GitObjectIdFormat};
 pub use memory::{
     MAX_MEMORY_COMMITS, MAX_MEMORY_EVIDENCE, MAX_MEMORY_INTEROPERABLE_INTEGER, MAX_MEMORY_PARENTS,
-    MAX_MEMORY_RELATIONSHIPS, MAX_MEMORY_SOURCE_BYTES, MEMORY_RECORD_SCHEMA_VERSION, MemoryActorId,
+    MAX_MEMORY_RELATIONSHIPS, MAX_MEMORY_SOURCE_BYTES, MEMORY_RECORD_CURRENT_SCHEMA_VERSION,
+    MEMORY_RECORD_PROFILE_V2_SCHEMA_VERSION, MEMORY_RECORD_SCHEMA_VERSION, MemoryActorId,
     MemoryActorKind, MemoryAssurance, MemoryAuditActorId, MemoryBody, MemoryClaim,
     MemoryCollectionField, MemoryCommitId, MemoryCorrespondenceReviewOperation,
     MemoryDisplayRevision, MemoryEvidence, MemoryEvidenceIndex, MemoryFactOrdinal,
@@ -56,6 +58,11 @@ pub use memory::{
     MemoryRecordedAtUnixMillis, MemoryRelationship, MemoryRelationshipKind, MemoryScope,
     MemorySymbolName, MemoryTextField, MemoryTitle, MemoryValidity, RustMemorySymbolKind,
     RustSymbolMemoryEvidence,
+};
+pub use memory_policy::{
+    MEMORY_LIFECYCLE_POLICY_VERSION, MemoryLifecyclePolicy, MemoryLifecycleReason,
+    MemoryLifecycleTransitionError, MemoryRetentionDisposition, MemoryUseEligibility,
+    evaluate_memory_use, evaluate_retention, transition_memory_lifecycle,
 };
 pub use memory_revalidation::{
     MAX_MEMORY_ANCESTRY_CHECKS, MemoryAncestryCheck, MemoryAncestryOutcome, MemoryProjectValidity,

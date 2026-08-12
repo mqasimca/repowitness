@@ -47,7 +47,8 @@ use crate::{
     PreparedRepositoryTopology,
     contained_source::FileIdentity,
     memory_format::{
-        MemoryFormatControl, MemoryFormatError, canonical_memory_json, digest_canonical_bytes,
+        MemoryFormatControl, MemoryFormatError, canonical_memory_json,
+        digest_canonical_bytes_for_schema,
     },
 };
 

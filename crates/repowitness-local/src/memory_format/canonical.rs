@@ -46,7 +46,7 @@ pub fn parse_memory_record(
     check_control(control)?;
     let record = dto_into_domain(dto)?;
     let canonical_json = canonical_memory_json(&record, control)?;
-    let digest = digest_canonical_bytes(&canonical_json)?;
+    let digest = digest_canonical_bytes_for_schema(&canonical_json, record.schema_version())?;
     Ok(ParsedMemoryRecord {
         record,
         canonical_json: canonical_json.into_boxed_slice(),
@@ -90,7 +90,7 @@ pub(crate) fn parse_persisted_canonical_memory_record(
     if canonical_json != input {
         return Err(MemoryFormatError::InvalidCanonicalRecord);
     }
-    let digest = digest_canonical_bytes(&canonical_json)?;
+    let digest = digest_canonical_bytes_for_schema(&canonical_json, record.schema_version())?;
     if digest != expected_digest {
         return Err(MemoryFormatError::InvalidCanonicalRecord);
     }
@@ -139,7 +139,7 @@ pub fn canonical_memory_digest(
 ) -> Result<CanonicalMemoryDigest, MemoryFormatError> {
     let canonical = canonical_memory_json(record, control)?;
     check_control(control)?;
-    digest_canonical_bytes(&canonical)
+    digest_canonical_bytes_for_schema(&canonical, record.schema_version())
 }
 
 fn reject_yaml_extensions(
@@ -185,7 +185,9 @@ fn increment_bounded(value: &mut usize, limit: usize) -> Result<(), MemoryFormat
 }
 
 fn dto_into_domain(dto: MemoryRecordDto) -> Result<MemoryRecord, MemoryFormatError> {
-    if dto.schema_version != MEMORY_RECORD_SCHEMA_VERSION {
+    if dto.schema_version != MEMORY_RECORD_SCHEMA_VERSION
+        && dto.schema_version != MEMORY_RECORD_PROFILE_V2_SCHEMA_VERSION
+    {
         return Err(MemoryFormatError::InvalidRecord(
             MemoryRecordError::InvalidSchemaVersion,
         ));
@@ -230,7 +232,8 @@ fn dto_into_domain(dto: MemoryRecordDto) -> Result<MemoryRecord, MemoryFormatErr
         .into_iter()
         .map(relationship_into_domain)
         .collect::<Result<Vec<_>, _>>()?;
-    MemoryRecord::try_new(
+    MemoryRecord::try_new_profile(
+        dto.schema_version,
         header,
         claim,
         scope,
@@ -368,7 +371,7 @@ fn domain_into_dto(record: &MemoryRecord) -> Result<MemoryRecordDto, MemoryForma
     let scope = record.scope();
     let provenance = record.provenance();
     Ok(MemoryRecordDto {
-        schema_version: MEMORY_RECORD_SCHEMA_VERSION,
+        schema_version: record.schema_version(),
         record_id: MemoryRecordIdTextV1::encode(header.record_id()).into_string(),
         display_revision: header.display_revision().get(),
         parent_revision_digests: header
@@ -467,20 +470,23 @@ fn relationship_into_dto(relationship: &MemoryRelationship) -> RelationshipDto {
 }
 
 fn check_record_schema(record: &MemoryRecord) -> Result<(), MemoryFormatError> {
-    if record.schema_version() != MEMORY_RECORD_SCHEMA_VERSION {
+    if record.schema_version() != MEMORY_RECORD_SCHEMA_VERSION
+        && record.schema_version() != MEMORY_RECORD_PROFILE_V2_SCHEMA_VERSION
+    {
         return Err(MemoryFormatError::GenerationFailed);
     }
     Ok(())
 }
 
-pub(crate) fn digest_canonical_bytes(
+pub(crate) fn digest_canonical_bytes_for_schema(
     canonical: &[u8],
+    schema_version: u32,
 ) -> Result<CanonicalMemoryDigest, MemoryFormatError> {
     let length =
         u64::try_from(canonical.len()).map_err(|_| MemoryFormatError::CanonicalizationFailed)?;
     let mut hasher = Sha256::new();
     hasher.update(b"RepoWitness\0memory-record\0");
-    hasher.update(MEMORY_RECORD_SCHEMA_VERSION.to_be_bytes());
+    hasher.update(schema_version.to_be_bytes());
     hasher.update(length.to_be_bytes());
     hasher.update(canonical);
     Ok(CanonicalMemoryDigest::new(hasher.finalize().into()))
@@ -531,6 +537,11 @@ fn memory_kind(value: MemoryKindDto) -> MemoryKind {
     match value {
         MemoryKindDto::Decision => MemoryKind::Decision,
         MemoryKindDto::Failure => MemoryKind::Failure,
+        MemoryKindDto::Fact => MemoryKind::Fact,
+        MemoryKindDto::Procedure => MemoryKind::Procedure,
+        MemoryKindDto::Episode => MemoryKind::Episode,
+        MemoryKindDto::Preference => MemoryKind::Preference,
+        MemoryKindDto::Policy => MemoryKind::Policy,
     }
 }
 
@@ -538,6 +549,11 @@ fn memory_kind_dto(value: MemoryKind) -> MemoryKindDto {
     match value {
         MemoryKind::Decision => MemoryKindDto::Decision,
         MemoryKind::Failure => MemoryKindDto::Failure,
+        MemoryKind::Fact => MemoryKindDto::Fact,
+        MemoryKind::Procedure => MemoryKindDto::Procedure,
+        MemoryKind::Episode => MemoryKindDto::Episode,
+        MemoryKind::Preference => MemoryKindDto::Preference,
+        MemoryKind::Policy => MemoryKindDto::Policy,
     }
 }
 

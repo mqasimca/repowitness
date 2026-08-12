@@ -65,7 +65,8 @@ use self::schema::{
     MIGRATION_3_NAME, MIGRATION_4, MIGRATION_4_NAME, MIGRATION_5, MIGRATION_5_NAME, MIGRATION_6,
     MIGRATION_6_NAME, MIGRATION_7, MIGRATION_7_NAME, MIGRATION_9, MIGRATION_9_NAME, MIGRATION_10,
     MIGRATION_10_NAME, MIGRATION_11, MIGRATION_11_NAME, MIGRATION_12, MIGRATION_12_NAME,
-    SCHEMA_VERSION,
+    MIGRATION_13, MIGRATION_13_NAME, MIGRATION_14, MIGRATION_14_NAME, MIGRATION_15,
+    MIGRATION_15_NAME, SCHEMA_VERSION,
 };
 pub use self::scip_overlay::{
     MAX_SCIP_OVERLAY_DOCUMENTS, PreparedScipOverlay, ScipEvidenceReadLimits,
@@ -484,10 +485,8 @@ fn migrate_or_validate(
         user_version == 0
     } else {
         (1..=7).contains(&user_version)
-            || user_version == 9
-            || user_version == 10
-            || user_version == 11
-            || user_version == SCHEMA_VERSION
+            || (9..=13).contains(&user_version)
+            || (14..=SCHEMA_VERSION).contains(&user_version)
     };
     if !valid_version {
         return Err(SqliteStoreError::SchemaVersionMismatch);
@@ -538,27 +537,61 @@ fn apply_migration(
     let applied_at =
         i64::try_from(applied_at_unix_ms).map_err(|_| SqliteStoreError::MigrationFailed)?;
     let checksum = migration_checksum(sql);
-    let transaction = connection
-        .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(|_| SqliteStoreError::MigrationFailed)?;
-    transaction
-        .execute_batch(sql)
-        .map_err(|_| SqliteStoreError::MigrationFailed)?;
-    transaction
-        .execute(
-            "INSERT INTO schema_migrations(version, name, checksum, applied_at_unix_ms)
-             VALUES (?1, ?2, ?3, ?4)",
-            params![version, name, checksum.as_slice(), applied_at],
-        )
-        .map_err(|_| SqliteStoreError::MigrationFailed)?;
-    transaction
-        .pragma_update(None, "application_id", APPLICATION_ID)
-        .map_err(|_| SqliteStoreError::MigrationFailed)?;
-    transaction
-        .pragma_update(None, "user_version", version)
-        .map_err(|_| SqliteStoreError::MigrationFailed)?;
-    writer::commit_mutation(transaction)?;
-    Ok(())
+    let rebuilds_memory_versions = version == 15;
+    if rebuilds_memory_versions {
+        connection
+            .pragma_update(None, "foreign_keys", false)
+            .map_err(|_| SqliteStoreError::MigrationFailed)?;
+    }
+    let migration_result = (|| {
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| SqliteStoreError::MigrationFailed)?;
+        transaction
+            .execute_batch(sql)
+            .map_err(|_| SqliteStoreError::MigrationFailed)?;
+        if rebuilds_memory_versions {
+            writer::backfill_profile_v2_memory_versions(&transaction)?;
+        }
+        transaction
+            .execute(
+                "INSERT INTO schema_migrations(version, name, checksum, applied_at_unix_ms)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![version, name, checksum.as_slice(), applied_at],
+            )
+            .map_err(|_| SqliteStoreError::MigrationFailed)?;
+        transaction
+            .pragma_update(None, "application_id", APPLICATION_ID)
+            .map_err(|_| SqliteStoreError::MigrationFailed)?;
+        transaction
+            .pragma_update(None, "user_version", version)
+            .map_err(|_| SqliteStoreError::MigrationFailed)?;
+        writer::commit_mutation(transaction)
+    })();
+    if rebuilds_memory_versions {
+        let restore_result = connection
+            .pragma_update(None, "foreign_keys", true)
+            .map_err(|_| SqliteStoreError::MigrationFailed);
+        if restore_result.is_err() {
+            return Err(SqliteStoreError::MigrationFailed);
+        }
+        if migration_result.is_ok() {
+            let mut statement = connection
+                .prepare("PRAGMA foreign_key_check")
+                .map_err(|_| SqliteStoreError::MigrationFailed)?;
+            let mut rows = statement
+                .query([])
+                .map_err(|_| SqliteStoreError::MigrationFailed)?;
+            if rows
+                .next()
+                .map_err(|_| SqliteStoreError::MigrationFailed)?
+                .is_some()
+            {
+                return Err(SqliteStoreError::MigrationFailed);
+            }
+        }
+    }
+    migration_result
 }
 
 fn validate_migration_ledger(connection: &Connection) -> Result<(), SqliteStoreError> {
@@ -617,7 +650,7 @@ fn validate_migration_ledger_through(
     Ok(())
 }
 
-const fn migrations() -> [(i64, &'static str, &'static str); 11] {
+const fn migrations() -> [(i64, &'static str, &'static str); 14] {
     [
         (1, MIGRATION_1_NAME, MIGRATION_1),
         (2, MIGRATION_2_NAME, MIGRATION_2),
@@ -630,6 +663,9 @@ const fn migrations() -> [(i64, &'static str, &'static str); 11] {
         (10, MIGRATION_10_NAME, MIGRATION_10),
         (11, MIGRATION_11_NAME, MIGRATION_11),
         (12, MIGRATION_12_NAME, MIGRATION_12),
+        (13, MIGRATION_13_NAME, MIGRATION_13),
+        (14, MIGRATION_14_NAME, MIGRATION_14),
+        (15, MIGRATION_15_NAME, MIGRATION_15),
     ]
 }
 

@@ -18,6 +18,12 @@ accepted or explicitly proposed ADRs.
   production domain, parser, canonicalizer, generated-YAML format, and
   worktree-import/write boundary; bounded observation-only Git-tree history
   import is implemented without changing the record format
+- [Current engineering-memory profile](engineering-memory-current.md) — one
+  user-facing YAML shape; omitted `schema_version` selects the current profile,
+  while explicit version 1 remains a legacy compatibility input
+- [Phase 3 team-memory profile version 2](phase3-memory-profile-v2.md) — the
+  current profile's additional kinds, lifecycle dispositions, and compatibility
+  storage details
 - [Phase 2 SQLite schema version 4](phase2-sqlite-provisional-v4.md) — accepted
   immutable SCIP overlay receipts, source-slot/view-scoped activation, and the
   version-3 Phase 1 foundation under ADR-0035 and ADR-0037
@@ -31,15 +37,18 @@ accepted or explicitly proposed ADRs.
 - [Phase 0 SQLite baseline migration version 1](phase0-sqlite-baseline-v1.md) —
   immutable supported baseline and version-2 upgrade source
 
-The owned production adapter creates version-4 databases and upgrades exact
-accepted version-1, version-2, and version-3 databases. It
-accepts only the RepoWitness application ID and an exact migration ledger
-through the declared schema version. Retired development versions 1 through 8
-are rejected without mutation and require an explicit rebuild. Automated tests
-cover fresh creation, version-1 and populated version-2 upgrade,
+The owned production adapter creates version-15 databases and upgrades exact
+accepted migration ledgers through versions 1 through 7 and 9 through 15.
+It accepts only the RepoWitness application ID and an exact migration ledger
+through the declared schema version. Retired development version 8 is
+rejected without mutation and requires an explicit rebuild. Automated tests
+cover fresh creation, accepted version-1 through version-7 and version-9
+through version-14 upgrades,
 legacy rejection, idempotent reopen, immutable generation publication, exact
 artifact reuse, FTS5 rebuild, bounded/cancellable recovery, memory-journal
-import/rollback/immutability, review-event idempotency, atomic
+import/rollback/immutability, current-profile parent/audit isolation, unified
+normalized storage migration, compatibility views, current-trust reads,
+review-event idempotency, atomic
 memory-projection activation, connected-workspace view publication, immutable
 SCIP-overlay receipt/activation guards,
 backup/restore, and file-identity races.

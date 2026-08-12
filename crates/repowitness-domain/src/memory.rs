@@ -7,6 +7,13 @@ use crate::{
 
 /// Version of the first accepted Phase 0 engineering-memory semantic shape.
 pub const MEMORY_RECORD_SCHEMA_VERSION: u32 = 1;
+/// Version of the compatible Phase 3 profile for additional team-memory kinds.
+pub const MEMORY_RECORD_PROFILE_V2_SCHEMA_VERSION: u32 = 2;
+/// Current user-facing engineering-memory schema version.
+///
+/// Version 1 remains accepted as a legacy compatibility format. New documents
+/// that omit `schema_version` are interpreted as this current profile.
+pub const MEMORY_RECORD_CURRENT_SCHEMA_VERSION: u32 = MEMORY_RECORD_PROFILE_V2_SCHEMA_VERSION;
 /// Largest integer admitted into RFC 8785 canonical memory JSON.
 pub const MAX_MEMORY_INTEROPERABLE_INTEGER: u64 = 9_007_199_254_740_991;
 /// Maximum source byte endpoint admitted by Phase 0 memory evidence.
@@ -31,7 +38,7 @@ const MAX_QUALIFIED_NAME_BYTES: usize = 1_024;
 /// Stable, content-redacted validation failures for Phase 0 memory values.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MemoryRecordError {
-    /// A semantic schema version was not version 1.
+    /// A semantic schema version is not one of the accepted profiles.
     InvalidSchemaVersion,
     /// A record identifier did not contain exactly 128 bits.
     InvalidRecordId,

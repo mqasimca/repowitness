@@ -1,22 +1,38 @@
+use std::time::Duration;
+
+use crate::memory_format::{MemoryFormatControl, parse_persisted_canonical_memory_record};
+use repowitness_domain::MemoryDisplayRevision;
+
 fn insert_memory_children(
     transaction: &Transaction<'_>,
     workspace_id: i64,
     prepared: &PreparedMemoryImport,
     control: WriteControl<'_>,
 ) -> Result<(), SqliteStoreError> {
-    insert_memory_parents(transaction, workspace_id, prepared, control)?;
-    insert_memory_validity(transaction, workspace_id, prepared, control)?;
-    insert_memory_evidence(transaction, workspace_id, prepared, control)?;
-    insert_memory_relationships(transaction, workspace_id, prepared, control)
+    let record = &prepared.record;
+    insert_memory_children_for_record(transaction, workspace_id, record, prepared.revision, control)
+}
+
+fn insert_memory_children_for_record(
+    transaction: &Transaction<'_>,
+    workspace_id: i64,
+    record: &MemoryRecord,
+    revision: CanonicalMemoryDigest,
+    control: WriteControl<'_>,
+) -> Result<(), SqliteStoreError> {
+    insert_memory_parents(transaction, workspace_id, record, revision, control)?;
+    insert_memory_validity(transaction, workspace_id, record, revision, control)?;
+    insert_memory_evidence(transaction, workspace_id, record, revision, control)?;
+    insert_memory_relationships(transaction, workspace_id, record, revision, control)
 }
 
 fn insert_memory_parents(
     transaction: &Transaction<'_>,
     workspace_id: i64,
-    prepared: &PreparedMemoryImport,
+    record: &MemoryRecord,
+    revision: CanonicalMemoryDigest,
     control: WriteControl<'_>,
 ) -> Result<(), SqliteStoreError> {
-    let record = &prepared.record;
     let record_id = record.header().record_id();
     for (ordinal, parent) in record.header().parents().iter().enumerate() {
         check_control(control)?;
@@ -29,7 +45,7 @@ fn insert_memory_parents(
                 params![
                     workspace_id,
                     record_id.as_bytes().as_slice(),
-                    prepared.revision.as_bytes().as_slice(),
+                    revision.as_bytes().as_slice(),
                     fixed_usize(ordinal)?,
                     parent.as_bytes().as_slice()
                 ],
@@ -42,10 +58,10 @@ fn insert_memory_parents(
 fn insert_memory_validity(
     transaction: &Transaction<'_>,
     workspace_id: i64,
-    prepared: &PreparedMemoryImport,
+    record: &MemoryRecord,
+    revision: CanonicalMemoryDigest,
     control: WriteControl<'_>,
 ) -> Result<(), SqliteStoreError> {
-    let record = &prepared.record;
     let record_id = record.header().record_id();
     if let MemoryValidity::Commits {
         introduced_by,
@@ -67,7 +83,7 @@ fn insert_memory_validity(
                         params![
                             workspace_id,
                             record_id.as_bytes().as_slice(),
-                            prepared.revision.as_bytes().as_slice(),
+                            revision.as_bytes().as_slice(),
                             side,
                             fixed_usize(ordinal)?,
                             memory_object_format(commit.object_format()),
@@ -84,10 +100,10 @@ fn insert_memory_validity(
 fn insert_memory_evidence(
     transaction: &Transaction<'_>,
     workspace_id: i64,
-    prepared: &PreparedMemoryImport,
+    record: &MemoryRecord,
+    revision: CanonicalMemoryDigest,
     control: WriteControl<'_>,
 ) -> Result<(), SqliteStoreError> {
-    let record = &prepared.record;
     let record_id = record.header().record_id();
     for (ordinal, evidence) in record.evidence().iter().enumerate() {
         check_control(control)?;
@@ -108,7 +124,7 @@ fn insert_memory_evidence(
                 params![
                     workspace_id,
                     record_id.as_bytes().as_slice(),
-                    prepared.revision.as_bytes().as_slice(),
+                    revision.as_bytes().as_slice(),
                     fixed_usize(ordinal)?,
                     evidence.source_snapshot().as_bytes().as_slice(),
                     evidence.path().as_bytes(),
@@ -135,10 +151,10 @@ fn insert_memory_evidence(
 fn insert_memory_relationships(
     transaction: &Transaction<'_>,
     workspace_id: i64,
-    prepared: &PreparedMemoryImport,
+    record: &MemoryRecord,
+    revision: CanonicalMemoryDigest,
     control: WriteControl<'_>,
 ) -> Result<(), SqliteStoreError> {
-    let record = &prepared.record;
     let record_id = record.header().record_id();
     for (ordinal, relationship) in record.relationships().iter().enumerate() {
         check_control(control)?;
@@ -151,7 +167,7 @@ fn insert_memory_relationships(
                 params![
                     workspace_id,
                     record_id.as_bytes().as_slice(),
-                    prepared.revision.as_bytes().as_slice(),
+                    revision.as_bytes().as_slice(),
                     fixed_usize(ordinal)?,
                     memory_relationship_kind(relationship.kind()),
                     relationship.record_id().as_bytes().as_slice(),
@@ -169,6 +185,22 @@ fn insert_memory_version(
     prepared: &PreparedMemoryImport,
 ) -> Result<(), SqliteStoreError> {
     let record = &prepared.record;
+    insert_memory_version_for_record(
+        transaction,
+        workspace_id,
+        record,
+        prepared.revision,
+        prepared.canonical_json.as_slice(),
+    )
+}
+
+fn insert_memory_version_for_record(
+    transaction: &Transaction<'_>,
+    workspace_id: i64,
+    record: &MemoryRecord,
+    revision: CanonicalMemoryDigest,
+    canonical_json: &[u8],
+) -> Result<(), SqliteStoreError> {
     let (validity_kind, validity_source_snapshot) = memory_validity(record.validity());
     let inserted = transaction
         .execute(
@@ -185,9 +217,9 @@ fn insert_memory_version(
             params![
                 workspace_id,
                 record.header().record_id().as_bytes().as_slice(),
-                prepared.revision.as_bytes().as_slice(),
+                revision.as_bytes().as_slice(),
                 i64::from(record.schema_version()),
-                prepared.canonical_json.as_slice(),
+                canonical_json,
                 memory_kind(record.claim().kind()),
                 record.claim().title().as_str(),
                 record.claim().body().as_str(),
@@ -205,6 +237,103 @@ fn insert_memory_version(
         .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
     if inserted != 1 {
         return Err(SqliteStoreError::IntegrityCheckFailed);
+    }
+    Ok(())
+}
+
+/// Materializes records admitted by the temporary v2 journal into the unified
+/// normalized journal before the v2 compatibility tables become archival.
+pub(super) fn backfill_profile_v2_memory_versions(
+    transaction: &Transaction<'_>,
+) -> Result<(), SqliteStoreError> {
+    const MAX_BACKFILL_ROWS: i64 = 100_000;
+    let mut statement = transaction
+        .prepare(
+            "SELECT version.workspace_id, version.record_id,
+                    version.revision_digest, version.canonical_json,
+                    coalesce((
+                        SELECT max(audit.display_revision)
+                        FROM memory_profile_v2_audit AS audit
+                        WHERE audit.workspace_id = version.workspace_id
+                          AND audit.record_id = version.record_id
+                          AND audit.revision_digest = version.revision_digest
+                    ), 1)
+             FROM memory_profile_v2_versions AS version
+             WHERE NOT EXISTS (
+                 SELECT 1 FROM memory_versions AS unified
+                 WHERE unified.workspace_id = version.workspace_id
+                   AND unified.record_id = version.record_id
+                   AND unified.revision_digest = version.revision_digest
+             )
+             ORDER BY version.workspace_id, version.record_id,
+                      version.revision_digest
+             LIMIT ?1",
+        )
+        .map_err(|_| SqliteStoreError::MigrationFailed)?;
+    let rows = statement
+        .query_map([MAX_BACKFILL_ROWS + 1], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, Vec<u8>>(1)?,
+                row.get::<_, Vec<u8>>(2)?,
+                row.get::<_, Vec<u8>>(3)?,
+                row.get::<_, i64>(4)?,
+            ))
+        })
+        .map_err(|_| SqliteStoreError::MigrationFailed)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| SqliteStoreError::MigrationFailed)?;
+    if rows.len() > usize::try_from(MAX_BACKFILL_ROWS).unwrap_or(usize::MAX) {
+        return Err(SqliteStoreError::MigrationFailed);
+    }
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let control = WriteControl {
+        cancelled: &cancelled,
+        deadline,
+    };
+    for (
+        workspace_id,
+        persisted_record_id,
+        revision,
+        canonical_json,
+        display_revision,
+    ) in rows
+    {
+        check_control(control)?;
+        let revision = CanonicalMemoryDigest::try_from_slice(&revision)
+            .map_err(|_| SqliteStoreError::MigrationFailed)?;
+        let display_revision = MemoryDisplayRevision::try_new(
+            u32::try_from(display_revision).map_err(|_| SqliteStoreError::MigrationFailed)?,
+        )
+        .map_err(|_| SqliteStoreError::MigrationFailed)?;
+        let parsed = parse_persisted_canonical_memory_record(
+            &canonical_json,
+            display_revision,
+            revision,
+            MemoryFormatControl::new(&cancelled, deadline),
+        )
+        .map_err(|_| SqliteStoreError::MigrationFailed)?;
+        if parsed.record().schema_version() != 2 {
+            return Err(SqliteStoreError::MigrationFailed);
+        }
+        if parsed.record().header().record_id().as_bytes().as_slice() != persisted_record_id {
+            return Err(SqliteStoreError::MigrationFailed);
+        }
+        insert_memory_children_for_record(
+            transaction,
+            workspace_id,
+            parsed.record(),
+            revision,
+            control,
+        )?;
+        insert_memory_version_for_record(
+            transaction,
+            workspace_id,
+            parsed.record(),
+            revision,
+            &canonical_json,
+        )?;
     }
     Ok(())
 }
@@ -576,6 +705,11 @@ const fn memory_kind(kind: MemoryKind) -> &'static str {
     match kind {
         MemoryKind::Decision => "decision",
         MemoryKind::Failure => "failure",
+        MemoryKind::Fact => "fact",
+        MemoryKind::Procedure => "procedure",
+        MemoryKind::Episode => "episode",
+        MemoryKind::Preference => "preference",
+        MemoryKind::Policy => "policy",
     }
 }
 
