@@ -23,7 +23,10 @@ use crate::{
     LocalChangeManifestLimits, LocalContextBuildError, LocalContextBuildRequest,
     LocalRustIndexLimits, OwnedSqliteReader, SourceSlotId, SourceStateError, build_local_context,
     capture_local_change_manifest_with_cancel, capture_source_state_with_cancel,
-    rust_index::{LocalSourceSnapshotFenceRequest, capture_confirmed_local_source_snapshot},
+    rust_index::{
+        LocalSourceSnapshotFenceError, LocalSourceSnapshotFenceRequest,
+        capture_confirmed_local_source_snapshot,
+    },
 };
 
 /// Default end-to-end deadline for one local read-only change review.
@@ -280,8 +283,8 @@ fn compare_index_worktree(
             {
                 return IndexWorktreeAlignment::Mismatch;
             }
-            let captured =
-                capture_confirmed_local_source_snapshot(LocalSourceSnapshotFenceRequest::new(
+            let captured = capture_confirmed_local_source_snapshot(
+                LocalSourceSnapshotFenceRequest::new(
                     root,
                     scope.source_identity(),
                     scope.source_snapshot(),
@@ -290,21 +293,28 @@ fn compare_index_worktree(
                     cancelled.as_ref(),
                     deadline,
                     None,
-                ));
-            match captured {
-                Ok(captured)
-                    if hash_source_manifest(captured.manifest()) == scope.source_manifest() =>
-                {
-                    IndexWorktreeAlignment::Verified
-                }
-                Ok(_) | Err(_) => IndexWorktreeAlignment::Mismatch,
-            }
+                ),
+            )
+            .map(|captured| hash_source_manifest(captured.manifest()) == scope.source_manifest());
+            classify_index_worktree_capture(captured)
         })
         .unwrap_or(IndexWorktreeAlignment::Unavailable);
     if reader.shutdown(deadline).is_err() {
         IndexWorktreeAlignment::Unavailable
     } else {
         result
+    }
+}
+
+fn classify_index_worktree_capture(
+    captured: Result<bool, LocalSourceSnapshotFenceError>,
+) -> IndexWorktreeAlignment {
+    match captured {
+        Ok(true) => IndexWorktreeAlignment::Verified,
+        Ok(false) | Err(LocalSourceSnapshotFenceError::SourceChanged) => {
+            IndexWorktreeAlignment::Mismatch
+        }
+        Err(_) => IndexWorktreeAlignment::Unavailable,
     }
 }
 
@@ -351,7 +361,10 @@ fn check_control(cancelled: &AtomicBool, deadline: Instant) -> Result<(), LocalC
 
 #[cfg(test)]
 mod tests {
-    use super::{DEFAULT_LOCAL_CHANGE_REVIEW_DEADLINE, LocalChangeReviewRequest};
+    use super::{
+        DEFAULT_LOCAL_CHANGE_REVIEW_DEADLINE, IndexWorktreeAlignment, LocalChangeReviewRequest,
+        LocalSourceSnapshotFenceError, classify_index_worktree_capture,
+    };
     use repowitness_domain::GitObjectId;
 
     #[test]
@@ -368,5 +381,33 @@ mod tests {
         let rendered = format!("{request:?}");
         assert!(!rendered.contains("private"));
         assert!(!DEFAULT_LOCAL_CHANGE_REVIEW_DEADLINE.is_zero());
+    }
+
+    #[test]
+    fn source_fence_failures_do_not_claim_a_worktree_mismatch() {
+        assert_eq!(
+            classify_index_worktree_capture(Ok(true)),
+            IndexWorktreeAlignment::Verified
+        );
+        assert_eq!(
+            classify_index_worktree_capture(Ok(false)),
+            IndexWorktreeAlignment::Mismatch
+        );
+        assert_eq!(
+            classify_index_worktree_capture(Err(LocalSourceSnapshotFenceError::SourceChanged)),
+            IndexWorktreeAlignment::Mismatch
+        );
+        for error in [
+            LocalSourceSnapshotFenceError::Cancelled,
+            LocalSourceSnapshotFenceError::DeadlineExceeded,
+            LocalSourceSnapshotFenceError::UnsupportedSourceState,
+            LocalSourceSnapshotFenceError::ExcludedFileAlias,
+            LocalSourceSnapshotFenceError::CaptureFailed,
+        ] {
+            assert_eq!(
+                classify_index_worktree_capture(Err(error)),
+                IndexWorktreeAlignment::Unavailable
+            );
+        }
     }
 }

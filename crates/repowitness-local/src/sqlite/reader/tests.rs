@@ -19,16 +19,20 @@ use repowitness_application::{
     hash_rust_source_snapshot, prepare_rust_index, repository_diagnostics,
 };
 use repowitness_domain::{
-    AnalysisSchemaDigest, ConfigurationDigest, GitStateDigest, ProducerManifestDigest,
-    RepositoryIdentityDigest, RepositoryPath, RepositoryPathLimits, WorktreeStateDigest,
+    AnalysisSchemaDigest, ByteOffset, ByteSpan, ConfigurationDigest, GitStateDigest,
+    ProducerManifestDigest, RepositoryIdentityDigest, RepositoryPath, RepositoryPathLimits,
+    ScipRelationshipKinds, ScipSymbol, ScipSymbolRoles, SourceContentDigest, WorktreeStateDigest,
 };
 use rusqlite::{Connection, params};
 
-use crate::{GenerationCoverage, OwnedSqliteIndex};
+use crate::{
+    GenerationCoverage, OwnedSqliteIndex, ScipOccurrenceEvidence, ScipRelationshipDirection,
+    ScipRelationshipEvidence, ScipRelationshipEvidenceClass,
+};
 
 use super::{
     FIXED_SEARCH_HIT_OUTPUT_BYTES, OwnedSqliteReader, ReaderCommand, SearchLimits,
-    SqliteStoreError, checked_output_bytes,
+    SqliteStoreError, checked_output_bytes, evidence_output_bytes,
 };
 
 static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
@@ -93,6 +97,41 @@ fn search_output_budget_counts_per_occurrence_producer_and_language() {
         checked_output_bytes(0, &path, language, kind, name, qualified_name, expected - 1,),
         Err(SqliteStoreError::SearchOutputLimitExceeded)
     );
+}
+
+#[test]
+fn scip_evidence_output_budget_counts_wire_encoding() {
+    let path = RepositoryPath::try_from_bytes(b"src/\xff.rs", PATH_LIMITS)
+        .expect("fixture path should be valid");
+    let source = ScipSymbol::try_new("source\"\n".to_owned()).expect("source should validate");
+    let target =
+        ScipSymbol::try_new("target\\\u{0001}".to_owned()).expect("target should validate");
+    let kinds = ScipRelationshipKinds::try_new(true, false, false, false)
+        .expect("relationship kinds should validate");
+    let relationship = ScipRelationshipEvidence::with_evidence(
+        path.clone(),
+        SourceContentDigest::new([0; 32]),
+        ScipRelationshipDirection::Outgoing,
+        source.clone(),
+        target.clone(),
+        kinds,
+        ScipRelationshipEvidenceClass::ProducerDeclared,
+    );
+    let occurrence = ScipOccurrenceEvidence::new(
+        path.clone(),
+        SourceContentDigest::new([1; 32]),
+        ByteSpan::try_new(ByteOffset::ZERO, ByteOffset::new(1)).expect("span should validate"),
+        ScipSymbolRoles::NONE,
+    );
+
+    let actual = evidence_output_bytes(&[occurrence], &[relationship])
+        .expect("wire output size should be representable");
+    let encoded_path = 7 + path.byte_count().get() * 2;
+    let source_json = 2 + 6 * source.as_str().len() as u64;
+    let target_json = 2 + 6 * target.as_str().len() as u64;
+    let expected = 512 + encoded_path + 512 + encoded_path + source_json + target_json;
+    assert_eq!(actual, expected);
+    assert!(actual > 48 * 2 + path.byte_count().get() * 2);
 }
 
 #[cfg(unix)]

@@ -1,5 +1,5 @@
 const DEFAULT_SCIP_RUST_PRODUCER_TIMEOUT: std::time::Duration =
-    std::time::Duration::from_secs(120);
+    std::time::Duration::from_secs(300);
 const MAX_SCIP_RUST_PRODUCER_TIMEOUT: std::time::Duration =
     std::time::Duration::from_secs(300);
 const DEFAULT_SCIP_RUST_IMPORT_TIMEOUT: std::time::Duration =
@@ -368,6 +368,10 @@ mod scip_rust_import_tests {
         assert_eq!(
             invocation.import.source_slot,
             format!("ssi1:h:{}", "AA".repeat(32))
+        );
+        assert_eq!(
+            invocation.producer_timeout,
+            std::time::Duration::from_secs(300)
         );
 
         let maximum_timeout_arguments = [

@@ -1,4 +1,4 @@
-const DEFAULT_SCIP_GO_PRODUCER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+const DEFAULT_SCIP_GO_PRODUCER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 const MAX_SCIP_GO_PRODUCER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 const DEFAULT_SCIP_GO_IMPORT_TIMEOUT: std::time::Duration =
     repowitness_local::DEFAULT_LOCAL_SCIP_IMPORT_DEADLINE;
@@ -73,7 +73,9 @@ fn produce_and_import_scip_go(
 ) -> Result<repowitness_local::LocalScipOverlayImportResult, ScipGoProductionError> {
     let temporary_output =
         TemporaryScipOutput::new().map_err(|()| ScipGoProductionError::TemporaryOutput)?;
-    let mut producer = std::process::Command::new(&invocation.scip_go);
+    let producer_path = resolve_scip_go_producer(&invocation.scip_go)
+        .ok_or(ScipGoProductionError::Producer)?;
+    let mut producer = std::process::Command::new(producer_path);
     producer
         .arg("index")
         .arg("--output")
@@ -106,14 +108,30 @@ fn produce_and_import_scip_go(
 }
 
 fn scip_go_producer_available(path: &Path) -> bool {
+    resolve_scip_go_producer(path).is_some()
+}
+
+fn resolve_scip_go_producer(path: &Path) -> Option<PathBuf> {
     if path.is_absolute() || path.components().count() > 1 {
-        return path.is_file();
+        let path = if path.is_absolute() {
+            path.to_owned()
+        } else {
+            env::current_dir().ok()?.join(path)
+        };
+        return path.is_file().then_some(path);
     }
+    let current_dir = env::current_dir().ok()?;
     env::var_os("PATH")
         .into_iter()
         .flat_map(|path| env::split_paths(&path).collect::<Vec<_>>())
-        .map(|directory| directory.join(path))
-        .any(|candidate| candidate.is_file())
+        .map(|directory| {
+            if directory.is_absolute() {
+                directory.join(path)
+            } else {
+                current_dir.join(directory).join(path)
+            }
+        })
+        .find(|candidate| candidate.is_file())
 }
 
 fn scip_go_root_has_regular_go_mod(root: &Path) -> bool {
@@ -358,7 +376,7 @@ mod scip_go_import_tests {
         );
         assert_eq!(
             invocation.producer_timeout,
-            std::time::Duration::from_secs(120)
+            std::time::Duration::from_secs(300)
         );
         assert!(!invocation.skip_implementations);
         assert!(!invocation.skip_tests);
@@ -380,5 +398,13 @@ mod scip_go_import_tests {
             parse_scip_go_import_arguments(&arguments).expect("opt-outs should parse");
         assert!(invocation.skip_implementations);
         assert!(invocation.skip_tests);
+    }
+
+    #[test]
+    fn explicit_relative_producer_paths_are_resolved_before_root_chdir() {
+        let resolved = resolve_scip_go_producer(Path::new("./Cargo.toml"))
+            .expect("repository fixture should exist");
+        assert!(resolved.is_absolute());
+        assert!(resolved.ends_with("Cargo.toml"));
     }
 }

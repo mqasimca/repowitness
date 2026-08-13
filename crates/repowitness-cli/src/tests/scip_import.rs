@@ -53,10 +53,7 @@ fn scip_import_parses_explicit_contained_scope_before_io() {
     .collect::<Vec<_>>();
     let default_timeout =
         parse_scip_import_arguments(&default_timeout_arguments).expect("default timeout");
-    assert_eq!(
-        default_timeout.timeout,
-        repowitness_local::DEFAULT_LOCAL_SCIP_IMPORT_DEADLINE
-    );
+    assert_eq!(default_timeout.timeout, std::time::Duration::from_secs(300));
 
     let maximum_timeout_arguments = [
         "--database",

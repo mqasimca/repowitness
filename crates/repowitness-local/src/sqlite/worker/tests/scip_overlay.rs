@@ -208,7 +208,7 @@ fn enclosed_reference_projection_supports_a_bounded_caller_trace() {
         bounded_scip_importer_digest(),
         hash_scip_input(&raw),
     );
-    let overlay = PreparedScipOverlay::try_new(identity, vec![document])
+    let overlay = PreparedScipOverlay::try_new(identity, vec![document.clone()])
         .expect("overlay should prepare");
     store
         .stage_scip_overlay(
@@ -220,6 +220,28 @@ fn enclosed_reference_projection_supports_a_bounded_caller_trace() {
             deadline(),
         )
         .expect("overlay should publish");
+    let connection = Connection::open(directory.database()).expect("database should reopen");
+    let removed = connection
+        .execute(
+            "DELETE FROM scip_enclosed_reference_edges
+             WHERE overlay_digest IN (SELECT overlay_digest FROM active_scip_overlays)",
+            [],
+        )
+        .expect("derived edge should be removable for replay coverage");
+    assert_eq!(removed, 1);
+    drop(connection);
+    let replay = PreparedScipOverlay::try_new(identity, vec![document])
+        .expect("replayed overlay should prepare");
+    store
+        .stage_scip_overlay(
+            view.connected_workspace(),
+            view.view(),
+            source_slot,
+            replay,
+            Arc::new(AtomicBool::new(false)),
+            deadline(),
+        )
+        .expect("complete overlay replay should restore derived evidence");
     let reader = OwnedSqliteReader::start(&directory.database(), deadline())
         .expect("reader should start");
     let trace = reader

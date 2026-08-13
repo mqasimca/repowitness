@@ -34,7 +34,7 @@ use crate::{
 /// Maximum admitted bytes in one hostile local SCIP input file.
 pub const MAX_LOCAL_SCIP_IMPORT_INPUT_BYTES: usize = MAX_SCIP_OVERLAY_INPUT_BYTES;
 /// Default end-to-end deadline for one contained local SCIP import.
-pub const DEFAULT_LOCAL_SCIP_IMPORT_DEADLINE: Duration = Duration::from_secs(120);
+pub const DEFAULT_LOCAL_SCIP_IMPORT_DEADLINE: Duration = Duration::from_secs(300);
 /// Hard ceiling for one contained local SCIP import.
 pub const MAX_LOCAL_SCIP_IMPORT_DEADLINE: Duration = Duration::from_secs(300);
 

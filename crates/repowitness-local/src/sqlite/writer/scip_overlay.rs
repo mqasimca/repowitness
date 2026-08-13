@@ -41,6 +41,10 @@ impl WriterState {
             source_slot,
         )?;
         if overlay_is_complete(&transaction, prepared.digest())? {
+            // Schema 16 added a derived projection. Replaying a complete
+            // overlay must fill that projection for overlays imported before
+            // the migration without changing their immutable producer facts.
+            stage_enclosed_reference_edges(&transaction, prepared.digest(), &scope, control)?;
             activate_overlay(
                 &transaction,
                 connected_workspace,
@@ -102,7 +106,7 @@ fn stage_enclosed_reference_edges(
     check_control(control)?;
     transaction
         .execute(
-            "INSERT INTO scip_enclosed_reference_edges(
+            "INSERT OR IGNORE INTO scip_enclosed_reference_edges(
                 overlay_digest, document_ordinal, relationship_ordinal,
                 source_symbol, target_symbol, kinds
              )

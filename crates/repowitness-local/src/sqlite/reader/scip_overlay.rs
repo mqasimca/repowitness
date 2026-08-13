@@ -1102,24 +1102,29 @@ fn evidence_output_bytes(
 ) -> Result<u64, SqliteStoreError> {
     let mut total = 0_u64;
     for occurrence in occurrences {
-        total = total.checked_add(48)
-            .and_then(|value| value.checked_add(occurrence.path().byte_count().get()))
+        let path = encoded_path_output_bytes(occurrence.path())?;
+        total = total
+            .checked_add(FIXED_SCIP_EVIDENCE_ROW_JSON_BYTES)
+            .and_then(|value| value.checked_add(path))
             .ok_or(SqliteStoreError::CountNotRepresentable)?;
     }
     for relationship in relationships {
-        let source = u64::try_from(relationship.source().as_str().len())
-            .map_err(|_| SqliteStoreError::CountNotRepresentable)?;
-        let target = u64::try_from(relationship.target().as_str().len())
-            .map_err(|_| SqliteStoreError::CountNotRepresentable)?;
-        let symbols = source
-            .checked_add(target)
-            .ok_or(SqliteStoreError::CountNotRepresentable)?;
-        total = total.checked_add(48)
-            .and_then(|value| value.checked_add(relationship.path().byte_count().get()))
-            .and_then(|value| value.checked_add(symbols))
+        total = total
+            .checked_add(scip_relationship_trace_edge_output_bytes(relationship)?)
             .ok_or(SqliteStoreError::CountNotRepresentable)?;
     }
     Ok(total)
+}
+
+const FIXED_SCIP_EVIDENCE_ROW_JSON_BYTES: u64 = 512;
+const SCIP_PATH_TEXT_PREFIX_BYTES: u64 = 7;
+
+fn encoded_path_output_bytes(path: &RepositoryPath) -> Result<u64, SqliteStoreError> {
+    path.byte_count()
+        .get()
+        .checked_mul(2)
+        .and_then(|value| value.checked_add(SCIP_PATH_TEXT_PREFIX_BYTES))
+        .ok_or(SqliteStoreError::CountNotRepresentable)
 }
 
 fn scip_relationship_trace_edge_output_bytes(
@@ -1128,19 +1133,10 @@ fn scip_relationship_trace_edge_output_bytes(
     // This bounds the JSON representation used by both CLI and MCP, rather
     // than the raw SQLite values. JSON may escape each input byte as `\\u00XX`.
     // The path is emitted in the byte-preserving `rwp1:h:` hexadecimal form.
-    const FIXED_EDGE_JSON_BYTES: u64 = 512;
-    const PATH_TEXT_PREFIX_BYTES: u64 = 7;
-
-    let path = relationship
-        .path()
-        .byte_count()
-        .get()
-        .checked_mul(2)
-        .and_then(|value| value.checked_add(PATH_TEXT_PREFIX_BYTES))
-        .ok_or(SqliteStoreError::CountNotRepresentable)?;
+    let path = encoded_path_output_bytes(relationship.path())?;
     let source = json_string_upper_bound(relationship.source().as_str().len())?;
     let target = json_string_upper_bound(relationship.target().as_str().len())?;
-    FIXED_EDGE_JSON_BYTES
+    FIXED_SCIP_EVIDENCE_ROW_JSON_BYTES
         .checked_add(path)
         .and_then(|value| value.checked_add(source))
         .and_then(|value| value.checked_add(target))
