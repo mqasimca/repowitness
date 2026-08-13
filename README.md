@@ -92,8 +92,10 @@ The server is read-only by default. Add
 process should manage team memory. Stdout is reserved for MCP JSON-RPC; startup
 help and errors go to stderr.
 
-There is no daemon, SCIP import surface, personal-memory surface, or durable
-task surface. Explicit connected workspaces are managed with
+There is no daemon, personal-memory surface, or durable task surface. SCIP is
+available through explicit CLI import/producer commands and read-only MCP
+evidence tools; indexing and MCP startup never invoke external SCIP producers.
+Explicit connected workspaces are managed with
 `repowitness codex workspace create|list|remove`; they use the same shared
 catalog and remain read-only through MCP. The catalog is read-only by default;
 explicitly enabling memory writes adds the same fixed-actor `memory_manage`

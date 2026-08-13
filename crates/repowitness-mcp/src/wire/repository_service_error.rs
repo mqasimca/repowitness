@@ -31,6 +31,12 @@ pub enum RepositoryServiceError {
     Diagnostics,
     /// Native Rust graph read failed without a usable result.
     GraphRead,
+    /// SCIP evidence read failed without a usable result.
+    ScipEvidence,
+    /// SCIP relationship trace failed without a usable result.
+    ScipRelationshipTrace,
+    /// SCIP source-span resolution failed without a usable result.
+    ScipSymbolResolve,
     /// Memory recall failed without a usable result.
     MemoryRecall,
     /// Authorized local memory management failed without a usable result.
@@ -81,6 +87,9 @@ impl fmt::Display for RepositoryServiceError {
             Self::ChangeReview => "change review failed",
             Self::Diagnostics => "repository diagnostics failed",
             Self::GraphRead => "Rust graph read failed",
+            Self::ScipEvidence => "SCIP evidence read failed",
+            Self::ScipRelationshipTrace => "SCIP relationship trace failed",
+            Self::ScipSymbolResolve => "SCIP symbol resolution failed",
             Self::MemoryRecall => "memory recall failed",
             Self::MemoryManage => "memory management failed",
             Self::MemoryMutationOutcomeUnknown { .. } => {

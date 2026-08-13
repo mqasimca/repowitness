@@ -51,8 +51,12 @@ use crate::{
     OutboundSitesServiceRequest, RELEVANT_PATHS_TOOL_NAME, REPOSITORY_TOPOLOGY_TOOL_NAME,
     RelevantPathsInput, RelevantPathsOutput, RelevantPathsServiceRequest, RepositoryService,
     RepositoryServiceError, RepositoryTopologyInput, RepositoryTopologyOutput,
-    RepositoryTopologyServiceRequest, SYMBOL_GET_TOOL_NAME, SYMBOL_SEARCH_TOOL_NAME,
-    SYNTAX_SITE_SEARCH_TOOL_NAME, SymbolGetInput, SymbolGetOutput, SymbolGetServiceRequest,
+    RepositoryTopologyServiceRequest, SCIP_EVIDENCE_TOOL_NAME, SCIP_RELATIONSHIP_TRACE_TOOL_NAME,
+    SCIP_SYMBOL_RESOLVE_TOOL_NAME, SYMBOL_GET_TOOL_NAME, SYMBOL_SEARCH_TOOL_NAME,
+    SYNTAX_SITE_SEARCH_TOOL_NAME, ScipEvidenceInput, ScipEvidenceOutput,
+    ScipEvidenceServiceRequest, ScipRelationshipTraceInput, ScipRelationshipTraceOutput,
+    ScipRelationshipTraceServiceRequest, ScipSymbolResolveInput, ScipSymbolResolveOutput,
+    ScipSymbolResolveServiceRequest, SymbolGetInput, SymbolGetOutput, SymbolGetServiceRequest,
     SymbolSearchInput, SymbolSearchOutput, SymbolSearchServiceRequest, SyntaxSiteSearchInput,
     SyntaxSiteSearchOutput, SyntaxSiteSearchServiceRequest,
     wire::{
@@ -62,6 +66,7 @@ use crate::{
         MAX_MCP_GRAPH_OUTPUT_BYTES, MAX_MCP_MEMORY_MANAGE_OUTPUT_BYTES,
         MAX_MCP_MEMORY_RECALL_OUTPUT_BYTES, MAX_MCP_OUTBOUND_SITES_OUTPUT_BYTES,
         MAX_MCP_RELEVANT_PATHS_OUTPUT_BYTES, MAX_MCP_REPOSITORY_TOPOLOGY_OUTPUT_BYTES,
+        MAX_MCP_SCIP_EVIDENCE_OUTPUT_BYTES, MAX_MCP_SCIP_RELATIONSHIP_TRACE_OUTPUT_BYTES,
         MAX_MCP_SEARCH_OUTPUT_BYTES, MAX_MCP_SYMBOL_OUTPUT_BYTES,
         MAX_MCP_SYNTAX_SITE_SEARCH_OUTPUT_BYTES,
     },
@@ -640,6 +645,51 @@ impl RepoWitnessMcpServer {
         operation_result(output, MAX_MCP_DIAGNOSTICS_OUTPUT_BYTES)
     }
 
+    async fn call_scip_evidence(
+        &self,
+        request: ScipEvidenceServiceRequest,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let service = Arc::clone(&self.service);
+        let timeout = request.timeout();
+        let output = self
+            .run_blocking(timeout, context, move |remaining, cancelled| {
+                service.scip_evidence(request.with_timeout(remaining), cancelled)
+            })
+            .await?;
+        operation_result(output, MAX_MCP_SCIP_EVIDENCE_OUTPUT_BYTES)
+    }
+
+    async fn call_scip_relationship_trace(
+        &self,
+        request: ScipRelationshipTraceServiceRequest,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let service = Arc::clone(&self.service);
+        let timeout = request.timeout();
+        let output = self
+            .run_blocking(timeout, context, move |remaining, cancelled| {
+                service.scip_relationship_trace(request.with_timeout(remaining), cancelled)
+            })
+            .await?;
+        operation_result(output, MAX_MCP_SCIP_RELATIONSHIP_TRACE_OUTPUT_BYTES)
+    }
+
+    async fn call_scip_symbol_resolve(
+        &self,
+        request: ScipSymbolResolveServiceRequest,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let service = Arc::clone(&self.service);
+        let timeout = request.timeout();
+        let output = self
+            .run_blocking(timeout, context, move |remaining, cancelled| {
+                service.scip_symbol_resolve(request.with_timeout(remaining), cancelled)
+            })
+            .await?;
+        operation_result(output, MAX_MCP_SCIP_EVIDENCE_OUTPUT_BYTES)
+    }
+
     async fn call_navigation_tool(
         &self,
         request: CallToolRequestParams,
@@ -958,6 +1008,27 @@ impl RepoWitnessMcpServer {
                     .map_err(|message| McpError::invalid_params(message, None))?;
                 self.call_diagnostics(request, context).await
             }
+            SCIP_EVIDENCE_TOOL_NAME => {
+                let input = parse_arguments::<ScipEvidenceInput>(request.arguments)?;
+                let request = input
+                    .validate()
+                    .map_err(|message| McpError::invalid_params(message, None))?;
+                self.call_scip_evidence(request, context).await
+            }
+            SCIP_RELATIONSHIP_TRACE_TOOL_NAME => {
+                let input = parse_arguments::<ScipRelationshipTraceInput>(request.arguments)?;
+                let request = input
+                    .validate()
+                    .map_err(|message| McpError::invalid_params(message, None))?;
+                self.call_scip_relationship_trace(request, context).await
+            }
+            SCIP_SYMBOL_RESOLVE_TOOL_NAME => {
+                let input = parse_arguments::<ScipSymbolResolveInput>(request.arguments)?;
+                let request = input
+                    .validate()
+                    .map_err(|message| McpError::invalid_params(message, None))?;
+                self.call_scip_symbol_resolve(request, context).await
+            }
             GRAPH_STATUS_TOOL_NAME => {
                 let input = parse_arguments::<GraphStatusInput>(request.arguments)?;
                 let request = input
@@ -1104,6 +1175,9 @@ impl ServerHandler for RepoWitnessMcpServer {
                 | CHANGE_REVIEW_TOOL_NAME
                 | CONTEXT_BUILD_TOOL_NAME
                 | DIAGNOSTICS_TOOL_NAME
+                | SCIP_EVIDENCE_TOOL_NAME
+                | SCIP_RELATIONSHIP_TRACE_TOOL_NAME
+                | SCIP_SYMBOL_RESOLVE_TOOL_NAME
                 | GRAPH_STATUS_TOOL_NAME
                 | GRAPH_SEARCH_TOOL_NAME
                 | GRAPH_EVIDENCE_TOOL_NAME
@@ -1351,6 +1425,30 @@ fn tools(memory_writes_enabled: bool) -> Vec<Tool> {
     .with_input_schema::<DiagnosticsInput>()
     .with_output_schema::<DiagnosticsOutput>()
     .annotate(annotations.clone());
+    let scip_evidence = Tool::new(
+        SCIP_EVIDENCE_TOOL_NAME,
+        "Read bounded exact package-scoped evidence for one imported SCIP symbol from an immutable overlay.",
+        JsonObject::new(),
+    )
+    .with_input_schema::<ScipEvidenceInput>()
+    .with_output_schema::<ScipEvidenceOutput>()
+    .annotate(annotations.clone());
+    let scip_relationship_trace = Tool::new(
+        SCIP_RELATIONSHIP_TRACE_TOOL_NAME,
+        "Trace bounded producer-declared SCIP relationships without inferring source calls or runtime behavior.",
+        JsonObject::new(),
+    )
+    .with_input_schema::<ScipRelationshipTraceInput>()
+    .with_output_schema::<ScipRelationshipTraceOutput>()
+    .annotate(annotations.clone());
+    let scip_symbol_resolve = Tool::new(
+        SCIP_SYMBOL_RESOLVE_TOOL_NAME,
+        "Resolve one exact indexed declaration span to a unique opaque SCIP symbol.",
+        JsonObject::new(),
+    )
+    .with_input_schema::<ScipSymbolResolveInput>()
+    .with_output_schema::<ScipSymbolResolveOutput>()
+    .annotate(annotations.clone());
     let symbol_get = Tool::new(
         SYMBOL_GET_TOOL_NAME,
         "Retrieve one exact verified supported-language declaration selected from code_search output; stale \
@@ -1388,6 +1486,9 @@ fn tools(memory_writes_enabled: bool) -> Vec<Tool> {
         change_review,
         context_build,
         diagnostics,
+        scip_evidence,
+        scip_relationship_trace,
+        scip_symbol_resolve,
         memory_recall,
         symbol_get,
     ];

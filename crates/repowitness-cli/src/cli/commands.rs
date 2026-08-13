@@ -164,6 +164,24 @@ fn run_with_adapters(
     if command == OsStr::new("test-markers") {
         return run_test_markers(args, &mut stdout, &mut stderr);
     }
+    if command == OsStr::new("scip-evidence") {
+        return run_scip_evidence(args, &mut stdout, &mut stderr);
+    }
+    if command == OsStr::new("scip-relationship-trace") {
+        return run_scip_relationship_trace(args, &mut stdout, &mut stderr);
+    }
+    if command == OsStr::new("scip-symbol-resolve") {
+        return run_scip_symbol_resolve(args, &mut stdout, &mut stderr);
+    }
+    if command == OsStr::new("scip-import") {
+        return run_scip_import(args, &mut stdout, &mut stderr);
+    }
+    if command == OsStr::new("scip-rust-import") {
+        return run_scip_rust_import(args, &mut stdout, &mut stderr);
+    }
+    if command == OsStr::new("scip-go-import") {
+        return run_scip_go_import(args, &mut stdout, &mut stderr);
+    }
     if command == OsStr::new("memory-revalidate") {
         return run_memory_revalidate(args, &mut stdout, &mut stderr, memory);
     }

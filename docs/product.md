@@ -44,7 +44,7 @@ is an implementation detail, not a compatibility promise.
 ## Explicit non-goals
 
 Do not add catalog discovery beyond the explicit onboarded catalog, daemon
-coordination, connected-workspace manifests, SCIP producer imports, semantic
+coordination, connected-workspace manifests, semantic
 cross-repository relationship inference, personal memory,
 durable task workflows, remote MCP, vectors, PostgreSQL, plugins, telemetry,
 or a UI without a concrete user need and a new decision record.

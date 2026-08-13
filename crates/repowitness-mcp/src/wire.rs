@@ -26,6 +26,9 @@ mod outbound_sites;
 mod relevant_paths;
 mod repository_service_error;
 mod repository_topology;
+mod scip_evidence;
+mod scip_relationship_trace;
+mod scip_symbol_resolve;
 mod symbol_search;
 mod syntax_site_search;
 mod test_markers;
@@ -101,6 +104,19 @@ pub use repository_topology::{
     REPOSITORY_TOPOLOGY_TOOL_NAME, RepositoryTopologyInput, RepositoryTopologyOutput,
     RepositoryTopologyServiceRequest,
 };
+pub use scip_evidence::{
+    McpScipOccurrence, McpScipOverlay, McpScipRelationship, ScipEvidenceInput, ScipEvidenceOutput,
+    ScipEvidenceServiceRequest,
+};
+pub use scip_relationship_trace::{
+    McpScipRelationshipTraceEdge, McpScipRelationshipTraceOverlay,
+    SCIP_RELATIONSHIP_TRACE_TOOL_NAME, ScipRelationshipTraceInput, ScipRelationshipTraceOutput,
+    ScipRelationshipTraceServiceRequest,
+};
+pub use scip_symbol_resolve::{
+    SCIP_SYMBOL_RESOLVE_TOOL_NAME, ScipSymbolResolveInput, ScipSymbolResolveOutput,
+    ScipSymbolResolveServiceRequest,
+};
 pub use symbol_search::{
     SYMBOL_SEARCH_TOOL_NAME, SymbolSearchInput, SymbolSearchOutput, SymbolSearchServiceRequest,
 };
@@ -122,6 +138,8 @@ pub const DIAGNOSTICS_TOOL_NAME: &str = "diagnostics";
 pub const MEMORY_RECALL_TOOL_NAME: &str = "memory_recall";
 /// MCP tool name for explicitly authorized local engineering-memory mutation.
 pub const MEMORY_MANAGE_TOOL_NAME: &str = "memory_manage";
+/// MCP tool name for immutable package-scoped SCIP symbol evidence.
+pub const SCIP_EVIDENCE_TOOL_NAME: &str = "scip_evidence";
 /// MCP tool name for the bounded repository catalog.
 /// MCP tool name for exact verified declaration retrieval.
 pub const SYMBOL_GET_TOOL_NAME: &str = "symbol_get";
@@ -151,6 +169,8 @@ pub(crate) const MAX_MCP_SYMBOL_OUTPUT_BYTES: usize = 64 * 1024 * 1024;
 pub(crate) const MAX_MCP_OUTBOUND_SITES_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
 pub(crate) const MAX_MCP_SYNTAX_SITE_SEARCH_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
 pub(crate) const MAX_MCP_CODE_GRAPH_QUERY_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
+pub(crate) const MAX_MCP_SCIP_EVIDENCE_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
+pub(crate) const MAX_MCP_SCIP_RELATIONSHIP_TRACE_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
 
 /// Version-1 wire input for `code_search`.
 #[derive(Deserialize, JsonSchema)]
@@ -497,6 +517,33 @@ pub trait RepositoryService: Send + Sync + 'static {
         _cancelled: Arc<AtomicBool>,
     ) -> Result<GraphReadServiceOutput, RepositoryServiceError> {
         Err(RepositoryServiceError::GraphRead)
+    }
+
+    /// Reads bounded package-scoped SCIP evidence from one immutable overlay.
+    fn scip_evidence(
+        &self,
+        _request: ScipEvidenceServiceRequest,
+        _cancelled: Arc<AtomicBool>,
+    ) -> Result<ScipEvidenceOutput, RepositoryServiceError> {
+        Err(RepositoryServiceError::ScipEvidence)
+    }
+
+    /// Traces bounded producer-declared SCIP relationships from one exact symbol.
+    fn scip_relationship_trace(
+        &self,
+        _request: ScipRelationshipTraceServiceRequest,
+        _cancelled: Arc<AtomicBool>,
+    ) -> Result<ScipRelationshipTraceOutput, RepositoryServiceError> {
+        Err(RepositoryServiceError::ScipRelationshipTrace)
+    }
+
+    /// Resolves an exact source identifier span to an opaque SCIP symbol.
+    fn scip_symbol_resolve(
+        &self,
+        _request: ScipSymbolResolveServiceRequest,
+        _cancelled: Arc<AtomicBool>,
+    ) -> Result<ScipSymbolResolveOutput, RepositoryServiceError> {
+        Err(RepositoryServiceError::ScipSymbolResolve)
     }
 
     /// Recalls bounded records from the complete active memory projection.

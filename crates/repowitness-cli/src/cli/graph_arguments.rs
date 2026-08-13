@@ -41,6 +41,8 @@ struct GraphInvocation {
 #[derive(Default)]
 struct GraphWorkspaceArguments {
     repository_identity: Option<String>,
+    connected_workspace: Option<String>,
+    source_slot: Option<String>,
 }
 
 impl GraphWorkspaceArguments {
@@ -57,13 +59,52 @@ impl GraphWorkspaceArguments {
             }
             return Ok(true);
         }
+        if option == OsStr::new("--connected-workspace-id") {
+            let text = graph_identity_text(
+                value,
+                "error: graph connected-workspace identity must be non-empty Unicode\n",
+            )?;
+            ConnectedWorkspaceIdTextV1::decode(text).map_err(|_| {
+                "error: graph connected-workspace identity must be canonical cwi1:h: text\n"
+            })?;
+            if self.connected_workspace.replace(text.to_owned()).is_some() {
+                return Err("error: graph accepts --connected-workspace-id only once\n");
+            }
+            return Ok(true);
+        }
+        if option == OsStr::new("--source-slot-id") {
+            let text = graph_identity_text(
+                value,
+                "error: graph source-slot identity must be non-empty Unicode\n",
+            )?;
+            SourceSlotIdTextV1::decode(text)
+                .map_err(|_| "error: graph source-slot identity must be canonical ssi1:h: text\n")?;
+            if self.source_slot.replace(text.to_owned()).is_some() {
+                return Err("error: graph accepts --source-slot-id only once\n");
+            }
+            return Ok(true);
+        }
         Ok(false)
     }
 
     fn into_context(self) -> Result<GraphWorkspaceContext, &'static str> {
-        self.repository_identity
-            .map(GraphWorkspaceContext::SingleRepository)
-            .ok_or("error: graph requires --repository-id; use graph --help\n")
+        match (
+            self.repository_identity,
+            self.connected_workspace,
+            self.source_slot,
+        ) {
+            (Some(repository_identity), None, None) => {
+                Ok(GraphWorkspaceContext::SingleRepository(repository_identity))
+            }
+            (None, Some(connected_workspace), Some(source_slot)) => {
+                Ok(GraphWorkspaceContext::ConnectedWorkspace {
+                    connected_workspace,
+                    source_slot,
+                })
+            }
+            (None, None, None) => Err("error: graph requires --repository-id or connected workspace selectors; use graph --help\n"),
+            _ => Err("error: graph workspace selectors must be complete and unambiguous\n"),
+        }
     }
 }
 

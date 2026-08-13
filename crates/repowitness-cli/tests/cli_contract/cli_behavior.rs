@@ -88,7 +88,7 @@ fn help_and_version_write_to_stdout_and_succeed() {
     assert!(help.contains("index, watch, gc, context-build"));
     assert!(help.contains("mcp-serve --repository-id"));
     assert!(!help.contains("catalog"));
-    assert!(!help.contains("scip"));
+    assert!(help.contains("scip-evidence"));
 
     let version = repowitness(&["--version"]);
     assert!(version.status.success());

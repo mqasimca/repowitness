@@ -36,10 +36,12 @@ use repowitness_local::{
     LocalRepositoryTopologyRequest, LocalRetentionApplyReport, LocalRetentionApplyRequest,
     LocalRetentionPins, LocalRetentionPlanReport, LocalRetentionPlanRequest,
     LocalRustGraphReadOutput, LocalRustGraphReadRequest, LocalRustGraphReadResult,
-    LocalSymbolGetRequest, LocalSymbolGetResult, LocalSymbolSearchRequest, LocalSymbolSearchResult,
-    LocalSymbolSelectorText, LocalSyntaxSiteSearchRequest, LocalSyntaxSiteSearchResult,
-    LocalTeamMemorySyncRequest, LocalTestMarkersRequest, LocalTestMarkersResult, LocalWatchExit,
-    LocalWatchReconciliation, LocalWatchReport, LocalWatchRequest, MAX_ARCHITECTURE_MAP_FILES,
+    LocalScipEvidenceReadRequest, LocalScipRelationshipTraceRequest, LocalScipSymbolResolveRequest,
+    LocalScipSymbolResolveSelectorText, LocalSymbolGetRequest, LocalSymbolGetResult,
+    LocalSymbolSearchRequest, LocalSymbolSearchResult, LocalSymbolSelectorText,
+    LocalSyntaxSiteSearchRequest, LocalSyntaxSiteSearchResult, LocalTeamMemorySyncRequest,
+    LocalTestMarkersRequest, LocalTestMarkersResult, LocalWatchExit, LocalWatchReconciliation,
+    LocalWatchReport, LocalWatchRequest, MAX_ARCHITECTURE_MAP_FILES,
     MAX_ARCHITECTURE_OVERVIEW_ENTRY_POINT_CANDIDATES, MAX_ARCHITECTURE_OVERVIEW_FILES,
     MAX_ARCHITECTURE_OVERVIEW_ROOTS, MAX_CONFIGURATION_FILE_BYTES,
     MAX_EVIDENCE_CONTEXT_BUDGET_UNITS, McpToolProfile, MemoryAssurance, MemoryCommitId,
@@ -55,21 +57,23 @@ use repowitness_local::{
     RustGraphCandidateRecord, RustGraphDefinitionRecord, RustGraphEvidenceResult,
     RustGraphImpactClass, RustGraphOutcomeRecord, RustGraphPublicationSummary,
     RustGraphSiteSelector, RustGraphTraceResult, RustSymbolKind, SYMBOL_GET_PROFILE_VERSION,
-    SYMBOL_SEARCH_PROFILE_VERSION, SYNTAX_SITE_SEARCH_PROFILE_VERSION, SourceLanguage,
-    SourceSlotIdTextV1, SymbolSearchNameMatch, SyntaxSiteSearchLimits, SyntaxSiteSearchQuery,
-    TEST_MARKERS_PROFILE_VERSION, TestMarkersAvailability, TestMarkersLimits, TestMarkersQuery,
-    apply_local_retention, approve_local_memory, build_local_change_review,
-    build_local_evidence_context, diagnose_local_repository, discover_repository_paths,
-    generate_local_identity, get_local_outbound_sites, get_local_symbol,
+    SYMBOL_SEARCH_PROFILE_VERSION, SYNTAX_SITE_SEARCH_PROFILE_VERSION, ScipRelationshipDirection,
+    ScipRelationshipTraceDirection, ScipRelationshipTraceResult, ScipSymbolEvidenceResult,
+    SourceLanguage, SourceSlotIdTextV1, SymbolSearchNameMatch, SyntaxSiteSearchLimits,
+    SyntaxSiteSearchQuery, TEST_MARKERS_PROFILE_VERSION, TestMarkersAvailability,
+    TestMarkersLimits, TestMarkersQuery, apply_local_retention, approve_local_memory,
+    build_local_change_review, build_local_evidence_context, diagnose_local_repository,
+    discover_repository_paths, generate_local_identity, get_local_outbound_sites, get_local_symbol,
     import_local_memory_history, index_local_connected_workspace, index_local_repository,
     inspect_local_doctor, locate_local_relevant_paths, map_local_architecture,
     overview_local_architecture, parse_configuration_file, plan_local_retention,
     read_bounded_regular_file_with_parent, read_local_code_graph_query,
-    read_local_repository_topology, read_local_rust_graph, read_local_test_markers,
-    recall_local_memory, resolve_configuration, revalidate_local_memory,
-    review_local_memory_correspondence, search_local_index, search_local_symbols,
-    search_local_syntax_sites, sync_local_team_memory, validate_local_memory_actor,
-    watch_local_repository, write_local_memory,
+    read_local_repository_topology, read_local_rust_graph, read_local_scip_evidence,
+    read_local_test_markers, recall_local_memory, resolve_configuration, resolve_local_scip_symbol,
+    revalidate_local_memory, review_local_memory_correspondence, search_local_index,
+    search_local_symbols, search_local_syntax_sites, sync_local_team_memory,
+    trace_local_scip_relationships, validate_local_memory_actor, watch_local_repository,
+    write_local_memory,
 };
 use repowitness_mcp::{
     ARCHITECTURE_OVERVIEW_LIMITATIONS, ArchitectureMapOutput, ArchitectureMapServiceRequest,
@@ -93,15 +97,20 @@ use repowitness_mcp::{
     McpMemoryProducer, McpMemoryRecord, McpMemoryTarget, McpOutboundSitesDeclaration,
     McpOutboundSyntaxSite, McpRelevantPath, McpRepositoryCatalog, McpRepositoryCatalogLoader,
     McpRepositoryTopologyCategory, McpRepositoryTopologyCoverage, McpRepositoryTopologyEntry,
-    McpSearchMatch, McpSelectedMemory, McpSpan, McpSymbol, McpTestMarkerLanguageCoverage,
-    MemoryManageDatabaseIdentityStatus, MemoryManageFileIdentityStatus,
-    MemoryManageMaintenanceStatus, MemoryManageMaintenanceStepStatus, MemoryManageOutput,
-    MemoryManagePublicationStatus, MemoryManagePublicationStepStatus, MemoryManageReviewDecision,
-    MemoryManageServiceRequest, MemoryMutationOperation, MemoryMutationRequestScope,
-    MemoryRecallOutput, MemoryRecallServiceRequest, MemoryRecallServiceSelection,
-    OutboundSitesOutput, OutboundSitesSelectorOutput, OutboundSitesServiceRequest,
-    RelevantPathsOutput, RelevantPathsServiceRequest, RepositoryService, RepositoryServiceError,
-    RepositoryTopologyOutput, RepositoryTopologyServiceRequest, SymbolGetOutput,
+    McpScipOccurrence, McpScipOverlay, McpScipRelationship, McpScipRelationshipTraceEdge,
+    McpScipRelationshipTraceOverlay, McpSearchMatch, McpSelectedMemory, McpSpan, McpSymbol,
+    McpTestMarkerLanguageCoverage, MemoryManageDatabaseIdentityStatus,
+    MemoryManageFileIdentityStatus, MemoryManageMaintenanceStatus,
+    MemoryManageMaintenanceStepStatus, MemoryManageOutput, MemoryManagePublicationStatus,
+    MemoryManagePublicationStepStatus, MemoryManageReviewDecision, MemoryManageServiceRequest,
+    MemoryMutationOperation, MemoryMutationRequestScope, MemoryRecallOutput,
+    MemoryRecallServiceRequest, MemoryRecallServiceSelection, OutboundSitesOutput,
+    OutboundSitesSelectorOutput, OutboundSitesServiceRequest, RelevantPathsOutput,
+    RelevantPathsServiceRequest, RepositoryService, RepositoryServiceError,
+    RepositoryTopologyOutput, RepositoryTopologyServiceRequest, ScipEvidenceInput,
+    ScipEvidenceOutput, ScipEvidenceServiceRequest, ScipRelationshipTraceInput,
+    ScipRelationshipTraceOutput, ScipRelationshipTraceServiceRequest, ScipSymbolResolveInput,
+    ScipSymbolResolveOutput, ScipSymbolResolveServiceRequest, SymbolGetOutput,
     SymbolGetServiceRequest, SymbolSearchOutput, SymbolSearchServiceRequest, SymbolSelectorOutput,
     SyntaxSiteSearchOutput, SyntaxSiteSearchServiceRequest, TestMarkersOutput, serve_stdio,
     serve_stdio_with_memory_writes, serve_stdio_with_reloadable_repository_catalog,
@@ -113,6 +122,12 @@ const EXIT_USAGE: u8 = 64;
 const EXIT_SOFTWARE: u8 = 70;
 const EXIT_IO: u8 = 74;
 const CONFIGURATION_LAYER_ARGUMENTS: usize = 6;
+const MAX_SCIP_EVIDENCE_ARGUMENTS: usize = 16;
+const MAX_SCIP_RELATIONSHIP_TRACE_ARGUMENTS: usize = 20;
+const MAX_SCIP_SYMBOL_RESOLVE_ARGUMENTS: usize = 26;
+const MAX_SCIP_IMPORT_ARGUMENTS: usize = 14;
+const MAX_SCIP_RUST_IMPORT_ARGUMENTS: usize = 16;
+const MAX_SCIP_GO_IMPORT_ARGUMENTS: usize = 16;
 const MAX_CONTEXT_BUILD_ARGUMENTS: usize = 20 + CONFIGURATION_LAYER_ARGUMENTS;
 const MAX_CONFIG_EXPLAIN_ARGUMENTS: usize = 7;
 const MAX_DOCTOR_ARGUMENTS: usize = 10;
@@ -164,6 +179,8 @@ const HELP: &str = concat!(
     "  architecture-map, architecture-overview, repository-topology, graph\n",
     "  search, locate-relevant-paths, symbol-search, symbol-get\n",
     "  outbound-sites, syntax-site-search, test-markers\n",
+    "  scip-evidence, scip-relationship-trace, scip-symbol-resolve\n",
+    "  scip-import, scip-rust-import, scip-go-import\n",
     "  memory-revalidate, memory-recall, memory-manage\n",
     "  mcp-serve --repository-id <id> --database <path> --root <path>\n",
     "  codex workspace create|list|remove ...\n\n",
@@ -422,6 +439,74 @@ const SYMBOL_SEARCH_HELP: &str = concat!(
     "identity and never create relationship edges.\n",
 );
 
+const SCIP_EVIDENCE_HELP: &str = concat!(
+    "Read exact package-scoped evidence from one imported SCIP overlay.\n\n",
+    "Usage:\n",
+    "  repowitness scip-evidence --repository-id <id> --database <path> --symbol <scip-symbol>\n",
+    "      [--package-root <rwp1:h:text>]... [--workspace-view <positive-id>]\n",
+    "      [--timeout-ms <1-30000>]\n\n",
+    "  repowitness scip-evidence --connected-workspace-id <id> --source-slot-id <id>\n",
+    "      --database <path> --symbol <scip-symbol> [same optional bounds]\n\n",
+    "The command is read-only and reports categorical not_produced, no_match, or found\n",
+    "results from an active or exact immutable workspace view.\n",
+);
+
+const SCIP_RELATIONSHIP_TRACE_HELP: &str = concat!(
+    "Trace bounded producer-declared relationships from one imported SCIP symbol.\n\n",
+    "Usage:\n",
+    "  repowitness scip-relationship-trace --repository-id <id> --database <path> --symbol <scip-symbol>\n",
+    "      --direction <outgoing|incoming> [--max-depth <1-4>] [--max-edges <1-256>]\n",
+    "      [--package-root <rwp1:h:text>]... [--workspace-view <positive-id>]\n\n",
+    "  repowitness scip-relationship-trace --connected-workspace-id <id> --source-slot-id <id>\n",
+    "      --database <path> --symbol <scip-symbol> --direction <outgoing|incoming> [same optional bounds]\n\n",
+    "The command follows producer-declared relationships only; it does not infer source calls.\n",
+);
+
+const SCIP_SYMBOL_RESOLVE_HELP: &str = concat!(
+    "Resolve one exact indexed declaration span to an opaque SCIP symbol.\n\n",
+    "Usage:\n",
+    "  repowitness scip-symbol-resolve --repository-id <id> --database <path> --snapshot <sha256>\n",
+    "      --generation <id> --path <rwp1:h:text> --content <sha256> --artifact <sha256>\n",
+    "      --fact-ordinal <n> --name-start <byte> --name-end <byte>\n",
+    "  repowitness scip-symbol-resolve --connected-workspace-id <id> --source-slot-id <id>\n",
+    "      --database <path> [same exact selector options]\n\n",
+    "Copy the immutable selector and span from symbol-search output. Missing and ambiguous\n",
+    "matches remain categorical; an exact symbol can then be passed to scip-evidence.\n",
+);
+
+const SCIP_IMPORT_HELP: &str = concat!(
+    "Import one bounded SCIP file as an immutable precision overlay.\n\n",
+    "Usage:\n",
+    "  repowitness scip-import --database <path> --root <repository-root> --scip-file <path>\n",
+    "      --connected-workspace-id <id> --source-slot-id <id>\n",
+    "      [--workspace-view <positive-id>] [--timeout-ms <1-300000>]\n",
+    "\nThe input is read once through a bounded no-follow regular-file boundary and checked\n",
+    "against the exact source slot and immutable source snapshot. Failed or stale imports\n",
+    "leave the prior active overlay readable.\n",
+);
+
+const SCIP_RUST_IMPORT_HELP: &str = concat!(
+    "Produce and import one Rust SCIP overlay with rust-analyzer.\n\n",
+    "Usage:\n",
+    "  repowitness scip-rust-import --database <path> --root <repository-root>\n",
+    "      (--repository-id <id>|--connected-workspace-id <id> --source-slot-id <id>)\n",
+    "      [--workspace-view <positive-id>] [--rust-analyzer <path>]\n",
+    "      [--producer-timeout-ms <1-300000>] [--import-timeout-ms <1-300000>]\n",
+    "\nThis explicit CLI-only command runs rust-analyzer, then uses the same exact source-slot\n",
+    "and immutable-view checks as scip-import. It never runs during indexing or MCP startup.\n",
+);
+
+const SCIP_GO_IMPORT_HELP: &str = concat!(
+    "Produce and import one Go SCIP overlay with scip-go.\n\n",
+    "Usage:\n",
+    "  repowitness scip-go-import --database <path> --root <repository-root>\n",
+    "      (--repository-id <id>|--connected-workspace-id <id> --source-slot-id <id>)\n",
+    "      [--workspace-view <positive-id>] [--scip-go <path>]\n",
+    "      [--producer-timeout-ms <1-300000>] [--import-timeout-ms <1-300000>]\n",
+    "\nThis explicit CLI-only command runs scip-go, then uses the same exact source-slot and\n",
+    "immutable-view checks as scip-import. It never runs during indexing or MCP startup.\n",
+);
+
 include!("cli/adapters.rs");
 include!("cli/architecture_map_commands.rs");
 include!("cli/repository_topology_commands.rs");
@@ -432,11 +517,20 @@ include!("cli/outbound_sites_commands.rs");
 include!("cli/syntax_site_search_commands.rs");
 include!("cli/test_markers_commands.rs");
 include!("cli/mcp_graph.rs");
+include!("cli/mcp_scip_evidence.rs");
+include!("cli/mcp_scip_relationship_trace.rs");
+include!("cli/mcp_scip_symbol_resolve.rs");
 include!("cli/mcp_service.rs");
 include!("cli/mcp_registry.rs");
 include!("cli/graph_arguments.rs");
 include!("cli/graph_commands.rs");
 include!("cli/graph_output.rs");
+include!("cli/scip_evidence_commands.rs");
+include!("cli/scip_relationship_trace_commands.rs");
+include!("cli/scip_import_commands.rs");
+include!("cli/scip_rust_import_commands.rs");
+include!("cli/scip_go_import_commands.rs");
+include!("cli/scip_symbol_resolve_commands.rs");
 include!("cli/identity_commands.rs");
 include!("cli/identity_output.rs");
 include!("cli/onboard_commands.rs");

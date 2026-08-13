@@ -412,6 +412,48 @@ impl RepositoryService for LocalMcpRepositoryService {
             .map(|result| mcp_diagnostics_output(result, &self.configuration))
     }
 
+    fn scip_evidence(
+        &self,
+        request: ScipEvidenceServiceRequest,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<ScipEvidenceOutput, RepositoryServiceError> {
+        read_local_scip_evidence_service(
+            &self.database,
+            &self.graph_workspace,
+            request,
+            cancelled,
+        )
+        .map_err(|_| RepositoryServiceError::ScipEvidence)
+    }
+
+    fn scip_relationship_trace(
+        &self,
+        request: ScipRelationshipTraceServiceRequest,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<ScipRelationshipTraceOutput, RepositoryServiceError> {
+        read_local_scip_relationship_trace_service(
+            &self.database,
+            &self.graph_workspace,
+            request,
+            cancelled,
+        )
+        .map_err(|_| RepositoryServiceError::ScipRelationshipTrace)
+    }
+
+    fn scip_symbol_resolve(
+        &self,
+        request: ScipSymbolResolveServiceRequest,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<ScipSymbolResolveOutput, RepositoryServiceError> {
+        read_local_scip_symbol_resolve_service(
+            &self.database,
+            &self.graph_workspace,
+            request,
+            cancelled,
+        )
+        .map_err(|_| RepositoryServiceError::ScipSymbolResolve)
+    }
+
     fn graph_read(
         &self,
         request: GraphReadServiceRequest,

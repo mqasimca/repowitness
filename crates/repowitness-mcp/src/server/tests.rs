@@ -45,6 +45,8 @@ struct FakeService {
     context_calls: AtomicUsize,
     diagnostics_calls: AtomicUsize,
     graph_calls: AtomicUsize,
+    scip_calls: AtomicUsize,
+    scip_relationship_trace_calls: AtomicUsize,
     invalid_diagnostics: AtomicBool,
     search_truncated: AtomicBool,
     manage_calls: AtomicUsize,
@@ -120,6 +122,8 @@ impl FakeService {
             context_calls: AtomicUsize::new(0),
             diagnostics_calls: AtomicUsize::new(0),
             graph_calls: AtomicUsize::new(0),
+            scip_calls: AtomicUsize::new(0),
+            scip_relationship_trace_calls: AtomicUsize::new(0),
             invalid_diagnostics: AtomicBool::new(false),
             search_truncated: AtomicBool::new(false),
             manage_calls: AtomicUsize::new(0),
@@ -325,6 +329,44 @@ impl RepositoryService for FakeService {
     ) -> Result<GraphReadServiceOutput, RepositoryServiceError> {
         self.graph_calls.fetch_add(1, Ordering::Relaxed);
         Ok(graph_output(request))
+    }
+
+    fn scip_evidence(
+        &self,
+        request: ScipEvidenceServiceRequest,
+        _cancelled: Arc<AtomicBool>,
+    ) -> Result<ScipEvidenceOutput, RepositoryServiceError> {
+        self.scip_calls.fetch_add(1, Ordering::Relaxed);
+        assert_eq!(request.symbol().as_str(), "scip-rust pkg 1 Symbol.");
+        Ok(scip_evidence_output())
+    }
+
+    fn scip_relationship_trace(
+        &self,
+        request: ScipRelationshipTraceServiceRequest,
+        _cancelled: Arc<AtomicBool>,
+    ) -> Result<ScipRelationshipTraceOutput, RepositoryServiceError> {
+        self.scip_relationship_trace_calls
+            .fetch_add(1, Ordering::Relaxed);
+        assert_eq!(request.symbol().as_str(), "scip-rust pkg 1 Symbol.");
+        assert_eq!(request.max_depth().get(), 2);
+        assert_eq!(request.max_edges().get(), 8);
+        Ok(scip_relationship_trace_output())
+    }
+
+    fn scip_symbol_resolve(
+        &self,
+        _request: ScipSymbolResolveServiceRequest,
+        _cancelled: Arc<AtomicBool>,
+    ) -> Result<ScipSymbolResolveOutput, RepositoryServiceError> {
+        Ok(ScipSymbolResolveOutput {
+            schema_version: 1,
+            connected_workspace: "cwi1:h:00".to_owned(),
+            workspace_view: 1,
+            source_slot: "ssi1:h:00".to_owned(),
+            resolution: "exact".to_owned(),
+            symbol: Some("scip-rust pkg 1 Symbol.".to_owned()),
+        })
     }
 
     fn memory_recall(
@@ -850,6 +892,61 @@ async fn initialized_client_lists_and_calls_all_tools() {
         .await
         .expect("symbol response");
     assert_eq!(symbol.is_error, Some(false));
+    let scip = client
+        .call_tool(
+            CallToolRequestParams::new(SCIP_EVIDENCE_TOOL_NAME).with_arguments(json_object(
+                serde_json::json!({"symbol": "scip-rust pkg 1 Symbol."}),
+            )),
+        )
+        .await
+        .expect("SCIP evidence response");
+    assert_eq!(scip.is_error, Some(false));
+    assert_eq!(
+        scip.structured_content
+            .as_ref()
+            .and_then(|value| value.get("resolution"))
+            .and_then(serde_json::Value::as_str),
+        Some("not_produced")
+    );
+    let scip_trace = client
+        .call_tool(
+            CallToolRequestParams::new(SCIP_RELATIONSHIP_TRACE_TOOL_NAME).with_arguments(
+                json_object(serde_json::json!({
+                    "symbol": "scip-rust pkg 1 Symbol.",
+                    "direction": "outgoing",
+                    "max_depth": 2,
+                    "max_edges": 8,
+                })),
+            ),
+        )
+        .await
+        .expect("SCIP relationship trace response");
+    assert_eq!(scip_trace.is_error, Some(false));
+    assert_eq!(
+        scip_trace
+            .structured_content
+            .as_ref()
+            .and_then(|value| value.get("resolution"))
+            .and_then(serde_json::Value::as_str),
+        Some("not_produced")
+    );
+    let scip_symbol = client
+        .call_tool(
+            CallToolRequestParams::new(SCIP_SYMBOL_RESOLVE_TOOL_NAME).with_arguments(json_object(
+                serde_json::json!({
+                    "snapshot_sha256": "11".repeat(32),
+                    "generation": 9,
+                    "path": "rwp1:h:7372632F6C69622E7273",
+                    "content_sha256": "22".repeat(32),
+                    "artifact_sha256": "33".repeat(32),
+                    "fact_ordinal": 7,
+                    "name_span": {"start": 5, "end": 9},
+                }),
+            )),
+        )
+        .await
+        .expect("SCIP symbol resolution response");
+    assert_eq!(scip_symbol.is_error, Some(false));
     for (tool, arguments) in graph::tool_requests() {
         let response = client
             .call_tool(CallToolRequestParams::new(tool).with_arguments(json_object(arguments)))
@@ -880,6 +977,13 @@ async fn initialized_client_lists_and_calls_all_tools() {
     assert_eq!(service.symbol_calls.load(Ordering::Relaxed), 1);
     assert_eq!(service.outbound_sites_calls.load(Ordering::Relaxed), 1);
     assert_eq!(service.syntax_site_search_calls.load(Ordering::Relaxed), 1);
+    assert_eq!(service.scip_calls.load(Ordering::Relaxed), 1);
+    assert_eq!(
+        service
+            .scip_relationship_trace_calls
+            .load(Ordering::Relaxed),
+        1
+    );
     assert_eq!(service.graph_calls.load(Ordering::Relaxed), 6);
     assert_eq!(
         service.search_request.lock().expect("lock").as_ref(),

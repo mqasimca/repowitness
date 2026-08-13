@@ -49,7 +49,7 @@ operator-supplied; it is never inferred from sibling repositories.
 
 ## Deferred until demanded
 
-Daemons, SCIP imports, personal memory, durable tasks,
+Daemons, personal memory, durable tasks,
 remote MCP, PostgreSQL, vectors, plugins, telemetry, and UI are deliberately
 out of the current product. The local catalog remains explicitly
 onboarding-backed; its membership and control file are read-only to MCP, while
