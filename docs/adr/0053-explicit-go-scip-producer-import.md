@@ -63,7 +63,7 @@ Add the direct CLI-only `scip-go-import` command.
   selected source root. Absolute paths, interior parent traversals, and every
   malformed or source-mismatched in-root document still fail atomically. The
   activated-import receipt reports the excluded document count.
-- The shared hostile-artifact decoder admits at most 64 MiB total and 2 MiB
+- The shared hostile-artifact decoder admits at most 256 MiB total and 2 MiB
   per SCIP document. The latter bound covers observed `scip-go` source files
   up to 1.55 MiB while retaining a hard cap for every retained raw payload.
 - Normal `index` and `watch` never run a producer. Onboarding may run this

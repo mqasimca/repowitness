@@ -21,7 +21,7 @@ mod typescript_source;
 ///
 /// This is the outer-wire framing limit and must also bound local file
 /// admission before any SCIP decoder retains input bytes.
-pub const MAX_SCIP_OVERLAY_INPUT_BYTES: usize = 64 * 1024 * 1024;
+pub const MAX_SCIP_OVERLAY_INPUT_BYTES: usize = 256 * 1024 * 1024;
 
 pub use artifact_reuse::{
     ArtifactKeySemantics, ArtifactPlanAction, ArtifactPlanCount, ArtifactPlanningError,

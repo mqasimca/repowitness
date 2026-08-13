@@ -117,6 +117,14 @@ fn migration_checksums_are_stable_golden_vectors() {
         ]
     );
     assert_eq!(
+        migration_checksum(MIGRATION_17),
+        [
+            0xd1, 0xf4, 0x0b, 0x32, 0x6e, 0xc0, 0xba, 0xee, 0xaf, 0xcb, 0x25, 0x8e, 0xfc,
+            0xb5, 0x79, 0x47, 0x56, 0xa9, 0xec, 0xc0, 0x19, 0x65, 0x87, 0xb5, 0xf5, 0xb1,
+            0x9a, 0x37, 0x08, 0x22, 0xae, 0x30,
+        ]
+    );
+    assert_eq!(
         migrations(),
         [
             (1, MIGRATION_1_NAME, MIGRATION_1),
@@ -134,6 +142,7 @@ fn migration_checksums_are_stable_golden_vectors() {
             (14, MIGRATION_14_NAME, MIGRATION_14),
             (15, MIGRATION_15_NAME, MIGRATION_15),
             (16, MIGRATION_16_NAME, MIGRATION_16),
+            (17, MIGRATION_17_NAME, MIGRATION_17),
         ]
     );
     for transitional_statement in ["CREATE TEMP", "ALTER TABLE", "DROP TABLE"] {
@@ -175,9 +184,9 @@ fn current_catalog_matches_the_current_schema_golden() {
     assert_eq!(
         migration_checksum(&canonical_catalog),
         [
-            0x84, 0xfb, 0x2c, 0x33, 0xbe, 0x65, 0x5f, 0x85, 0xc6, 0x36, 0xee, 0x44, 0xa9, 0x7d,
-            0x06, 0x1d, 0x2d, 0x61, 0x1f, 0x59, 0xcd, 0xe4, 0x1f, 0xca, 0x09, 0x49, 0x0f, 0xd6,
-            0x8b, 0x0f, 0xd5, 0x0e,
+            0xd5, 0xfb, 0xad, 0xd4, 0xf4, 0xeb, 0x42, 0x0b, 0x3c, 0x1b, 0x21, 0x35, 0xc3, 0xea,
+            0x75, 0xcd, 0xbd, 0x98, 0x4b, 0x6a, 0x98, 0x56, 0xff, 0xbb, 0xf5, 0x3b, 0x5b, 0x56,
+            0xbc, 0x15, 0x02, 0x9c,
         ]
     );
 }
@@ -587,6 +596,12 @@ fn fresh_database_has_exact_identity_ledger_and_required_schema() {
                 16,
                 MIGRATION_16_NAME.to_owned(),
                 migration_checksum(MIGRATION_16).to_vec(),
+                123
+            ),
+            (
+                17,
+                MIGRATION_17_NAME.to_owned(),
+                migration_checksum(MIGRATION_17).to_vec(),
                 123
             ),
         ]

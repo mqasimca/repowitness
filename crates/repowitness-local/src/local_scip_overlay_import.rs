@@ -543,6 +543,7 @@ fn import_with_reader(
 #[cfg(test)]
 mod local_scip_overlay_import_tests {
     use super::*;
+    use crate::bounded_file::MAX_BOUNDED_FILE_BYTES;
 
     #[test]
     fn failure_categories_preserve_the_safe_import_cause() {
@@ -565,9 +566,11 @@ mod local_scip_overlay_import_tests {
 
     #[test]
     fn scip_input_admission_matches_the_decoder_ceiling() {
+        assert_eq!(MAX_SCIP_OVERLAY_INPUT_BYTES, 256 * 1024 * 1024);
         assert_eq!(
             MAX_LOCAL_SCIP_IMPORT_INPUT_BYTES,
             MAX_SCIP_OVERLAY_INPUT_BYTES
         );
+        assert_eq!(MAX_LOCAL_SCIP_IMPORT_INPUT_BYTES, MAX_BOUNDED_FILE_BYTES);
     }
 }
