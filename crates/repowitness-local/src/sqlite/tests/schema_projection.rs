@@ -109,6 +109,14 @@ fn migration_checksums_are_stable_golden_vectors() {
         ]
     );
     assert_eq!(
+        migration_checksum(MIGRATION_16),
+        [
+            0x66, 0x7a, 0x8c, 0xe6, 0xca, 0xbd, 0x24, 0x5e, 0xa2, 0x14, 0x70, 0x4f, 0x50, 0x20,
+            0x6b, 0xad, 0xc4, 0x60, 0x72, 0x5b, 0x82, 0x09, 0xc0, 0x76, 0xa1, 0x85, 0xcf, 0xae,
+            0x29, 0x4d, 0x65, 0x2a,
+        ]
+    );
+    assert_eq!(
         migrations(),
         [
             (1, MIGRATION_1_NAME, MIGRATION_1),
@@ -125,6 +133,7 @@ fn migration_checksums_are_stable_golden_vectors() {
             (13, MIGRATION_13_NAME, MIGRATION_13),
             (14, MIGRATION_14_NAME, MIGRATION_14),
             (15, MIGRATION_15_NAME, MIGRATION_15),
+            (16, MIGRATION_16_NAME, MIGRATION_16),
         ]
     );
     for transitional_statement in ["CREATE TEMP", "ALTER TABLE", "DROP TABLE"] {
@@ -166,9 +175,9 @@ fn current_catalog_matches_the_current_schema_golden() {
     assert_eq!(
         migration_checksum(&canonical_catalog),
         [
-            0x95, 0x0b, 0xf9, 0xff, 0xfb, 0x00, 0x22, 0x26, 0x5d, 0x2e, 0x92, 0x44, 0xd2, 0x92,
-            0xa9, 0x03, 0x63, 0xee, 0x47, 0x08, 0x6d, 0x57, 0xad, 0x16, 0x18, 0x25, 0xe9, 0xc9,
-            0xc4, 0x26, 0x1f, 0xcf,
+            0x84, 0xfb, 0x2c, 0x33, 0xbe, 0x65, 0x5f, 0x85, 0xc6, 0x36, 0xee, 0x44, 0xa9, 0x7d,
+            0x06, 0x1d, 0x2d, 0x61, 0x1f, 0x59, 0xcd, 0xe4, 0x1f, 0xca, 0x09, 0x49, 0x0f, 0xd6,
+            0x8b, 0x0f, 0xd5, 0x0e,
         ]
     );
 }
@@ -401,6 +410,7 @@ fn fresh_database_has_exact_identity_ledger_and_required_schema() {
                     'active_workspace_views',
                     'scip_overlay_receipts', 'scip_overlay_documents',
                     'scip_overlay_occurrences', 'scip_overlay_relationships',
+                    'scip_enclosed_reference_edges',
                     'active_scip_overlays',
                     'retention_scip_overlay_garbage',
                     'rust_graph_artifacts', 'rust_graph_sites',
@@ -573,9 +583,15 @@ fn fresh_database_has_exact_identity_ledger_and_required_schema() {
                 migration_checksum(MIGRATION_15).to_vec(),
                 123
             ),
+            (
+                16,
+                MIGRATION_16_NAME.to_owned(),
+                migration_checksum(MIGRATION_16).to_vec(),
+                123
+            ),
         ]
     );
-    assert_eq!(tables, 63);
+    assert_eq!(tables, 64);
     assert_eq!(memory_schema_objects, (6, 39));
     assert_eq!(graph_schema_objects, (2, 26));
     assert_eq!(retention_schema_objects, (7, 15));

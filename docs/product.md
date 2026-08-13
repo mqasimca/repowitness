@@ -24,9 +24,11 @@ management, context compilation, and revision-pinned change review.
 ## User experience contract
 
 - `index` is the normal explicit entry point.
-- `onboard` is the private local-state shortcut and uses a fast source-only
-  index by default; use `onboard --full` or normal `index` when graph evidence
-  is needed.
+- `onboard` is the private local-state shortcut: it completes the source index
+  first, then imports Go SCIP relationships when the root has `go.mod` and
+  `scip-go` is available. Use `onboard --full` for graph evidence, `--no-scip`
+  to skip enrichment, or `--scip-go <path>` to select the producer.
+- Normal `index`, `watch`, and MCP startup remain producer-free.
 - `watch` is a foreground reconciler, not a daemon.
 - `mcp-serve` accepts one explicit repository or one private catalog of
   onboarded repositories and is read-only by default.

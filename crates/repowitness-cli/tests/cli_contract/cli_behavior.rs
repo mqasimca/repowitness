@@ -29,6 +29,27 @@ fn verify_emits_a_fenced_revision_pinned_receipt_without_a_verdict() {
         .to_owned();
     let database = directory.database();
     assert!(index(&repository, &database, REPOSITORY_ID).status.success());
+    let clean = repowitness_os([
+        OsStr::new("verify"),
+        OsStr::new("--repository-id"),
+        OsStr::new(REPOSITORY_ID),
+        OsStr::new("--database"),
+        database.as_os_str(),
+        OsStr::new("--root"),
+        repository.as_os_str(),
+        OsStr::new("--base"),
+        OsStr::new(&base),
+        OsStr::new("--intent"),
+        OsStr::new("Widget"),
+    ]);
+    assert!(clean.status.success());
+    assert_eq!(
+        report_value(
+            &String::from_utf8(clean.stdout).expect("clean verify receipt should be UTF-8"),
+            "index_worktree_alignment"
+        ),
+        "verified"
+    );
     fs::write(
         repository.join("src/lib.rs"),
         "pub struct Widget;\nimpl Widget { pub fn changed() {} }\n",
@@ -53,7 +74,7 @@ fn verify_emits_a_fenced_revision_pinned_receipt_without_a_verdict() {
     let receipt = String::from_utf8(receipt.stdout).expect("verify receipt should be UTF-8");
     assert_eq!(report_value(&receipt, "operation"), "verify");
     assert_eq!(report_value(&receipt, "base"), base);
-    assert_eq!(report_value(&receipt, "index_worktree_alignment"), "unverified");
+    assert_eq!(report_value(&receipt, "index_worktree_alignment"), "mismatch");
     assert_eq!(report_value(&receipt, "indexed_context_availability"), "unavailable");
     assert_eq!(report_value(&receipt, "indexed_context_reason"), "stale_source");
     assert_eq!(report_value(&receipt, "verdict"), "not_provided");
@@ -76,6 +97,7 @@ fn verify_emits_a_fenced_revision_pinned_receipt_without_a_verdict() {
     let available = String::from_utf8(available.stdout).expect("verify receipt should be UTF-8");
     assert_eq!(report_value(&available, "indexed_context_availability"), "available");
     assert_eq!(report_value(&available, "indexed_context_reason"), "not_applicable");
+    assert_eq!(report_value(&available, "index_worktree_alignment"), "mismatch");
     assert_eq!(report_value(&available, "indexed_snapshot_sha256").len(), 64);
 }
 

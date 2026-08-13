@@ -72,6 +72,45 @@ fn synthetic_scip_document_with_relationships(
     document
 }
 
+fn synthetic_scip_document_with_enclosed_reference(
+    path: &[u8],
+    definition_symbol: &[u8],
+    definition_start: u64,
+    definition_end: u64,
+    target_symbol: &[u8],
+    target_start: u64,
+    target_end: u64,
+) -> Vec<u8> {
+    let occurrence = |symbol: &[u8], start: u64, end: u64, definition: bool| {
+        let mut range = Vec::new();
+        for component in [0_u64, start, 0, end] {
+            range.extend(scip_varint(component));
+        }
+        let mut encoded = scip_field(1, 2, &range);
+        encoded.extend(scip_field(2, 2, symbol));
+        if definition {
+            encoded.extend(scip_field(3, 0, &[1]));
+        }
+        scip_field(2, 2, &encoded)
+    };
+    let mut document = scip_field(1, 2, path);
+    document.extend(occurrence(
+        definition_symbol,
+        definition_start,
+        definition_end,
+        true,
+    ));
+    document.extend(occurrence(
+        target_symbol,
+        target_start,
+        target_end,
+        false,
+    ));
+    document.extend(scip_field(4, 2, b"rust"));
+    document.extend(scip_field(6, 0, &[1]));
+    document
+}
+
 fn overlay_scope(view: &crate::PinnedWorkspaceView, source_slot: SourceSlotId) -> ScipOverlayScopeIdentity {
     let member = view
         .members()
@@ -86,6 +125,130 @@ fn overlay_scope(view: &crate::PinnedWorkspaceView, source_slot: SourceSlotId) -
         member.generation().get(),
     )
     .expect("positive fixture scope")
+}
+
+#[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one end-to-end synthetic overlay fixture keeps source, SCIP, publication, and trace assertions together"
+)]
+fn enclosed_reference_projection_supports_a_bounded_caller_trace() {
+    let directory = TempDirectory::new();
+    let (store, _) = OwnedSqliteIndex::start(&directory.database(), 123, deadline())
+        .expect("owned store should start");
+    let repository = RepositoryIdentityDigest::new([1; 32]);
+    store
+        .register_workspace(repository, 0, deadline())
+        .expect("repository should register");
+    let source = b"pub fn caller() { target(); }\n";
+    let prepared_index = repowitness_application::prepare_rust_index(
+        vec![ImmutableRustSource::new(
+            RepositoryPath::try_from_bytes(b"src/lib.rs", PATH_LIMITS)
+                .expect("fixture path should be valid"),
+            source.to_vec().into_boxed_slice(),
+        )],
+        artifact_identity(),
+        RustIndexLimits::default(),
+        &AtomicBool::new(false),
+        deadline(),
+    )
+    .expect("source should prepare");
+    let source_identity = snapshot_identity();
+    let manifest_digest = prepared_index.manifest_digest();
+    let prepared_manifest = prepared_index.manifest().clone();
+    let generation = store
+        .stage(
+            0,
+            source_identity,
+            prepared_index,
+            GenerationCoverage::new(1, 0, 0, 0),
+            Arc::new(AtomicBool::new(false)),
+            deadline(),
+        )
+        .expect("source generation should stage");
+    store
+        .activate(generation, 0, deadline())
+        .expect("source generation should activate");
+    let view = store
+        .active_workspace_view(
+            ConnectedWorkspaceId::for_single_repository(repository),
+            workspace_control(),
+            deadline(),
+        )
+        .expect("active view should load")
+        .expect("active view should exist");
+    let source_slot = view.members()[0].source_slot();
+    let definition = b"scip-rust pkg 1 Caller.";
+    let target = b"scip-rust pkg 1 Target.";
+    let raw = synthetic_scip_document_with_enclosed_reference(
+        b"src/lib.rs",
+        definition,
+        7,
+        13,
+        target,
+        18,
+        24,
+    );
+    let document = repowitness_analysis::decode_scip_overlay_document(
+        &raw,
+        &prepared_manifest,
+        PATH_LIMITS,
+        source,
+        &AtomicBool::new(false),
+        deadline(),
+    )
+    .expect("SCIP fixture should decode");
+    let identity = ScipOverlayIdentityInput::new(
+        overlay_scope(&view, source_slot),
+        hash_source_snapshot(source_identity, manifest_digest),
+        manifest_digest,
+        ConfigurationDigest::new([4; 32]),
+        ProducerManifestDigest::new([5; 32]),
+        reviewed_scip_schema_digest(),
+        bounded_scip_importer_digest(),
+        hash_scip_input(&raw),
+    );
+    let overlay = PreparedScipOverlay::try_new(identity, vec![document])
+        .expect("overlay should prepare");
+    store
+        .stage_scip_overlay(
+            view.connected_workspace(),
+            view.view(),
+            source_slot,
+            overlay,
+            Arc::new(AtomicBool::new(false)),
+            deadline(),
+        )
+        .expect("overlay should publish");
+    let reader = OwnedSqliteReader::start(&directory.database(), deadline())
+        .expect("reader should start");
+    let trace = reader
+        .scip_relationship_trace(
+            &view,
+            source_slot,
+            PackageScope::whole_repository(),
+            ScipSymbol::try_new(String::from_utf8(target.to_vec()).expect("target UTF-8"))
+                .expect("target symbol should validate"),
+            repowitness_application::ScipRelationshipTraceDirection::Incoming,
+            repowitness_application::ScipRelationshipTraceDepth::try_new(1)
+                .expect("depth should validate"),
+            repowitness_application::ScipRelationshipTraceMaxEdges::try_new(4)
+                .expect("edges should validate"),
+            crate::sqlite::ScipRelationshipTraceReadLimits::try_new(4, 4, 1_048_576)
+                .expect("trace limits should validate"),
+            Arc::new(AtomicBool::new(false)),
+            deadline(),
+        )
+        .expect("caller trace should load");
+    let crate::ScipRelationshipTraceResult::Found(trace) = trace else {
+        panic!("enclosed target should have one caller");
+    };
+    assert_eq!(trace.edges().len(), 1);
+    assert_eq!(
+        trace.edges()[0].relationship().evidence(),
+        crate::ScipRelationshipEvidenceClass::EnclosedReference
+    );
+    reader.shutdown(deadline()).expect("reader should stop");
 }
 
 #[test]
@@ -929,6 +1092,21 @@ fn retention_sweeps_an_expired_scip_overlay_with_its_source_generation() {
             deadline(),
         )
         .expect("published historical view should accept exact overlay evidence");
+    let connection = Connection::open(directory.database()).expect("database should reopen");
+    connection
+        .execute(
+            "INSERT INTO scip_enclosed_reference_edges(
+                overlay_digest, document_ordinal, relationship_ordinal,
+                source_symbol, target_symbol, kinds
+             ) VALUES (?1, 0, 0, ?2, ?3, 1)",
+            params![
+                overlay_digest.as_bytes().as_slice(),
+                b"scip-rust pkg 1 Caller.".as_slice(),
+                b"scip-rust pkg 1 Target.".as_slice(),
+            ],
+        )
+        .expect("derived relationship should be insertable for retention coverage");
+    drop(connection);
     assert_eq!(
         store.apply_generation_retention(RetentionApplyRequest::new(
             policy.clone(),
@@ -958,19 +1136,21 @@ fn retention_sweeps_an_expired_scip_overlay_with_its_source_generation() {
     assert!(outcome.generation_count() >= 1);
 
     let connection = Connection::open(directory.database()).expect("database should reopen");
-    let remaining: (i64, i64, i64) = connection
+    let remaining: (i64, i64, i64, i64) = connection
         .query_row(
             "SELECT
                  (SELECT count(*) FROM scip_overlay_receipts
                   WHERE overlay_digest = ?1),
                  (SELECT count(*) FROM active_scip_overlays
                   WHERE overlay_digest = ?1),
+                 (SELECT count(*) FROM scip_enclosed_reference_edges
+                  WHERE overlay_digest = ?1),
                  (SELECT count(*) FROM retention_scip_overlay_garbage)",
             [overlay_digest.as_bytes().as_slice()],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
         .expect("retention result should be readable");
-    assert_eq!(remaining, (0, 0, 0));
+    assert_eq!(remaining, (0, 0, 0, 0));
     drop(connection);
     store.shutdown(deadline()).expect("store should stop");
 }

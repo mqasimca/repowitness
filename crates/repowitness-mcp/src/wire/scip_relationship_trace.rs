@@ -1,4 +1,4 @@
-//! Strict bounded producer-declared SCIP relationship-trace contract.
+//! Strict bounded SCIP relationship-trace contract.
 
 #![allow(
     missing_docs,
@@ -21,8 +21,10 @@ use super::{
     validate_timeout,
 };
 
-/// MCP tool name for bounded producer-declared SCIP relationship traversal.
+/// MCP tool name for bounded SCIP relationship traversal.
 pub const SCIP_RELATIONSHIP_TRACE_TOOL_NAME: &str = "scip_relationship_trace";
+/// Versioned JSON output schema for `scip_relationship_trace`.
+pub const SCIP_RELATIONSHIP_TRACE_SCHEMA_VERSION: u16 = 2;
 
 /// Version-1 wire input for `scip_relationship_trace`.
 #[derive(Deserialize, JsonSchema)]
@@ -38,7 +40,7 @@ pub struct ScipRelationshipTraceInput {
     pub direction: String,
     /// Inclusive breadth-first traversal depth, from one through four.
     pub max_depth: Option<u8>,
-    /// Maximum retained producer-declared relationship rows.
+    /// Maximum retained relationship rows.
     pub max_edges: Option<u16>,
     /// End-to-end operation deadline in milliseconds.
     pub timeout_ms: Option<u64>,
@@ -223,7 +225,7 @@ pub struct McpScipRelationshipTraceOverlay {
     pub relationships: u64,
 }
 
-/// One exact producer-declared relationship edge from a bounded trace.
+/// One exact relationship edge from a bounded trace.
 #[derive(Clone, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct McpScipRelationshipTraceEdge {
@@ -238,6 +240,8 @@ pub struct McpScipRelationshipTraceEdge {
     pub is_implementation: bool,
     pub is_type_definition: bool,
     pub is_definition: bool,
+    /// `producer_declared` or `enclosed_reference`.
+    pub evidence: String,
 }
 
 #[cfg(test)]

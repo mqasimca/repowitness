@@ -235,6 +235,23 @@ impl RepositoryPath {
         &self.bytes
     }
 
+    /// Returns a readable, deterministic display form without changing the
+    /// byte-preserving path identity used for persistence and lookup.
+    #[must_use]
+    pub fn display_text(&self) -> String {
+        let mut text = String::new();
+        for &byte in self.as_bytes() {
+            match byte {
+                b' '..=b'~' if byte != b'\\' => text.push(char::from(byte)),
+                _ => {
+                    use std::fmt::Write as _;
+                    let _ = write!(text, "\\x{byte:02X}");
+                }
+            }
+        }
+        text
+    }
+
     /// Returns the fixed-width byte count.
     #[must_use]
     pub const fn byte_count(&self) -> RepositoryPathByteCount {
@@ -586,6 +603,13 @@ mod tests {
         assert!(debug.contains("component_count"));
         assert!(!debug.contains("private"));
         assert!(!debug.contains("customer"));
+    }
+
+    #[test]
+    fn display_text_escapes_non_printable_non_ascii_and_backslash_bytes() {
+        let path = RepositoryPath::try_from_bytes(b"src\\x80/\n", GENEROUS)
+            .expect("valid byte-preserving path");
+        assert_eq!(path.display_text(), r"src\x5Cx80/\x0A");
     }
 
     #[test]

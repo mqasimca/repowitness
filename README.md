@@ -40,9 +40,11 @@ Useful read commands are `search`, `symbol-search`, `symbol-get`,
 `repository-topology`, `graph`, `context-build`, `diagnostics`, `verify`, and
 `memory-recall`. Use `repowitness <command> --help` for exact bounds.
 
-`onboard --root <repository>` is the explicit private-state shortcut. It uses
-a fast source-only index by default; add `--full` when graph evidence is
-needed. `watch`
+`onboard --root <repository>` is the explicit private-state shortcut. It builds
+the source index, then automatically imports Go SCIP relationships when the
+root has `go.mod` and `scip-go` is available. Use `--full` for graph evidence,
+`--no-scip` to skip Go enrichment, or `--scip-go <path>` to select the producer.
+`watch`
 keeps one repository current in the foreground; it never starts a daemon.
 
 Memory writes are explicit and local:
@@ -94,7 +96,9 @@ help and errors go to stderr.
 
 There is no daemon, personal-memory surface, or durable task surface. SCIP is
 available through explicit CLI import/producer commands and read-only MCP
-evidence tools; indexing and MCP startup never invoke external SCIP producers.
+evidence tools; ordinary indexing, watch mode, and MCP startup never invoke
+external SCIP producers. Onboarding may invoke `scip-go` after its source index
+is complete.
 Explicit connected workspaces are managed with
 `repowitness codex workspace create|list|remove`; they use the same shared
 catalog and remain read-only through MCP. The catalog is read-only by default;

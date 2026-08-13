@@ -10,7 +10,16 @@ struct ScipGoImportInvocation {
     import: ScipImportInvocation,
     scip_go: PathBuf,
     producer_timeout: std::time::Duration,
+    skip_implementations: bool,
+    skip_tests: bool,
 }
+
+enum ScipGoProductionError {
+    TemporaryOutput,
+    Producer,
+    Import(ScipImportOverlayError),
+}
+
 fn run_scip_go_import(
     args: impl Iterator<Item = OsString>,
     stdout: &mut impl Write,
@@ -38,23 +47,37 @@ fn run_scip_go_import(
             "error: scip-go-import requires a regular go.mod at --root\n",
         );
     }
-    let temporary_output = match TemporaryScipOutput::new() {
-        Ok(output) => output,
-        Err(()) => {
-            return emit_error(
-                stderr,
-                EXIT_SOFTWARE,
-                "error: SCIP producer temporary output could not be prepared\n",
-            );
+    match produce_and_import_scip_go(&invocation) {
+        Ok(result) => emit_scip_import_output(stdout, result),
+        Err(ScipGoProductionError::TemporaryOutput) => emit_error(
+            stderr,
+            EXIT_SOFTWARE,
+            "error: SCIP producer temporary output could not be prepared\n",
+        ),
+        Err(ScipGoProductionError::Producer) => emit_error(
+            stderr,
+            EXIT_SOFTWARE,
+            "error: scip-go SCIP production failed\n",
+        ),
+        Err(ScipGoProductionError::Import(ScipImportOverlayError::InvalidWorkspaceView)) => {
+            emit_error(stderr, EXIT_USAGE, "error: SCIP import workspace view is invalid\n")
         }
-    };
+        Err(ScipGoProductionError::Import(ScipImportOverlayError::Import(error))) => {
+            emit_scip_import_failure(stderr, &error)
+        }
+    }
+}
+
+fn produce_and_import_scip_go(
+    invocation: &ScipGoImportInvocation,
+) -> Result<repowitness_local::LocalScipOverlayImportResult, ScipGoProductionError> {
+    let temporary_output =
+        TemporaryScipOutput::new().map_err(|()| ScipGoProductionError::TemporaryOutput)?;
     let mut producer = std::process::Command::new(&invocation.scip_go);
     producer
         .arg("index")
         .arg("--output")
         .arg(temporary_output.path())
-        .arg("--skip-implementations")
-        .arg("--skip-tests")
         .arg("--quiet")
         .current_dir(&invocation.import.root)
         .env("GOENV", "off")
@@ -67,24 +90,30 @@ fn run_scip_go_import(
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
-    if run_scip_producer(producer, invocation.producer_timeout).is_err() {
-        return emit_error(
-            stderr,
-            EXIT_SOFTWARE,
-            "error: scip-go SCIP production failed\n",
-        );
+    if invocation.skip_implementations {
+        producer.arg("--skip-implementations");
     }
+    if invocation.skip_tests {
+        producer.arg("--skip-tests");
+    }
+    run_scip_producer(producer, invocation.producer_timeout)
+        .map_err(|()| ScipGoProductionError::Producer)?;
     let import = ScipImportInvocation {
         scip_file: temporary_output.path().to_owned(),
-        ..invocation.import
+        ..invocation.import.clone()
     };
-    match import_scip_overlay(&import) {
-        Ok(result) => emit_scip_import_output(stdout, result),
-        Err(ScipImportOverlayError::InvalidWorkspaceView) => {
-            emit_error(stderr, EXIT_USAGE, "error: SCIP import workspace view is invalid\n")
-        }
-        Err(ScipImportOverlayError::Import(error)) => emit_scip_import_failure(stderr, &error),
+    import_scip_overlay(&import).map_err(ScipGoProductionError::Import)
+}
+
+fn scip_go_producer_available(path: &Path) -> bool {
+    if path.is_absolute() || path.components().count() > 1 {
+        return path.is_file();
     }
+    env::var_os("PATH")
+        .into_iter()
+        .flat_map(|path| env::split_paths(&path).collect::<Vec<_>>())
+        .map(|directory| directory.join(path))
+        .any(|candidate| candidate.is_file())
 }
 
 fn scip_go_root_has_regular_go_mod(root: &Path) -> bool {
@@ -103,9 +132,21 @@ fn parse_scip_go_import_arguments(
     let mut scip_go = None;
     let mut producer_timeout = None;
     let mut import_timeout = None;
+    let mut skip_implementations = false;
+    let mut skip_tests = false;
     let mut index = 0_usize;
     while index < arguments.len() {
         let option = &arguments[index];
+        if option == OsStr::new("--skip-implementations") {
+            skip_implementations = true;
+            index += 1;
+            continue;
+        }
+        if option == OsStr::new("--skip-tests") {
+            skip_tests = true;
+            index += 1;
+            continue;
+        }
         let value = arguments
             .get(index + 1)
             .ok_or("error: scip-go-import option requires a value; use scip-go-import --help\n")?;
@@ -178,6 +219,8 @@ fn parse_scip_go_import_arguments(
         },
         scip_go: scip_go.unwrap_or_else(|| PathBuf::from("scip-go")),
         producer_timeout: producer_timeout.unwrap_or(DEFAULT_SCIP_GO_PRODUCER_TIMEOUT),
+        skip_implementations,
+        skip_tests,
     })
 }
 
@@ -317,5 +360,25 @@ mod scip_go_import_tests {
             invocation.producer_timeout,
             std::time::Duration::from_secs(120)
         );
+        assert!(!invocation.skip_implementations);
+        assert!(!invocation.skip_tests);
+    }
+
+    #[test]
+    fn parser_accepts_explicit_relationship_opt_outs() {
+        let arguments = [
+            OsString::from("--database"),
+            OsString::from("database.sqlite3"),
+            OsString::from("--root"),
+            OsString::from("repository"),
+            OsString::from("--repository-id"),
+            OsString::from(REPOSITORY_ID),
+            OsString::from("--skip-implementations"),
+            OsString::from("--skip-tests"),
+        ];
+        let invocation =
+            parse_scip_go_import_arguments(&arguments).expect("opt-outs should parse");
+        assert!(invocation.skip_implementations);
+        assert!(invocation.skip_tests);
     }
 }

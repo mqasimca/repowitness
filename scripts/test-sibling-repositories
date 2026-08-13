@@ -1243,7 +1243,7 @@ validate_change_review() {
         my %fields;
         while (my $line = <STDIN>) {
             chomp $line;
-            exit 1 if $line !~ /\A([a-z0-9_]+(?:\[[0-9]+\]\.(?:kind|path))?)=(.*)\z/;
+            exit 1 if $line !~ /\A([a-z0-9_]+(?:\[[0-9]+\]\.(?:kind|path|display_path))?)=(.*)\z/;
             exit 1 if exists $fields{$1};
             $fields{$1} = $2;
         }
@@ -1255,7 +1255,7 @@ validate_change_review() {
           || ($fields{base} // q{}) ne $expected_base
           || ($fields{worktree_git_state_sha256} // q{}) !~ /\A[0-9a-f]{64}\z/
           || ($fields{worktree_change_count} // q{}) !~ /\A[0-9]+\z/
-          || ($fields{index_worktree_alignment} // q{}) ne q{unverified}
+          || ($fields{index_worktree_alignment} // q{}) !~ /\A(?:verified|mismatch|unavailable)\z/
           || ($fields{verdict} // q{}) ne q{not_provided};
         if (($fields{indexed_context_availability} // q{}) eq q{available}) {
             exit 1 if ($fields{indexed_context_reason} // q{}) ne q{not_applicable}
@@ -1274,13 +1274,14 @@ validate_change_review() {
         }
         my @changes;
         for my $field (keys %fields) {
-            next if $field !~ /\Achange\[([0-9]+)\]\.(kind|path)\z/;
+            next if $field !~ /\Achange\[([0-9]+)\]\.(kind|path|display_path)\z/;
             $changes[$1]{$2} = $fields{$field};
         }
         exit 1 if @changes != $fields{worktree_change_count};
         for my $change (@changes) {
             exit 1 if ref($change) ne q{HASH}
               || !defined($change->{kind}) || !defined($change->{path})
+              || !defined($change->{display_path}) || $change->{display_path} eq q{}
               || $change->{kind} !~ /\A(?:added|modified|deleted|type_changed|untracked)\z/
               || $change->{path} !~ /\Arwp1:h:[0-9A-F]+\z/;
         }
@@ -1301,12 +1302,12 @@ validate_mcp_change_review() {
         for my $field (qw(schema_version change_manifest_profile base worktree_git_state_sha256 changes indexed_context_availability index_worktree_alignment verdict)) {
             exit 1 if !exists $receipt->{$field};
         }
-        exit 1 if ($receipt->{schema_version} // q{}) != 1
+        exit 1 if ($receipt->{schema_version} // q{}) != 2
           || ($receipt->{change_manifest_profile} // q{}) != 1
           || ($receipt->{base} // q{}) ne $expected_base
           || ($receipt->{worktree_git_state_sha256} // q{}) !~ /\A[0-9a-f]{64}\z/
           || ref($receipt->{changes}) ne q{ARRAY}
-          || ($receipt->{index_worktree_alignment} // q{}) ne q{unverified}
+          || ($receipt->{index_worktree_alignment} // q{}) !~ /\A(?:verified|mismatch|unavailable)\z/
           || ($receipt->{verdict} // q{}) ne q{not_provided};
         if (($receipt->{indexed_context_availability} // q{}) eq q{available}) {
             exit 1 if exists($receipt->{indexed_context_reason})
@@ -1325,6 +1326,7 @@ validate_mcp_change_review() {
         }
         for my $change (@{$receipt->{changes}}) {
             exit 1 if ref($change) ne q{HASH}
+              || ($change->{display_path} // q{}) eq q{}
               || ($change->{kind} // q{}) !~ /\A(?:added|modified|deleted|type_changed|untracked)\z/
               || ($change->{path} // q{}) !~ /\Arwp1:h:[0-9A-F]+\z/;
         }

@@ -398,7 +398,7 @@ fn resolved_index_configuration(
     )
 }
 
-fn configured_index_inputs(
+pub(crate) fn configured_index_inputs(
     limits: LocalRustIndexLimits,
     configuration: &ResolvedConfiguration,
 ) -> Result<(LocalRustIndexLimits, SourceLanguageSelection), LocalIndexError> {
@@ -593,6 +593,16 @@ fn phase0_local_source_snapshot_profile(
         analysis_schema: base.analysis_schema(),
         canonicalization_version: base.canonicalization_version(),
     }
+}
+
+pub(crate) fn local_source_snapshot_configuration(
+    resolved_configuration: ConfigurationDigest,
+) -> ConfigurationDigest {
+    phase0_local_source_snapshot_profile(
+        phase0_local_source_artifact_identities(),
+        resolved_configuration,
+    )
+    .configuration
 }
 
 fn update_length_prefixed(hasher: &mut Sha256, value: &[u8]) {

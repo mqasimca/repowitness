@@ -446,6 +446,27 @@ pub enum ScipRelationshipDirection {
     Incoming,
 }
 
+/// Evidence class for one relationship row.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ScipRelationshipEvidenceClass {
+    /// The producer declared the relationship in SCIP symbol information.
+    ProducerDeclared,
+    /// RepoWitness enclosed an exact SCIP reference occurrence in an indexed
+    /// function or method declaration.
+    EnclosedReference,
+}
+
+impl ScipRelationshipEvidenceClass {
+    /// Returns the stable receipt label.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ProducerDeclared => "producer_declared",
+            Self::EnclosedReference => "enclosed_reference",
+        }
+    }
+}
+
 /// One package-scoped validated cross-file SCIP relationship.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ScipRelationshipEvidence {
@@ -455,6 +476,7 @@ pub struct ScipRelationshipEvidence {
     source: ScipSymbol,
     target: ScipSymbol,
     kinds: ScipRelationshipKinds,
+    evidence: ScipRelationshipEvidenceClass,
 }
 
 impl ScipRelationshipEvidence {
@@ -462,13 +484,14 @@ impl ScipRelationshipEvidence {
         clippy::too_many_arguments,
         reason = "all exact evidence identity fields are required"
     )]
-    pub(crate) const fn new(
+    pub(crate) const fn with_evidence(
         path: RepositoryPath,
         content: SourceContentDigest,
         direction: ScipRelationshipDirection,
         source: ScipSymbol,
         target: ScipSymbol,
         kinds: ScipRelationshipKinds,
+        evidence: ScipRelationshipEvidenceClass,
     ) -> Self {
         Self {
             path,
@@ -477,6 +500,7 @@ impl ScipRelationshipEvidence {
             source,
             target,
             kinds,
+            evidence,
         }
     }
 
@@ -509,6 +533,13 @@ impl ScipRelationshipEvidence {
     /// Returns the explicitly declared relationship flags.
     pub const fn kinds(&self) -> ScipRelationshipKinds {
         self.kinds
+    }
+
+    /// Returns whether the edge was producer-declared or derived from an
+    /// exact enclosed reference occurrence.
+    #[must_use]
+    pub const fn evidence(&self) -> ScipRelationshipEvidenceClass {
+        self.evidence
     }
 }
 
@@ -669,7 +700,7 @@ impl fmt::Display for ScipRelationshipTraceReadLimitsError {
 
 impl Error for ScipRelationshipTraceReadLimitsError {}
 
-/// One immutable producer-declared relationship retained by a bounded trace.
+/// One immutable relationship-evidence edge retained by a bounded trace.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ScipRelationshipTraceEdge {
     document_ordinal: u32,
@@ -712,14 +743,14 @@ impl ScipRelationshipTraceEdge {
         self.depth
     }
 
-    /// Returns the exact producer-declared relationship evidence.
+    /// Returns the exact relationship evidence.
     #[must_use]
     pub const fn relationship(&self) -> &ScipRelationshipEvidence {
         &self.relationship
     }
 }
 
-/// Complete bounded producer-declared relationship traversal evidence.
+/// Complete bounded relationship-evidence traversal result.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ScipRelationshipTrace {
     overlay: ScipOverlaySummary,
@@ -847,7 +878,7 @@ impl ScipRelationshipTrace {
     }
 }
 
-/// An overlay exists but no producer-declared relationship starts the requested trace.
+/// An overlay exists but no relationship-evidence edge starts the requested trace.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ScipRelationshipTraceNoRelationships {
     overlay: ScipOverlaySummary,
@@ -879,14 +910,14 @@ impl ScipRelationshipTraceNoRelationships {
     }
 }
 
-/// Categorical result of one bounded producer-declared relationship traversal.
+/// Categorical result of one bounded relationship-evidence traversal.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ScipRelationshipTraceResult {
     /// No exact complete overlay is selected for the requested pinned view/slot.
     NotProduced,
     /// An exact overlay exists but no relationship starts from the supplied root and scope.
     NoRelationships(ScipRelationshipTraceNoRelationships),
-    /// Retained producer-declared relationship edges with explicit coverage.
+    /// Retained relationship-evidence edges with explicit coverage.
     Found(ScipRelationshipTrace),
 }
 

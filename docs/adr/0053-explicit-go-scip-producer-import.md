@@ -33,12 +33,11 @@ Add the direct CLI-only `scip-go-import` command.
 - The user explicitly supplies the database and repository root. They select
   either an ordinary indexed repository identity or an explicit connected
   workspace and source slot, and may select an exact workspace view.
-- It invokes only `scip-go index --output <private-temporary-file>
-  --skip-implementations --skip-tests` with the supplied root as its working
-  directory. The executable defaults to `scip-go` and can be selected
-  explicitly. The initial integration prioritizes bounded exact non-test
-  symbol/occurrence evidence; it does not claim Go implementation relationships
-  or test-file precision until they can be produced reliably.
+- It invokes only `scip-go index --output <private-temporary-file>` with the
+  supplied root as its working directory. The executable defaults to `scip-go`
+  and can be selected explicitly. Full implementation and test relationships
+  are included by default; `--skip-implementations` and `--skip-tests` are
+  explicit opt-outs for a smaller/faster producer run.
 - It is initially limited to standard, single-module projects whose `go.mod`
   is at the supplied root. Rootless and nested-module-only worktrees are an
   explicit unavailable compatibility case, not a partial-overlay claim.
@@ -67,8 +66,9 @@ Add the direct CLI-only `scip-go-import` command.
 - The shared hostile-artifact decoder admits at most 64 MiB total and 2 MiB
   per SCIP document. The latter bound covers observed `scip-go` source files
   up to 1.55 MiB while retaining a hard cap for every retained raw payload.
-- Normal `index`, `onboard`, and `watch` never run a producer. The read-only
-  MCP server never exposes this operation. No general producer registry,
+- Normal `index` and `watch` never run a producer. Onboarding may run this
+  producer after its source generation completes; `--no-scip` disables that
+  enrichment. The read-only MCP server never exposes this operation. No general producer registry,
   package-manager execution, downloaded tool, background process, or another
   language adapter is introduced.
 

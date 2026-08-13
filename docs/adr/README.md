@@ -106,6 +106,8 @@ passed, so maintainers accepted ADR-0018 and then ADR-0021.
 | [0060](0060-bounded-cross-repository-discovery.md) | Add bounded cross-repository FTI discovery over the local catalog | Proposed |
 | [0061](0061-live-local-mcp-catalog-reload.md) | Reload the bounded local MCP catalog at request boundaries | Accepted |
 | [0062](0062-catalog-memory-management.md) | Enable explicit memory management in catalog MCP | Accepted |
+| [0063](0063-bounded-multilanguage-relationship-evidence.md) | Add bounded multi-language relationship evidence | Proposed |
+| [0064](0064-onboard-go-scip-enrichment.md) | Auto-import Go SCIP during explicit onboarding | Proposed |
 
 Use [0000-template.md](0000-template.md) for a new decision.
 

@@ -12,16 +12,18 @@ use cap_std::{
 };
 
 const ONBOARD_HELP: &str = concat!(
-    "Fast-index one explicit repository into a private local state directory.\n\n",
+    "Index one explicit repository into a private local state directory.\n\n",
     "Usage:\n",
     "  repowitness onboard --root <path> [--state-dir <path>] [--repository-id <id>]\n",
-    "      [--full]\n\n",
+    "      [--full] [--no-scip] [--scip-go <path>]\n\n",
     "The command never searches parent or sibling repositories or writes repository\n",
-    "configuration, and it builds no native graph by default. If\n",
-    "--repository-id is omitted, it\n",
-    "uses operating-system secure randomness. The database is stored under the\n",
+    "configuration. It builds no native graph by default, then automatically adds\n",
+    "Go SCIP relationships when a root go.mod and scip-go are available.\n",
+    "If --repository-id is omitted, it uses operating-system secure randomness.\n",
+    "The database is stored under the\n",
     "documented private-state convention named by that opaque identity. Use\n",
-    "--full when graph reads are needed; normal `index` is always full.\n",
+    "--full when graph reads are needed, --no-scip to skip Go enrichment, or\n",
+    "--scip-go to select the producer. Normal `index` remains source-only.\n",
 );
 
 const ONBOARD_STATE_PRODUCT_DIRECTORY: &str = "repowitness";
@@ -38,6 +40,16 @@ struct OnboardInvocation {
     state_dir: Option<PathBuf>,
     repository_identity: Option<String>,
     build_graph: bool,
+    no_scip: bool,
+    scip_go: PathBuf,
+}
+
+#[derive(Clone, Copy)]
+enum OnboardScipStatus {
+    NotApplicable,
+    Skipped(&'static str),
+    Imported(repowitness_local::LocalScipOverlayImportResult),
+    Failed(&'static str),
 }
 
 trait OnboardStateDirectory {
@@ -144,8 +156,8 @@ fn run_onboard(
         Ok(invocation) => invocation,
         Err(message) => return emit_error(stderr, EXIT_USAGE, message),
     };
-    let repository_identity = match invocation.repository_identity {
-        Some(identity) => identity,
+    let repository_identity = match &invocation.repository_identity {
+        Some(identity) => identity.clone(),
         None => match identity_generator.generate(LocalIdentityKind::Repository) {
             Ok(identity) => identity,
             Err(_) => {
@@ -192,6 +204,18 @@ fn run_onboard(
         Ok(report) => report,
         Err(_) => return emit_error(stderr, EXIT_SOFTWARE, "error: onboarding indexing failed\n"),
     };
+    let scip_status = onboard_scip_status(
+        &invocation,
+        &prepared_database.database,
+        &repository_identity,
+        &index_report,
+    );
+    if let OnboardScipStatus::Failed(reason) = scip_status {
+        let _ = writeln!(
+            stderr,
+            "warning: source index completed but automatic Go SCIP enrichment failed (reason={reason})"
+        );
+    }
     if state_directory
         .register_catalog(
             &invocation.root,
@@ -203,7 +227,67 @@ fn run_onboard(
     {
         return emit_error(stderr, EXIT_SOFTWARE, "error: onboarding catalog registration failed\n");
     }
-    emit_onboard_report(stdout, &repository_identity, index_report, build_graph)
+    emit_onboard_report(
+        stdout,
+        &repository_identity,
+        index_report,
+        build_graph,
+        scip_status,
+    )
+}
+
+fn onboard_scip_status(
+    invocation: &OnboardInvocation,
+    database: &Path,
+    repository_identity: &str,
+    report: &CliIndexReport,
+) -> OnboardScipStatus {
+    if report.indexed_go_files == 0 {
+        return OnboardScipStatus::NotApplicable;
+    }
+    if invocation.no_scip {
+        return OnboardScipStatus::Skipped("disabled");
+    }
+    if !scip_go_root_has_regular_go_mod(&invocation.root) {
+        return OnboardScipStatus::Skipped("root_module_required");
+    }
+    if !scip_go_producer_available(&invocation.scip_go) {
+        return OnboardScipStatus::Skipped("producer_unavailable");
+    }
+    let Ok((connected_workspace, source_slot)) = resolve_scip_go_import_workspace(
+        Some(repository_identity.to_owned()),
+        None,
+        None,
+    ) else {
+        return OnboardScipStatus::Failed("workspace_view_invalid");
+    };
+    let invocation = ScipGoImportInvocation {
+        import: ScipImportInvocation {
+            database: database.to_owned(),
+            root: invocation.root.clone(),
+            scip_file: PathBuf::new(),
+            connected_workspace,
+            source_slot,
+            workspace_view: None,
+            timeout: DEFAULT_SCIP_GO_IMPORT_TIMEOUT,
+        },
+        scip_go: invocation.scip_go.clone(),
+        producer_timeout: DEFAULT_SCIP_GO_PRODUCER_TIMEOUT,
+        skip_implementations: false,
+        skip_tests: false,
+    };
+    match produce_and_import_scip_go(&invocation) {
+        Ok(result) => OnboardScipStatus::Imported(result),
+        Err(ScipGoProductionError::TemporaryOutput | ScipGoProductionError::Producer) => {
+            OnboardScipStatus::Failed("producer_failed")
+        }
+        Err(ScipGoProductionError::Import(ScipImportOverlayError::InvalidWorkspaceView)) => {
+            OnboardScipStatus::Failed("workspace_view_invalid")
+        }
+        Err(ScipGoProductionError::Import(ScipImportOverlayError::Import(_))) => {
+            OnboardScipStatus::Failed("import_failed")
+        }
+    }
 }
 
 fn parse_onboard_arguments(arguments: &[OsString]) -> Result<OnboardInvocation, &'static str> {
@@ -211,6 +295,8 @@ fn parse_onboard_arguments(arguments: &[OsString]) -> Result<OnboardInvocation, 
     let mut state_dir = None;
     let mut repository_identity = None;
     let mut build_graph = false;
+    let mut no_scip = false;
+    let mut scip_go = None;
     let mut index = 0_usize;
     while index < arguments.len() {
         let option = &arguments[index];
@@ -220,6 +306,13 @@ fn parse_onboard_arguments(arguments: &[OsString]) -> Result<OnboardInvocation, 
                 return Err("error: onboard accepts --full only once\n");
             }
             build_graph = true;
+            continue;
+        }
+        if option == OsStr::new("--no-scip") {
+            if no_scip {
+                return Err("error: onboard accepts --no-scip only once\n");
+            }
+            no_scip = true;
             continue;
         }
         let value = arguments
@@ -241,8 +334,12 @@ fn parse_onboard_arguments(arguments: &[OsString]) -> Result<OnboardInvocation, 
             if repository_identity.replace(identity.to_owned()).is_some() {
                 return Err("error: onboard accepts --repository-id only once\n");
             }
+        } else if option == OsStr::new("--scip-go") {
+            if value.is_empty() || scip_go.replace(PathBuf::from(value)).is_some() {
+                return Err("error: onboard accepts one non-empty --scip-go\n");
+            }
         } else {
-            return Err("error: onboard accepts only --root, --state-dir, --repository-id, and --full\n");
+            return Err("error: onboard accepts only --root, --state-dir, --repository-id, --full, --no-scip, and --scip-go\n");
         }
     }
     let root = root.ok_or("error: onboard requires --root; use onboard --help\n")?;
@@ -252,7 +349,14 @@ fn parse_onboard_arguments(arguments: &[OsString]) -> Result<OnboardInvocation, 
     if state_dir.as_ref().is_some_and(|path| path.as_os_str().is_empty()) {
         return Err("error: onboard state directory must not be empty\n");
     }
-    Ok(OnboardInvocation { root, state_dir, repository_identity, build_graph })
+    Ok(OnboardInvocation {
+        root,
+        state_dir,
+        repository_identity,
+        build_graph,
+        no_scip,
+        scip_go: scip_go.unwrap_or_else(|| PathBuf::from("scip-go")),
+    })
 }
 
 fn default_onboard_state_root() -> Result<PathBuf, ()> {
@@ -416,6 +520,7 @@ fn emit_onboard_report(
     repository_identity: &str,
     report: CliIndexReport,
     build_graph: bool,
+    scip_status: OnboardScipStatus,
 ) -> u8 {
     if !index_report_is_consistent(&report) {
         return EXIT_SOFTWARE;
@@ -439,6 +544,39 @@ fn emit_onboard_report(
         .and_then(|()| writeln!(writer, "generation_activated=true"))
         .and_then(|()| writeln!(writer, "generation={}", report.generation))
         .and_then(|()| writeln!(writer, "source_epoch={}", report.source_epoch))
-        .and_then(|()| writeln!(writer, "repository_paths={}", report.discovered_paths));
+        .and_then(|()| writeln!(writer, "repository_paths={}", report.discovered_paths))
+        .and_then(|()| emit_onboard_scip_report(writer, scip_status));
     if result.is_ok() { EXIT_SUCCESS } else { EXIT_IO }
+}
+
+fn emit_onboard_scip_report(
+    writer: &mut impl Write,
+    status: OnboardScipStatus,
+) -> std::io::Result<()> {
+    match status {
+        OnboardScipStatus::NotApplicable => {
+            writeln!(writer, "scip_status=not_applicable")?;
+            writeln!(writer, "scip_reason=no_go_sources")
+        }
+        OnboardScipStatus::Skipped(reason) => {
+            writeln!(writer, "scip_status=skipped")?;
+            writeln!(writer, "scip_reason={reason}")
+        }
+        OnboardScipStatus::Failed(reason) => {
+            writeln!(writer, "scip_status=failed")?;
+            writeln!(writer, "scip_reason={reason}")
+        }
+        OnboardScipStatus::Imported(result) => {
+            let overlay = result.overlay();
+            writeln!(writer, "scip_status=imported")?;
+            writeln!(writer, "scip_documents={}", overlay.documents())?;
+            writeln!(writer, "scip_occurrences={}", overlay.occurrences())?;
+            writeln!(writer, "scip_relationships={}", overlay.relationships())?;
+            writeln!(
+                writer,
+                "scip_ignored_external_documents={}",
+                result.ignored_external_documents()
+            )
+        }
+    }
 }

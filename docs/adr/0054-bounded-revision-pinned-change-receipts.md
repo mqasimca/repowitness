@@ -31,7 +31,9 @@ The V1 receipt binds:
 2. one opaque current-worktree Git-state digest captured both before and after
    the comparison and context attempt; and
 3. either a separately pinned Phase 0 indexed context pack or the categorical
-   `stale_source` absence of that pack.
+   `stale_source` absence of that pack; and
+4. a categorical `verified`, `mismatch`, or `unavailable` comparison between
+   the active indexed source identity and the fenced worktree.
 
 The local adapter performs a final source fence after collecting the comparison
 and any generation-pinned context. A changing worktree or comparison basis
@@ -40,11 +42,13 @@ selected for context no longer has matching on-disk bytes, V1 returns the
 otherwise complete fenced manifest with context explicitly unavailable; it
 never inserts stale declaration text or silently retargets a symbol.
 
-V1 uses a full base object ID and current worktree comparison. It does not
+The schema-2 receipt uses a full base object ID and current worktree comparison. It does not
 claim branch ancestry, merge-base selection, hunk-level declaration impact,
 semantic rename/correspondence, runtime behavior, test execution, review
-approval, merge eligibility, or that an independently indexed generation
-matches the current worktree. Renames are disabled in the V1 diff profile, so
+approval, or merge eligibility. `verified` means the indexed source identity
+and fenced source manifest match; `mismatch` means they do not; `unavailable`
+means the comparison could not be completed. Renames are disabled in the
+current diff profile, so
 each path remains an independent change-manifest observation.
 
 The receipt is deterministic and carries a digest suitable for an external

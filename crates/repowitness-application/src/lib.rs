@@ -73,7 +73,8 @@ pub use canonical_digest::{
 };
 pub use change_receipt::{
     CHANGE_MANIFEST_PROFILE_VERSION, ChangeKind, ChangeManifest, ChangeManifestEntry,
-    ChangeManifestError, ChangeReviewReceipt, IndexedContext, IndexedContextUnavailableReason,
+    ChangeManifestError, ChangeReviewReceipt, IndexWorktreeAlignment, IndexedContext,
+    IndexedContextUnavailableReason,
 };
 pub use code_graph_query::{
     CODE_GRAPH_QUERY_PROFILE_VERSION, CodeGraphQueryError, CodeGraphQueryOperation,

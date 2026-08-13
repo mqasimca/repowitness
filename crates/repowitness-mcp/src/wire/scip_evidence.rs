@@ -19,6 +19,9 @@ use super::{
     validate_timeout,
 };
 
+/// Versioned JSON output schema for `scip_evidence`.
+pub const SCIP_EVIDENCE_SCHEMA_VERSION: u16 = 2;
+
 /// Version-1 wire input for `scip_evidence`.
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -188,6 +191,8 @@ pub struct McpScipRelationship {
     pub is_implementation: bool,
     pub is_type_definition: bool,
     pub is_definition: bool,
+    /// `producer_declared` or `enclosed_reference`.
+    pub evidence: String,
 }
 
 #[cfg(test)]

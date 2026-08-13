@@ -105,13 +105,13 @@ pub use repository_topology::{
     RepositoryTopologyServiceRequest,
 };
 pub use scip_evidence::{
-    McpScipOccurrence, McpScipOverlay, McpScipRelationship, ScipEvidenceInput, ScipEvidenceOutput,
-    ScipEvidenceServiceRequest,
+    McpScipOccurrence, McpScipOverlay, McpScipRelationship, SCIP_EVIDENCE_SCHEMA_VERSION,
+    ScipEvidenceInput, ScipEvidenceOutput, ScipEvidenceServiceRequest,
 };
 pub use scip_relationship_trace::{
     McpScipRelationshipTraceEdge, McpScipRelationshipTraceOverlay,
-    SCIP_RELATIONSHIP_TRACE_TOOL_NAME, ScipRelationshipTraceInput, ScipRelationshipTraceOutput,
-    ScipRelationshipTraceServiceRequest,
+    SCIP_RELATIONSHIP_TRACE_SCHEMA_VERSION, SCIP_RELATIONSHIP_TRACE_TOOL_NAME,
+    ScipRelationshipTraceInput, ScipRelationshipTraceOutput, ScipRelationshipTraceServiceRequest,
 };
 pub use scip_symbol_resolve::{
     SCIP_SYMBOL_RESOLVE_TOOL_NAME, ScipSymbolResolveInput, ScipSymbolResolveOutput,
@@ -528,7 +528,7 @@ pub trait RepositoryService: Send + Sync + 'static {
         Err(RepositoryServiceError::ScipEvidence)
     }
 
-    /// Traces bounded producer-declared SCIP relationships from one exact symbol.
+    /// Traces bounded producer-declared and exact enclosed-reference SCIP relationships from one exact symbol.
     fn scip_relationship_trace(
         &self,
         _request: ScipRelationshipTraceServiceRequest,

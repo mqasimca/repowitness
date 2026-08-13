@@ -128,7 +128,11 @@ fn emit_change_review_receipt(writer: &mut impl Write, receipt: &LocalChangeRevi
             let _ = writeln!(output, "indexed_context_omissions=not_provided");
         }
     }
-    let _ = writeln!(output, "index_worktree_alignment=unverified");
+    let _ = writeln!(
+        output,
+        "index_worktree_alignment={}",
+        receipt.index_worktree_alignment().as_str()
+    );
     let _ = writeln!(output, "verdict=not_provided");
     for (ordinal, entry) in receipt.manifest().entries().iter().enumerate() {
         let Ok(path) = RepositoryPathTextV1::encode(entry.path(), PATH_TEXT_LIMIT) else {
@@ -136,6 +140,7 @@ fn emit_change_review_receipt(writer: &mut impl Write, receipt: &LocalChangeRevi
         };
         let _ = writeln!(output, "change[{ordinal}].kind={}", entry.kind().as_str());
         let _ = writeln!(output, "change[{ordinal}].path={}", path.as_str());
+        let _ = writeln!(output, "change[{ordinal}].display_path={}", entry.path().display_text());
         if output.len() > MAX_CLI_CHANGE_REVIEW_OUTPUT_BYTES {
             return EXIT_SOFTWARE;
         }

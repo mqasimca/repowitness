@@ -26,8 +26,9 @@ operator-supplied; it is never inferred from sibling repositories.
 ### 1. Fast and predictable startup
 
 - keep indexing work out of MCP startup where possible;
-- use source-only onboarding for the common development path and explicit full
-  indexing when graph evidence is needed;
+- complete source-only indexing before optional Go SCIP enrichment during
+  onboarding; use `--no-scip` for source-only onboarding and `--full` when graph
+  evidence is needed;
 - reuse artifacts only when every semantics-affecting input matches;
 - recreate disposable development indexes after schema changes;
 - keep `--help` short, accurate, and command-driven.
@@ -43,6 +44,11 @@ operator-supplied; it is never inferred from sibling repositories.
 
 - maintain literal search, exact symbol retrieval, syntax observations,
   diagnostics, graph reads, memory recall, context compilation, and verify;
+- use explicit SCIP overlays for Go interface/caller/callee evidence and
+  bounded impact traversal, while keeping unresolved and partial coverage
+  categorical;
+- expose canonical plus readable paths in review receipts and use topology for
+  bounded operational-file inventory;
 - improve output clarity and latency with measurements from synthetic fixtures;
 - do not add ranking infrastructure until deterministic retrieval is shown
   insufficient.

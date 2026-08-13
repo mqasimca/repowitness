@@ -45,7 +45,7 @@ fn mcp_scip_evidence_output(
         ConnectedWorkspaceIdTextV1::encode(result.connected_workspace()).into_string();
     match result.into_output() {
         ScipSymbolEvidenceResult::NotProduced => Ok(ScipEvidenceOutput {
-            schema_version: 1,
+            schema_version: SCIP_EVIDENCE_SCHEMA_VERSION,
             connected_workspace,
             workspace_view,
             source_slot,
@@ -59,7 +59,7 @@ fn mcp_scip_evidence_output(
             relationships: Vec::new(),
         }),
         ScipSymbolEvidenceResult::NoMatch(overlay) => Ok(ScipEvidenceOutput {
-            schema_version: 1,
+            schema_version: SCIP_EVIDENCE_SCHEMA_VERSION,
             connected_workspace,
             workspace_view,
             source_slot,
@@ -89,7 +89,7 @@ fn mcp_scip_evidence_output(
                 .map(mcp_scip_relationship)
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(ScipEvidenceOutput {
-                schema_version: 1,
+                schema_version: SCIP_EVIDENCE_SCHEMA_VERSION,
                 connected_workspace,
                 workspace_view,
                 source_slot,
@@ -162,5 +162,6 @@ fn mcp_scip_relationship(
         is_implementation: kinds.is_implementation(),
         is_type_definition: kinds.is_type_definition(),
         is_definition: kinds.is_definition(),
+        evidence: relationship.evidence().as_str().to_owned(),
     })
 }

@@ -24,6 +24,10 @@ retains atomic source facts, raw syntax sites, and repository topology, but
 skips Rust graph
 analysis, resolution, candidate persistence, and graph staging.
 
+This source-only profile does not prohibit the separate Go SCIP enrichment
+step defined by ADR-0064; that step adds a precision overlay after the source
+generation and does not build the native Rust graph.
+
 Explicit normal `index` operations continue to build the complete graph. This
 keeps graph production opt-in at the expensive boundary without adding a new
 storage backend, background service, or compatibility migration.

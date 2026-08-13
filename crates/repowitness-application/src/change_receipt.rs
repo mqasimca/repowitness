@@ -196,6 +196,29 @@ pub enum IndexedContextUnavailableReason {
     StaleSource,
 }
 
+/// Categorical relationship between the reviewed worktree and active index.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IndexWorktreeAlignment {
+    /// The active indexed source identity matches the reviewed worktree.
+    Verified,
+    /// The active indexed source identity does not match the reviewed worktree.
+    Mismatch,
+    /// The comparison could not be completed from the available local evidence.
+    Unavailable,
+}
+
+impl IndexWorktreeAlignment {
+    /// Returns the stable receipt label.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Verified => "verified",
+            Self::Mismatch => "mismatch",
+            Self::Unavailable => "unavailable",
+        }
+    }
+}
+
 impl IndexedContextUnavailableReason {
     /// Returns the stable receipt label.
     #[must_use]
@@ -215,6 +238,7 @@ pub struct ChangeReviewReceipt<G, E> {
     worktree_git_state: GitStateDigest,
     manifest: ChangeManifest,
     indexed_context: IndexedContext<G, E>,
+    index_worktree_alignment: IndexWorktreeAlignment,
 }
 
 impl<G, E> ChangeReviewReceipt<G, E> {
@@ -224,11 +248,13 @@ impl<G, E> ChangeReviewReceipt<G, E> {
         worktree_git_state: GitStateDigest,
         manifest: ChangeManifest,
         indexed_context: ContextBuildResult<G, E>,
+        index_worktree_alignment: IndexWorktreeAlignment,
     ) -> Self {
         Self {
             worktree_git_state,
             manifest,
             indexed_context: IndexedContext::Available(Box::new(indexed_context)),
+            index_worktree_alignment,
         }
     }
 
@@ -238,11 +264,13 @@ impl<G, E> ChangeReviewReceipt<G, E> {
         worktree_git_state: GitStateDigest,
         manifest: ChangeManifest,
         reason: IndexedContextUnavailableReason,
+        index_worktree_alignment: IndexWorktreeAlignment,
     ) -> Self {
         Self {
             worktree_git_state,
             manifest,
             indexed_context: IndexedContext::Unavailable { reason },
+            index_worktree_alignment,
         }
     }
 
@@ -263,6 +291,12 @@ impl<G, E> ChangeReviewReceipt<G, E> {
     pub const fn indexed_context(&self) -> &IndexedContext<G, E> {
         &self.indexed_context
     }
+
+    /// Returns the categorical index/worktree relationship.
+    #[must_use]
+    pub const fn index_worktree_alignment(&self) -> IndexWorktreeAlignment {
+        self.index_worktree_alignment
+    }
 }
 
 impl<G: fmt::Debug, E: fmt::Debug> fmt::Debug for ChangeReviewReceipt<G, E> {
@@ -272,6 +306,7 @@ impl<G: fmt::Debug, E: fmt::Debug> fmt::Debug for ChangeReviewReceipt<G, E> {
             .field("worktree_git_state", &self.worktree_git_state)
             .field("manifest", &self.manifest)
             .field("indexed_context", &self.indexed_context)
+            .field("index_worktree_alignment", &self.index_worktree_alignment)
             .finish()
     }
 }

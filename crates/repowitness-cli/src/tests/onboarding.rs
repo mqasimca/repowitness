@@ -121,7 +121,7 @@ fn onboard_uses_one_explicit_root_and_generated_identity_without_leaking_paths()
     assert_eq!(
         stdout,
         format!(
-            "status=ok\noperation=onboard\nrepository_id={REPOSITORY_ID}\nindex_profile=source-only\nstate_directory_convention=repowitness/repositories/<repository-id>/index.sqlite3\ngeneration_activated=true\ngeneration=3\nsource_epoch=0\nrepository_paths=8\n"
+            "status=ok\noperation=onboard\nrepository_id={REPOSITORY_ID}\nindex_profile=source-only\nstate_directory_convention=repowitness/repositories/<repository-id>/index.sqlite3\ngeneration_activated=true\ngeneration=3\nsource_epoch=0\nrepository_paths=8\nscip_status=skipped\nscip_reason=root_module_required\n"
         )
     );
     assert!(stderr.is_empty());
@@ -203,6 +203,21 @@ fn full_onboarding_explicitly_requests_graph_indexing() {
     assert!(stderr.is_empty());
     assert!(stdout.contains("index_profile=full\n"));
     assert_eq!(indexer.build_graph.get(), Some(true));
+}
+
+#[test]
+fn onboarding_parses_the_scip_opt_out_and_producer_override() {
+    let invocation = parse_onboard_arguments(&[
+        OsString::from("--root"),
+        OsString::from("/private/repository"),
+        OsString::from("--no-scip"),
+        OsString::from("--scip-go"),
+        OsString::from("/private/bin/scip-go"),
+    ])
+    .expect("onboarding SCIP options should parse");
+
+    assert!(invocation.no_scip);
+    assert_eq!(invocation.scip_go, PathBuf::from("/private/bin/scip-go"));
 }
 
 #[test]

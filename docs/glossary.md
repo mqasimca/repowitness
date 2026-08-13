@@ -124,7 +124,7 @@ User-scoped memory stored outside the repository in a local, optionally encrypte
 
 A stable, compact RepoWitness MCP operation. The current local stdio server
 implements the read-only `architecture_map`, `architecture_overview`, `repository_topology`, `code_graph_query`, `context_build`, `code_search`, `locate_relevant_paths`, `symbol_search`, `diagnostics`,
-`memory_recall`, `outbound_sites`, `syntax_site_search`, `scip_evidence`, `scip_relationship_trace`, `scip_symbol_resolve`, and `symbol_get` tools by default. `repository_topology` is a path-only inventory, `scip_relationship_trace` is bounded traversal over producer-declared overlay rows, and `code_graph_query` is a finite typed operation envelope, not arbitrary graph query execution. It adds `memory_manage`
+`memory_recall`, `outbound_sites`, `syntax_site_search`, `scip_evidence`, `scip_relationship_trace`, `scip_symbol_resolve`, and `symbol_get` tools by default. `repository_topology` is a path-only inventory, `scip_relationship_trace` is bounded traversal over producer-declared and exact enclosed-reference overlay rows, and `code_graph_query` is a finite typed operation envelope, not arbitrary graph query execution. It adds `memory_manage`
 only when the operator explicitly enables mutation with one fixed local actor.
 
 ### Compatibility alias

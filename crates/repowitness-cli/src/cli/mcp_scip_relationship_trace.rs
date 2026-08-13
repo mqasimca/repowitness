@@ -72,7 +72,7 @@ fn mcp_scip_relationship_trace_output(
     let direction = mcp_scip_relationship_trace_direction(requested_direction).to_owned();
     match result.into_output() {
         ScipRelationshipTraceResult::NotProduced => Ok(ScipRelationshipTraceOutput {
-            schema_version: 1,
+            schema_version: SCIP_RELATIONSHIP_TRACE_SCHEMA_VERSION,
             connected_workspace,
             workspace_view,
             source_slot,
@@ -102,7 +102,7 @@ fn mcp_scip_relationship_trace_output(
                 return Err("SCIP relationship trace source slot is inconsistent".to_owned());
             }
             Ok(ScipRelationshipTraceOutput {
-                schema_version: 1,
+                schema_version: SCIP_RELATIONSHIP_TRACE_SCHEMA_VERSION,
                 connected_workspace,
                 workspace_view,
                 source_slot,
@@ -149,7 +149,7 @@ fn mcp_scip_relationship_trace_output(
                 trace.output_limit_reached(),
             );
             Ok(ScipRelationshipTraceOutput {
-                schema_version: 1,
+                schema_version: SCIP_RELATIONSHIP_TRACE_SCHEMA_VERSION,
                 connected_workspace,
                 workspace_view,
                 source_slot,
@@ -237,5 +237,6 @@ fn mcp_scip_relationship_trace_edge(
         is_implementation: kinds.is_implementation(),
         is_type_definition: kinds.is_type_definition(),
         is_definition: kinds.is_definition(),
+        evidence: relationship.evidence().as_str().to_owned(),
     })
 }

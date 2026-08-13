@@ -1,5 +1,5 @@
 pub(super) const APPLICATION_ID: i64 = 0x5257_5031;
-pub(super) const SCHEMA_VERSION: i64 = 15;
+pub(super) const SCHEMA_VERSION: i64 = 16;
 pub(super) const MIGRATION_1_NAME: &str = "phase0_design_partner_baseline";
 pub(super) const MIGRATION_1: &str = concat!(
     include_str!("schema/baseline_1_core.sql"),
@@ -42,6 +42,9 @@ pub(super) const MIGRATION_14: &str =
 pub(super) const MIGRATION_15_NAME: &str = "unified_engineering_memory_storage";
 pub(super) const MIGRATION_15: &str =
     include_str!("migrations/0015_unify_engineering_memory_storage.sql");
+pub(super) const MIGRATION_16_NAME: &str = "scip_enclosed_reference_edges";
+pub(super) const MIGRATION_16: &str =
+    include_str!("migrations/0016_scip_enclosed_reference_edges.sql");
 
 pub(super) const RECREATE_GENERATION_SEARCH: &str = r#"
 DROP TABLE IF EXISTS generation_search;

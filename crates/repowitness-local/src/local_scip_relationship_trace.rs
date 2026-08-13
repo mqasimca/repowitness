@@ -1,4 +1,4 @@
-//! One-shot local composition for bounded producer-declared SCIP relationship tracing.
+//! One-shot local composition for bounded SCIP relationship tracing.
 
 use std::{
     error::Error,

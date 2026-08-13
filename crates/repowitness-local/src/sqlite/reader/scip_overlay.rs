@@ -8,7 +8,8 @@ use repowitness_domain::{
 
 use crate::sqlite::{
     ScipEvidenceReadLimits, ScipOccurrenceEvidence, ScipOverlayAvailability, ScipOverlaySummary,
-    ScipOverlayImportScope, ScipRelationshipDirection, ScipRelationshipEvidence, ScipSymbolEvidence,
+    ScipOverlayImportScope, ScipRelationshipDirection, ScipRelationshipEvidence,
+    ScipRelationshipEvidenceClass, ScipSymbolEvidence,
     ScipRelationshipTrace, ScipRelationshipTraceEdge, ScipRelationshipTraceNoRelationships,
     ScipRelationshipTraceReadLimits, ScipRelationshipTraceResult, ScipSymbolEvidenceResult,
     ScipSyntaxSymbolResolution,
@@ -854,8 +855,17 @@ fn read_scip_relationships(
         "SELECT document.repository_path, document.content_digest,
                 relationship.source_symbol, relationship.target_symbol,
                 relationship.kinds,
+                relationship.evidence,
                 CASE WHEN relationship.source_symbol = ? THEN 0 ELSE 1 END
-         FROM scip_overlay_relationships AS relationship
+         FROM (
+             SELECT overlay_digest, document_ordinal, relationship_ordinal,
+                    source_symbol, target_symbol, kinds, 'producer_declared' AS evidence
+             FROM scip_overlay_relationships
+             UNION ALL
+             SELECT overlay_digest, document_ordinal, relationship_ordinal,
+                    source_symbol, target_symbol, kinds, 'enclosed_reference' AS evidence
+             FROM scip_enclosed_reference_edges
+         ) AS relationship
          JOIN scip_overlay_documents AS document
            ON document.overlay_digest = relationship.overlay_digest
           AND document.document_ordinal = relationship.document_ordinal
@@ -870,7 +880,9 @@ fn read_scip_relationships(
         symbol_value,
     ];
     append_package_scope_predicate(&mut sql, &mut parameters, package_scope);
-    sql.push_str(" ORDER BY document.repository_path, relationship.relationship_ordinal LIMIT ?");
+    sql.push_str(
+        " ORDER BY document.repository_path, relationship.relationship_ordinal, relationship.evidence LIMIT ?",
+    );
     parameters.push(rusqlite::types::Value::Integer(
         i64::from(limits.max_relationships()) + 1,
     ));
@@ -885,7 +897,8 @@ fn read_scip_relationships(
                 row.get::<_, Vec<u8>>(2)?,
                 row.get::<_, Vec<u8>>(3)?,
                 row.get::<_, i64>(4)?,
-                row.get::<_, i64>(5)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, i64>(6)?,
             ))
         })
         .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
@@ -897,9 +910,9 @@ fn read_scip_relationships(
             truncated = true;
             break;
         }
-        let (path, content, source, target, kinds, direction) =
+        let (path, content, source, target, kinds, evidence, direction) =
             row.map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
-        result.push(ScipRelationshipEvidence::new(
+        result.push(ScipRelationshipEvidence::with_evidence(
             RepositoryPath::try_from_bytes(&path, PERSISTED_PATH_LIMITS)
                 .map_err(|_| SqliteStoreError::IntegrityCheckFailed)?,
             SourceContentDigest::try_from_slice(&content)
@@ -914,6 +927,7 @@ fn read_scip_relationships(
             decode_symbol(source)?,
             decode_symbol(target)?,
             decode_relationship_kinds(kinds)?,
+            decode_relationship_evidence(evidence)?,
         ));
     }
     Ok((result, truncated))
@@ -950,8 +964,17 @@ fn read_scip_relationship_trace_rows(
     let mut sql = format!(
         "SELECT document.repository_path, document.content_digest,
                 relationship.document_ordinal, relationship.relationship_ordinal,
-                relationship.source_symbol, relationship.target_symbol, relationship.kinds
-         FROM scip_overlay_relationships AS relationship
+                relationship.source_symbol, relationship.target_symbol, relationship.kinds,
+                relationship.evidence
+         FROM (
+             SELECT overlay_digest, document_ordinal, relationship_ordinal,
+                    source_symbol, target_symbol, kinds, 'producer_declared' AS evidence
+             FROM scip_overlay_relationships
+             UNION ALL
+             SELECT overlay_digest, document_ordinal, relationship_ordinal,
+                    source_symbol, target_symbol, kinds, 'enclosed_reference' AS evidence
+             FROM scip_enclosed_reference_edges
+         ) AS relationship
          JOIN scip_overlay_documents AS document
            ON document.overlay_digest = relationship.overlay_digest
           AND document.document_ordinal = relationship.document_ordinal
@@ -964,7 +987,7 @@ fn read_scip_relationship_trace_rows(
     ];
     append_package_scope_predicate(&mut sql, &mut parameters, package_scope);
     sql.push_str(
-        " ORDER BY relationship.document_ordinal, relationship.relationship_ordinal LIMIT ?",
+        " ORDER BY relationship.document_ordinal, relationship.relationship_ordinal, relationship.evidence LIMIT ?",
     );
     parameters.push(rusqlite::types::Value::Integer(i64::from(row_limit)));
     let mut statement = transaction
@@ -980,20 +1003,30 @@ fn read_scip_relationship_trace_rows(
                 row.get::<_, Vec<u8>>(4)?,
                 row.get::<_, Vec<u8>>(5)?,
                 row.get::<_, i64>(6)?,
+                row.get::<_, String>(7)?,
             ))
         })
         .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
     let mut result = Vec::with_capacity(usize::from(row_limit));
     for row in rows {
         check_control(cancelled, deadline)?;
-        let (path, content, document_ordinal, relationship_ordinal, source, target, kinds) =
+        let (
+            path,
+            content,
+            document_ordinal,
+            relationship_ordinal,
+            source,
+            target,
+            kinds,
+            evidence,
+        ) =
             row.map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
         result.push(ScipRelationshipTraceRow {
             document_ordinal: u32::try_from(document_ordinal)
                 .map_err(|_| SqliteStoreError::IntegrityCheckFailed)?,
             relationship_ordinal: u32::try_from(relationship_ordinal)
                 .map_err(|_| SqliteStoreError::IntegrityCheckFailed)?,
-            relationship: ScipRelationshipEvidence::new(
+            relationship: ScipRelationshipEvidence::with_evidence(
                 RepositoryPath::try_from_bytes(&path, PERSISTED_PATH_LIMITS)
                     .map_err(|_| SqliteStoreError::IntegrityCheckFailed)?,
                 SourceContentDigest::try_from_slice(&content)
@@ -1002,6 +1035,7 @@ fn read_scip_relationship_trace_rows(
                 decode_symbol(source)?,
                 decode_symbol(target)?,
                 decode_relationship_kinds(kinds)?,
+                decode_relationship_evidence(evidence)?,
             ),
         });
     }
@@ -1050,6 +1084,16 @@ fn decode_relationship_kinds(value: i64) -> Result<ScipRelationshipKinds, Sqlite
         value & 4 != 0,
         value & 8 != 0,
     ).map_err(|_| SqliteStoreError::IntegrityCheckFailed)
+}
+
+fn decode_relationship_evidence(
+    value: String,
+) -> Result<ScipRelationshipEvidenceClass, SqliteStoreError> {
+    match value.as_str() {
+        "producer_declared" => Ok(ScipRelationshipEvidenceClass::ProducerDeclared),
+        "enclosed_reference" => Ok(ScipRelationshipEvidenceClass::EnclosedReference),
+        _ => Err(SqliteStoreError::IntegrityCheckFailed),
+    }
 }
 
 fn evidence_output_bytes(

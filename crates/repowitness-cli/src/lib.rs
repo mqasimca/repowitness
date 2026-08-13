@@ -107,13 +107,14 @@ use repowitness_mcp::{
     MemoryRecallServiceRequest, MemoryRecallServiceSelection, OutboundSitesOutput,
     OutboundSitesSelectorOutput, OutboundSitesServiceRequest, RelevantPathsOutput,
     RelevantPathsServiceRequest, RepositoryService, RepositoryServiceError,
-    RepositoryTopologyOutput, RepositoryTopologyServiceRequest, ScipEvidenceInput,
-    ScipEvidenceOutput, ScipEvidenceServiceRequest, ScipRelationshipTraceInput,
-    ScipRelationshipTraceOutput, ScipRelationshipTraceServiceRequest, ScipSymbolResolveInput,
-    ScipSymbolResolveOutput, ScipSymbolResolveServiceRequest, SymbolGetOutput,
-    SymbolGetServiceRequest, SymbolSearchOutput, SymbolSearchServiceRequest, SymbolSelectorOutput,
-    SyntaxSiteSearchOutput, SyntaxSiteSearchServiceRequest, TestMarkersOutput, serve_stdio,
-    serve_stdio_with_memory_writes, serve_stdio_with_reloadable_repository_catalog,
+    RepositoryTopologyOutput, RepositoryTopologyServiceRequest, SCIP_EVIDENCE_SCHEMA_VERSION,
+    SCIP_RELATIONSHIP_TRACE_SCHEMA_VERSION, ScipEvidenceInput, ScipEvidenceOutput,
+    ScipEvidenceServiceRequest, ScipRelationshipTraceInput, ScipRelationshipTraceOutput,
+    ScipRelationshipTraceServiceRequest, ScipSymbolResolveInput, ScipSymbolResolveOutput,
+    ScipSymbolResolveServiceRequest, SymbolGetOutput, SymbolGetServiceRequest, SymbolSearchOutput,
+    SymbolSearchServiceRequest, SymbolSelectorOutput, SyntaxSiteSearchOutput,
+    SyntaxSiteSearchServiceRequest, TestMarkersOutput, serve_stdio, serve_stdio_with_memory_writes,
+    serve_stdio_with_reloadable_repository_catalog,
     serve_stdio_with_reloadable_repository_catalog_with_memory_writes,
 };
 
@@ -143,7 +144,7 @@ const MAX_RELEVANT_PATHS_ARGUMENTS: usize = 8 + CONFIGURATION_LAYER_ARGUMENTS;
 const MAX_SYMBOL_SEARCH_ARGUMENTS: usize = 18 + CONFIGURATION_LAYER_ARGUMENTS;
 const MAX_ARCHITECTURE_MAP_ARGUMENTS: usize = 6;
 const MAX_REPOSITORY_TOPOLOGY_ARGUMENTS: usize = 6;
-const MAX_ONBOARD_ARGUMENTS: usize = 7;
+const MAX_ONBOARD_ARGUMENTS: usize = 10;
 const MAX_ARCHITECTURE_OVERVIEW_ARGUMENTS: usize = 12;
 const MAX_SYMBOL_GET_ARGUMENTS: usize = 18;
 const MAX_OUTBOUND_SITES_ARGUMENTS: usize = 18;
@@ -452,14 +453,15 @@ const SCIP_EVIDENCE_HELP: &str = concat!(
 );
 
 const SCIP_RELATIONSHIP_TRACE_HELP: &str = concat!(
-    "Trace bounded producer-declared relationships from one imported SCIP symbol.\n\n",
+    "Trace bounded SCIP relationship evidence from one imported symbol.\n\n",
     "Usage:\n",
     "  repowitness scip-relationship-trace --repository-id <id> --database <path> --symbol <scip-symbol>\n",
     "      --direction <outgoing|incoming> [--max-depth <1-4>] [--max-edges <1-256>]\n",
     "      [--package-root <rwp1:h:text>]... [--workspace-view <positive-id>]\n\n",
     "  repowitness scip-relationship-trace --connected-workspace-id <id> --source-slot-id <id>\n",
     "      --database <path> --symbol <scip-symbol> --direction <outgoing|incoming> [same optional bounds]\n\n",
-    "The command follows producer-declared relationships only; it does not infer source calls.\n",
+    "The command follows producer-declared and exact enclosed-reference edges; it does not\n",
+    "guess unresolved source calls.\n",
 );
 
 const SCIP_SYMBOL_RESOLVE_HELP: &str = concat!(
@@ -502,8 +504,11 @@ const SCIP_GO_IMPORT_HELP: &str = concat!(
     "  repowitness scip-go-import --database <path> --root <repository-root>\n",
     "      (--repository-id <id>|--connected-workspace-id <id> --source-slot-id <id>)\n",
     "      [--workspace-view <positive-id>] [--scip-go <path>]\n",
+    "      [--skip-implementations] [--skip-tests]\n",
     "      [--producer-timeout-ms <1-300000>] [--import-timeout-ms <1-300000>]\n",
-    "\nThis explicit CLI-only command runs scip-go, then uses the same exact source-slot and\n",
+    "\nThe default includes implementation and test relationships. Skip flags are available\n",
+    "for a smaller/faster producer run. This explicit CLI-only command runs scip-go, then\n",
+    "uses the same exact source-slot and\n",
     "immutable-view checks as scip-import. It never runs during indexing or MCP startup.\n",
 );
 

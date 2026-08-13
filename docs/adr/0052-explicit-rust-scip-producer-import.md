@@ -37,7 +37,7 @@ Add the direct CLI-only `scip-rust-import` command.
   source-fenced, immutable-view `scip-import` path. Failed production, a bad
   artifact, changed source, cancellation, or failed import leaves the prior
   overlay readable.
-- Normal `index`, `onboard`, and `watch` never run a producer. The read-only
+- Normal `index`, `onboard`, and `watch` never run a Rust producer. The read-only
   MCP server never exposes this operation. No general producer registry,
   package-manager execution, downloaded tool, background process, or second
   language adapter is introduced.

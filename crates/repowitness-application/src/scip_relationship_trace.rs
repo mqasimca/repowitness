@@ -1,4 +1,4 @@
-//! Bounded immutable traversal over producer-declared SCIP relationships.
+//! Bounded immutable traversal over exact SCIP relationship evidence.
 
 use std::{
     error::Error,
@@ -14,16 +14,16 @@ use repowitness_domain::{ConnectedWorkspaceId, ScipSymbol, SourceSlotId};
 
 use crate::{PackageScope, ScipEvidenceReadSelection};
 
-/// Highest permitted number of producer-declared relationship hops.
+/// Highest permitted number of exact relationship-evidence hops.
 pub const MAX_SCIP_RELATIONSHIP_TRACE_DEPTH: u8 = 4;
-/// Default producer-declared relationship traversal depth.
+/// Default relationship-evidence traversal depth.
 pub const DEFAULT_SCIP_RELATIONSHIP_TRACE_DEPTH: u8 = 2;
 /// Default retained relationship-edge ceiling for one precision trace.
 pub const DEFAULT_SCIP_RELATIONSHIP_TRACE_EDGES: u16 = 100;
 /// Maximum retained relationship-edge ceiling admitted by the precision profile.
 pub const MAX_SCIP_RELATIONSHIP_TRACE_EDGES: u16 = 256;
 
-/// One explicit direction through producer-declared SCIP relationship rows.
+/// One explicit direction through producer-declared and enclosed-reference SCIP rows.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ScipRelationshipTraceDirection {
     /// Follow relationships whose source is the current frontier symbol.
@@ -103,7 +103,7 @@ pub trait ScipRelationshipTracePort {
     /// Stable local adapter error.
     type Error;
 
-    /// Resolves one selected immutable view/slot and traces producer-declared relationships.
+    /// Resolves one selected immutable view/slot and traces exact relationship evidence.
     #[allow(
         clippy::too_many_arguments,
         reason = "selection, scope, root, traversal controls, and deadline are independent trust inputs"

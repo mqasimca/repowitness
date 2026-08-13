@@ -1435,7 +1435,7 @@ fn tools(memory_writes_enabled: bool) -> Vec<Tool> {
     .annotate(annotations.clone());
     let scip_relationship_trace = Tool::new(
         SCIP_RELATIONSHIP_TRACE_TOOL_NAME,
-        "Trace bounded producer-declared SCIP relationships without inferring source calls or runtime behavior.",
+        "Trace bounded producer-declared and exact enclosed-reference SCIP relationships without inferring runtime behavior.",
         JsonObject::new(),
     )
     .with_input_schema::<ScipRelationshipTraceInput>()

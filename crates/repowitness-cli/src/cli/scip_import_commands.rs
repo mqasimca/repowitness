@@ -1,3 +1,4 @@
+#[derive(Clone)]
 struct ScipImportInvocation {
     database: PathBuf,
     root: PathBuf,

@@ -295,7 +295,8 @@ pub use repowitness_application::{
 };
 pub use repowitness_application::{
     DEFAULT_EVIDENCE_CONTEXT_BUDGET_UNITS, EvidenceContextCandidate, EvidenceContextTier,
-    IndexedContext, IndexedContextUnavailableReason, MAX_EVIDENCE_CONTEXT_BUDGET_UNITS,
+    IndexWorktreeAlignment, IndexedContext, IndexedContextUnavailableReason,
+    MAX_EVIDENCE_CONTEXT_BUDGET_UNITS,
 };
 pub use repowitness_application::{
     OUTBOUND_SITES_PROFILE_VERSION, OutboundSitesAvailability, OutboundSyntaxSite,
@@ -346,13 +347,14 @@ pub use sqlite::{
     RustGraphTraceResult, RustGraphTraceStart, RustGraphTraceTruncation, ScipEvidenceReadLimits,
     ScipEvidenceReadLimitsError, ScipOccurrenceEvidence, ScipOverlayAvailability,
     ScipOverlayImportScope, ScipOverlayPreparationError, ScipOverlaySummary,
-    ScipRelationshipDirection, ScipRelationshipEvidence, ScipRelationshipTrace,
-    ScipRelationshipTraceEdge, ScipRelationshipTraceNoRelationships, ScipRelationshipTraceResult,
-    ScipSymbolEvidence, ScipSymbolEvidenceResult, ScipSyntaxSymbolResolution, SearchHit,
-    SearchLimits, SearchResults, SourceSlotEpoch, SourceSlotGeneration, SourceSlotState,
-    SqliteStoreError, SymbolLookupResults, TaskCheckpointReceipt, TaskVerificationReceipt,
-    WorkspaceSourceSlot, WorkspaceViewId, WorkspaceViewMember, create_online_backup,
-    prepare_raw_syntax_generation, prepare_rust_graph_generation,
+    ScipRelationshipDirection, ScipRelationshipEvidence, ScipRelationshipEvidenceClass,
+    ScipRelationshipTrace, ScipRelationshipTraceEdge, ScipRelationshipTraceNoRelationships,
+    ScipRelationshipTraceResult, ScipSymbolEvidence, ScipSymbolEvidenceResult,
+    ScipSyntaxSymbolResolution, SearchHit, SearchLimits, SearchResults, SourceSlotEpoch,
+    SourceSlotGeneration, SourceSlotState, SqliteStoreError, SymbolLookupResults,
+    TaskCheckpointReceipt, TaskVerificationReceipt, WorkspaceSourceSlot, WorkspaceViewId,
+    WorkspaceViewMember, create_online_backup, prepare_raw_syntax_generation,
+    prepare_rust_graph_generation,
 };
 pub use watch_reconciliation::{
     CompleteReconciliationWork, DEFAULT_WATCHER_DEBOUNCE_MS, DEFAULT_WATCHER_HINT_PATH_BYTES,

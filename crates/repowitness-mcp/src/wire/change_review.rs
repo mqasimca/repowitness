@@ -8,7 +8,7 @@ use super::validate_timeout;
 /// Native read-only MCP tool name for revision-pinned change review.
 pub const CHANGE_REVIEW_TOOL_NAME: &str = "verify";
 /// Stable JSON output schema version for `verify`.
-pub const CHANGE_REVIEW_SCHEMA_VERSION: u16 = 1;
+pub const CHANGE_REVIEW_SCHEMA_VERSION: u16 = 2;
 
 /// Bounded MCP input for one revision-pinned change review.
 #[derive(Deserialize, JsonSchema)]
@@ -98,6 +98,8 @@ pub struct McpChangeReviewPath {
     pub kind: String,
     /// Canonical encoded repository-relative path.
     pub path: String,
+    /// Human-readable path; the canonical encoded path remains the identity.
+    pub display_path: String,
 }
 
 /// Bounded source-fenced, revision-pinned change-review receipt.
@@ -131,7 +133,7 @@ pub struct ChangeReviewOutput {
     /// Number of explicit context omissions when indexed context is available.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub indexed_context_omissions: Option<u64>,
-    /// Always `unverified`; the index/worktree relationship is not claimed.
+    /// `verified`, `mismatch`, or `unavailable` based on an exact local source comparison.
     pub index_worktree_alignment: String,
     /// Always `not_provided`; this tool never approves or rejects a change.
     pub verdict: String,

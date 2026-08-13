@@ -66,14 +66,14 @@ use self::schema::{
     MIGRATION_6_NAME, MIGRATION_7, MIGRATION_7_NAME, MIGRATION_9, MIGRATION_9_NAME, MIGRATION_10,
     MIGRATION_10_NAME, MIGRATION_11, MIGRATION_11_NAME, MIGRATION_12, MIGRATION_12_NAME,
     MIGRATION_13, MIGRATION_13_NAME, MIGRATION_14, MIGRATION_14_NAME, MIGRATION_15,
-    MIGRATION_15_NAME, SCHEMA_VERSION,
+    MIGRATION_15_NAME, MIGRATION_16, MIGRATION_16_NAME, SCHEMA_VERSION,
 };
 pub use self::scip_overlay::{
     MAX_SCIP_OVERLAY_DOCUMENTS, PreparedScipOverlay, ScipEvidenceReadLimits,
     ScipEvidenceReadLimitsError, ScipOccurrenceEvidence, ScipOverlayAvailability,
     ScipOverlayImportScope, ScipOverlayPreparationError, ScipOverlaySummary,
-    ScipRelationshipDirection, ScipRelationshipEvidence, ScipRelationshipTrace,
-    ScipRelationshipTraceEdge, ScipRelationshipTraceNoRelationships,
+    ScipRelationshipDirection, ScipRelationshipEvidence, ScipRelationshipEvidenceClass,
+    ScipRelationshipTrace, ScipRelationshipTraceEdge, ScipRelationshipTraceNoRelationships,
     ScipRelationshipTraceReadLimits, ScipRelationshipTraceReadLimitsError,
     ScipRelationshipTraceResult, ScipSymbolEvidence, ScipSymbolEvidenceResult,
     ScipSyntaxSymbolResolution,
@@ -653,7 +653,7 @@ fn validate_migration_ledger_through(
     Ok(())
 }
 
-const fn migrations() -> [(i64, &'static str, &'static str); 14] {
+const fn migrations() -> [(i64, &'static str, &'static str); 15] {
     [
         (1, MIGRATION_1_NAME, MIGRATION_1),
         (2, MIGRATION_2_NAME, MIGRATION_2),
@@ -669,6 +669,7 @@ const fn migrations() -> [(i64, &'static str, &'static str); 14] {
         (13, MIGRATION_13_NAME, MIGRATION_13),
         (14, MIGRATION_14_NAME, MIGRATION_14),
         (15, MIGRATION_15_NAME, MIGRATION_15),
+        (16, MIGRATION_16_NAME, MIGRATION_16),
     ]
 }
 

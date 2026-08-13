@@ -548,6 +548,7 @@ fn mcp_change_review_output(
             path: RepositoryPathTextV1::encode(entry.path(), PATH_TEXT_LIMIT)
                 .map_err(|error| error.to_string())?
                 .into_string(),
+            display_path: entry.path().display_text(),
         });
     }
     let (
@@ -596,7 +597,7 @@ fn mcp_change_review_output(
         indexed_generation,
         indexed_context_items,
         indexed_context_omissions,
-        index_worktree_alignment: "unverified".to_owned(),
+        index_worktree_alignment: receipt.index_worktree_alignment().as_str().to_owned(),
         verdict: "not_provided".to_owned(),
     })
 }

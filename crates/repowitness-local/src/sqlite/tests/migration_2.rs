@@ -153,6 +153,12 @@ fn version_one_database_upgrades_without_losing_immutable_artifacts() {
                 migration_checksum(MIGRATION_15).to_vec(),
                 222,
             ),
+            (
+                16,
+                MIGRATION_16_NAME.to_owned(),
+                migration_checksum(MIGRATION_16).to_vec(),
+                222,
+            ),
         ]
     );
     assert_eq!(artifact, (2, 0, "typescript".to_owned(), vec![0; 32]));

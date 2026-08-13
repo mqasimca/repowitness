@@ -12,15 +12,18 @@ use std::{
 };
 
 use repowitness_application::{
-    ChangeReviewReceipt, IndexedContextUnavailableReason, ResolvedConfiguration, SymbolGetError,
+    ChangeReviewReceipt, IndexWorktreeAlignment, IndexedContextUnavailableReason,
+    RepositoryIdentityTextV1, ResolvedConfiguration, SymbolGetError, hash_source_manifest,
+    resolve_configuration,
 };
 use repowitness_domain::GitObjectId;
 
 use crate::{
-    CapturedSourceState, GitPathDiscoveryLimits, LocalChangeManifestError,
-    LocalChangeManifestLimits, LocalContextBuildError, LocalContextBuildRequest, SourceStateError,
-    build_local_context, capture_local_change_manifest_with_cancel,
-    capture_source_state_with_cancel,
+    CapturedSourceState, ConnectedWorkspaceId, GitPathDiscoveryLimits, LocalChangeManifestError,
+    LocalChangeManifestLimits, LocalContextBuildError, LocalContextBuildRequest,
+    LocalRustIndexLimits, OwnedSqliteReader, SourceSlotId, SourceStateError, build_local_context,
+    capture_local_change_manifest_with_cancel, capture_source_state_with_cancel,
+    rust_index::{LocalSourceSnapshotFenceRequest, capture_confirmed_local_source_snapshot},
 };
 
 /// Default end-to-end deadline for one local read-only change review.
@@ -181,6 +184,14 @@ pub fn build_local_change_review(
     )
     .map_err(|source| LocalChangeReviewError::Manifest { source })?;
     check_control(&cancelled, deadline)?;
+    let alignment = compare_index_worktree(
+        request.root,
+        request.database,
+        request.repository_identity,
+        request.configuration,
+        &cancelled,
+        deadline,
+    );
     let mut context_request = LocalContextBuildRequest::new(
         request.root,
         request.database,
@@ -210,6 +221,7 @@ pub fn build_local_change_review(
             before.git_state(),
             manifest,
             context,
+            alignment,
         )),
         Err(LocalContextBuildError::Symbol(SymbolGetError::Port(
             crate::LocalSymbolPortError::StaleSource,
@@ -217,8 +229,82 @@ pub fn build_local_change_review(
             before.git_state(),
             manifest,
             IndexedContextUnavailableReason::StaleSource,
+            alignment,
         )),
         Err(source) => Err(LocalChangeReviewError::Context { source }),
+    }
+}
+
+fn compare_index_worktree(
+    root: &Path,
+    database: &Path,
+    repository_identity: &str,
+    configuration: Option<&ResolvedConfiguration>,
+    cancelled: &Arc<AtomicBool>,
+    deadline: Instant,
+) -> IndexWorktreeAlignment {
+    let Ok(repository) = RepositoryIdentityTextV1::decode(repository_identity) else {
+        return IndexWorktreeAlignment::Unavailable;
+    };
+    let resolved_configuration = configuration
+        .cloned()
+        .or_else(|| resolve_configuration(&[]).ok());
+    let Some(resolved_configuration) = resolved_configuration else {
+        return IndexWorktreeAlignment::Unavailable;
+    };
+    let configuration_digest = resolved_configuration.digest();
+    let Ok((limits, languages)) = crate::local_index::configured_index_inputs(
+        LocalRustIndexLimits::default(),
+        &resolved_configuration,
+    ) else {
+        return IndexWorktreeAlignment::Unavailable;
+    };
+    let Ok(reader) = OwnedSqliteReader::start(database, deadline) else {
+        return IndexWorktreeAlignment::Unavailable;
+    };
+    let workspace = ConnectedWorkspaceId::for_single_repository(repository);
+    let source_slot = SourceSlotId::for_repository(repository);
+    let pinned = reader.pin_workspace_view(workspace, None, Arc::clone(cancelled), deadline);
+    let result = pinned
+        .as_ref()
+        .ok()
+        .and_then(|view| view.as_ref())
+        .and_then(|view| {
+            reader
+                .scip_import_scope(view, source_slot, Arc::clone(cancelled), deadline)
+                .ok()
+        })
+        .map(|scope| {
+            if scope.source_identity().configuration()
+                != crate::local_index::local_source_snapshot_configuration(configuration_digest)
+            {
+                return IndexWorktreeAlignment::Mismatch;
+            }
+            let captured =
+                capture_confirmed_local_source_snapshot(LocalSourceSnapshotFenceRequest::new(
+                    root,
+                    scope.source_identity(),
+                    scope.source_snapshot(),
+                    languages,
+                    limits,
+                    cancelled.as_ref(),
+                    deadline,
+                    None,
+                ));
+            match captured {
+                Ok(captured)
+                    if hash_source_manifest(captured.manifest()) == scope.source_manifest() =>
+                {
+                    IndexWorktreeAlignment::Verified
+                }
+                Ok(_) | Err(_) => IndexWorktreeAlignment::Mismatch,
+            }
+        })
+        .unwrap_or(IndexWorktreeAlignment::Unavailable);
+    if reader.shutdown(deadline).is_err() {
+        IndexWorktreeAlignment::Unavailable
+    } else {
+        result
     }
 }
 

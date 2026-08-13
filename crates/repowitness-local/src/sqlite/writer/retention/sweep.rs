@@ -477,6 +477,11 @@ const RETENTION_DELETE_ORDER: &[&str] = &[
          SELECT overlay_digest FROM retention_scip_overlay_garbage
          WHERE plan_digest = ?1
      )",
+    "DELETE FROM scip_enclosed_reference_edges
+     WHERE overlay_digest IN (
+         SELECT overlay_digest FROM retention_scip_overlay_garbage
+         WHERE plan_digest = ?1
+     )",
     "DELETE FROM scip_overlay_occurrences
      WHERE overlay_digest IN (
          SELECT overlay_digest FROM retention_scip_overlay_garbage

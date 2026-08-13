@@ -61,6 +61,7 @@ impl WriterState {
             &scope,
         )?;
         stage_overlay_documents(&transaction, prepared, control)?;
+        stage_enclosed_reference_edges(&transaction, prepared.digest(), &scope, control)?;
         check_control(control)?;
         let completed = transaction
             .execute(
@@ -84,6 +85,82 @@ impl WriterState {
         commit_mutation(transaction)?;
         Ok(prepared.digest())
     }
+}
+
+/// Projects exact SCIP reference occurrences into bounded caller/callee edges.
+///
+/// SCIP gives us the referenced target and the definition occurrence, while
+/// the source index gives us the enclosing function/method span. Keeping this
+/// projection separate preserves the distinction between producer-declared
+/// relationships and RepoWitness-derived call-site evidence.
+fn stage_enclosed_reference_edges(
+    transaction: &Transaction<'_>,
+    digest: ScipOverlayDigest,
+    scope: &OverlayScope,
+    control: WriteControl<'_>,
+) -> Result<(), SqliteStoreError> {
+    check_control(control)?;
+    transaction
+        .execute(
+            "INSERT INTO scip_enclosed_reference_edges(
+                overlay_digest, document_ordinal, relationship_ordinal,
+                source_symbol, target_symbol, kinds
+             )
+             SELECT ?1, occurrence.document_ordinal,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY occurrence.document_ordinal
+                        ORDER BY definition.occurrence_ordinal, occurrence.occurrence_ordinal
+                    ) - 1,
+                    definition.symbol, occurrence.symbol, 1
+             FROM scip_overlay_occurrences AS occurrence
+             JOIN scip_overlay_documents AS document
+               ON document.overlay_digest = occurrence.overlay_digest
+              AND document.document_ordinal = occurrence.document_ordinal
+             JOIN generation_files AS file
+               ON file.generation_id = ?2
+              AND file.repository_path = document.repository_path
+              AND file.content_digest = document.content_digest
+             JOIN artifact_facts AS fact
+               ON fact.artifact_digest = file.artifact_digest
+              AND fact.kind IN ('function', 'method')
+             JOIN scip_overlay_occurrences AS definition
+               ON definition.overlay_digest = occurrence.overlay_digest
+              AND definition.document_ordinal = occurrence.document_ordinal
+              AND definition.roles & 1 != 0
+               AND definition.start_byte >= fact.name_start
+               AND definition.end_byte <= fact.name_end
+               AND NOT EXISTS (
+                   SELECT 1
+                   FROM artifact_facts AS nested
+                   WHERE nested.artifact_digest = fact.artifact_digest
+                     AND nested.kind IN ('function', 'method')
+                     AND nested.declaration_start >= fact.declaration_start
+                     AND nested.declaration_end <= fact.declaration_end
+                     AND (nested.declaration_start > fact.declaration_start
+                          OR nested.declaration_end < fact.declaration_end)
+                     AND occurrence.start_byte >= nested.declaration_start
+                     AND occurrence.end_byte <= nested.declaration_end
+               )
+             WHERE occurrence.overlay_digest = ?1
+               AND occurrence.symbol IS NOT NULL
+               AND occurrence.roles & 1 = 0
+               AND occurrence.start_byte >= fact.declaration_start
+               AND occurrence.end_byte <= fact.declaration_end
+               AND definition.symbol IS NOT NULL
+               AND NOT EXISTS (
+                   SELECT 1
+                   FROM scip_overlay_relationships AS declared
+                   WHERE declared.overlay_digest = ?1
+                     AND declared.document_ordinal = occurrence.document_ordinal
+                     AND declared.source_symbol = definition.symbol
+                     AND declared.target_symbol = occurrence.symbol
+               )
+             GROUP BY occurrence.document_ordinal, definition.occurrence_ordinal,
+                      occurrence.occurrence_ordinal, definition.symbol, occurrence.symbol",
+            rusqlite::params![digest.as_bytes().as_slice(), scope.generation_id],
+        )
+        .map_err(|_| SqliteStoreError::InvalidScipOverlay)?;
+    Ok(())
 }
 
 fn workspace_view_is_active(
