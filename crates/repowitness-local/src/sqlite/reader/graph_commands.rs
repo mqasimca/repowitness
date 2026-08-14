@@ -299,7 +299,9 @@ impl OwnedSqliteReader {
         match receive_graph_reply(&receiver, deadline) {
             Ok(result) => Ok(result),
             Err(error) => {
-                cancelled.store(true, Ordering::Release);
+                if !matches!(&error, RustGraphReadError::GraphNotProduced) {
+                    cancelled.store(true, Ordering::Release);
+                }
                 Err(error)
             }
         }
