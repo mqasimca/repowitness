@@ -19,7 +19,7 @@ pub const MAX_BOUNDED_CONTROL_FILE_BYTES: usize = 16 * 1024 * 1024;
 ///
 /// Individual callers choose a lower limit whenever their input contract is
 /// narrower, including all repository-authored control files.
-pub const MAX_BOUNDED_FILE_BYTES: usize = 64 * 1024 * 1024;
+pub const MAX_BOUNDED_FILE_BYTES: usize = 256 * 1024 * 1024;
 /// Hard component ceiling for one explicitly supplied control-file path.
 pub const MAX_BOUNDED_CONTROL_FILE_COMPONENTS: usize = 256;
 /// Hard encoded-byte ceiling for one explicitly supplied control-file path.

@@ -1471,12 +1471,12 @@ mod tests {
     }
 
     #[test]
-    fn indexed_source_builds_an_exact_scoped_evidence_syntax_context() {
+    fn source_only_index_builds_an_exact_scoped_evidence_syntax_context() {
         let directory = TempDirectory::new();
         let repository = fixture_repository(&directory);
         let database = directory.database();
         let report = index_local_repository(
-            LocalIndexRequest::new(&repository, &database, REPOSITORY_ID, 0),
+            LocalIndexRequest::new(&repository, &database, REPOSITORY_ID, 0).without_graph(),
             Arc::new(AtomicBool::new(false)),
         )
         .expect("index");

@@ -21,6 +21,49 @@ impl WriterState {
         control: WriteControl<'_>,
     ) -> Result<ScipOverlayDigest, SqliteStoreError> {
         check_control(control)?;
+        let cancelled = Arc::clone(control.cancelled);
+        let deadline = control.deadline;
+        self.connection
+            .progress_handler(
+                SCIP_OVERLAY_PROGRESS_INSTRUCTIONS,
+                Some(move || cancelled.load(Ordering::Acquire) || Instant::now() >= deadline),
+            )
+            .map_err(|_| SqliteStoreError::DatabaseOperationFailed)?;
+        let result = self.stage_scip_overlay_inner(
+            connected_workspace,
+            workspace_view,
+            source_slot,
+            prepared,
+            require_active_view,
+            control,
+        );
+        let clear = self
+            .connection
+            .progress_handler(0, None::<fn() -> bool>)
+            .map_err(|_| SqliteStoreError::DatabaseOperationFailed);
+        match (result, clear) {
+            (Err(SqliteStoreError::MutationOutcomeUnknown), _) => {
+                Err(SqliteStoreError::MutationOutcomeUnknown)
+            }
+            (Err(error), _) => match check_control(control) {
+                Ok(()) => Err(error),
+                Err(control_error) => Err(control_error),
+            },
+            (Ok(_), Err(error)) => Err(error),
+            (Ok(digest), Ok(())) => Ok(digest),
+        }
+    }
+
+    fn stage_scip_overlay_inner(
+        &mut self,
+        connected_workspace: ConnectedWorkspaceId,
+        workspace_view: WorkspaceViewId,
+        source_slot: SourceSlotId,
+        prepared: &PreparedScipOverlay,
+        require_active_view: bool,
+        control: WriteControl<'_>,
+    ) -> Result<ScipOverlayDigest, SqliteStoreError> {
+        check_control(control)?;
         let transaction = self.transaction()?;
         if require_active_view
             && !workspace_view_is_active(&transaction, connected_workspace, workspace_view)?
@@ -44,7 +87,13 @@ impl WriterState {
             // Schema 16 added a derived projection. Replaying a complete
             // overlay must fill that projection for overlays imported before
             // the migration without changing their immutable producer facts.
-            stage_enclosed_reference_edges(&transaction, prepared.digest(), &scope, control)?;
+            stage_enclosed_reference_edges(
+                &transaction,
+                prepared.digest(),
+                &scope,
+                prepared.documents().len(),
+                control,
+            )?;
             activate_overlay(
                 &transaction,
                 connected_workspace,
@@ -65,7 +114,13 @@ impl WriterState {
             &scope,
         )?;
         stage_overlay_documents(&transaction, prepared, control)?;
-        stage_enclosed_reference_edges(&transaction, prepared.digest(), &scope, control)?;
+        stage_enclosed_reference_edges(
+            &transaction,
+            prepared.digest(),
+            &scope,
+            prepared.documents().len(),
+            control,
+        )?;
         check_control(control)?;
         let completed = transaction
             .execute(
@@ -101,38 +156,42 @@ fn stage_enclosed_reference_edges(
     transaction: &Transaction<'_>,
     digest: ScipOverlayDigest,
     scope: &OverlayScope,
+    document_count: usize,
     control: WriteControl<'_>,
 ) -> Result<(), SqliteStoreError> {
     check_control(control)?;
-    transaction
-        .execute(
+    let mut insert = transaction
+        .prepare(
             "INSERT OR IGNORE INTO scip_enclosed_reference_edges(
                 overlay_digest, document_ordinal, relationship_ordinal,
                 source_symbol, target_symbol, kinds
              )
-             SELECT ?1, occurrence.document_ordinal,
+             SELECT ?1, ?2,
                     ROW_NUMBER() OVER (
-                        PARTITION BY occurrence.document_ordinal
                         ORDER BY definition.occurrence_ordinal, occurrence.occurrence_ordinal
                     ) - 1,
                     definition.symbol, occurrence.symbol, 1
-             FROM scip_overlay_occurrences AS occurrence
-             JOIN scip_overlay_documents AS document
-               ON document.overlay_digest = occurrence.overlay_digest
-              AND document.document_ordinal = occurrence.document_ordinal
+             FROM scip_overlay_documents AS document
              JOIN generation_files AS file
-               ON file.generation_id = ?2
+               ON file.generation_id = ?3
               AND file.repository_path = document.repository_path
               AND file.content_digest = document.content_digest
              JOIN artifact_facts AS fact
                ON fact.artifact_digest = file.artifact_digest
               AND fact.kind IN ('function', 'method')
              JOIN scip_overlay_occurrences AS definition
-               ON definition.overlay_digest = occurrence.overlay_digest
-              AND definition.document_ordinal = occurrence.document_ordinal
+               ON definition.overlay_digest = document.overlay_digest
+              AND definition.document_ordinal = document.document_ordinal
               AND definition.roles & 1 != 0
                AND definition.start_byte >= fact.name_start
                AND definition.end_byte <= fact.name_end
+             JOIN scip_overlay_occurrences AS occurrence
+               ON occurrence.overlay_digest = document.overlay_digest
+              AND occurrence.document_ordinal = document.document_ordinal
+              AND occurrence.symbol IS NOT NULL
+              AND occurrence.roles & 1 = 0
+              AND occurrence.start_byte >= fact.declaration_start
+              AND occurrence.end_byte <= fact.declaration_end
                AND NOT EXISTS (
                    SELECT 1
                    FROM artifact_facts AS nested
@@ -145,25 +204,34 @@ fn stage_enclosed_reference_edges(
                      AND occurrence.start_byte >= nested.declaration_start
                      AND occurrence.end_byte <= nested.declaration_end
                )
-             WHERE occurrence.overlay_digest = ?1
-               AND occurrence.symbol IS NOT NULL
-               AND occurrence.roles & 1 = 0
-               AND occurrence.start_byte >= fact.declaration_start
-               AND occurrence.end_byte <= fact.declaration_end
+             WHERE document.overlay_digest = ?1
+               AND document.document_ordinal = ?2
                AND definition.symbol IS NOT NULL
                AND NOT EXISTS (
                    SELECT 1
                    FROM scip_overlay_relationships AS declared
                    WHERE declared.overlay_digest = ?1
-                     AND declared.document_ordinal = occurrence.document_ordinal
+                     AND declared.document_ordinal = document.document_ordinal
                      AND declared.source_symbol = definition.symbol
                      AND declared.target_symbol = occurrence.symbol
                )
-             GROUP BY occurrence.document_ordinal, definition.occurrence_ordinal,
-                      occurrence.occurrence_ordinal, definition.symbol, occurrence.symbol",
-            rusqlite::params![digest.as_bytes().as_slice(), scope.generation_id],
+             GROUP BY definition.occurrence_ordinal, occurrence.occurrence_ordinal,
+                      definition.symbol, occurrence.symbol",
         )
         .map_err(|_| SqliteStoreError::InvalidScipOverlay)?;
+    for document_ordinal in 0..document_count {
+        if document_ordinal % WRITE_BATCH_ROWS == 0 {
+            check_control(control)?;
+        }
+        insert
+            .execute(rusqlite::params![
+                digest.as_bytes().as_slice(),
+                i64::try_from(document_ordinal)
+                    .map_err(|_| SqliteStoreError::CountNotRepresentable)?,
+                scope.generation_id,
+            ])
+            .map_err(|_| SqliteStoreError::InvalidScipOverlay)?;
+    }
     Ok(())
 }
 

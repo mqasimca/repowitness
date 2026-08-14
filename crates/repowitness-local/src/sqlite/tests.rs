@@ -16,9 +16,10 @@ use super::{
     MIGRATION_6_NAME, MIGRATION_7, MIGRATION_7_NAME, MIGRATION_9, MIGRATION_9_NAME, MIGRATION_10,
     MIGRATION_10_NAME, MIGRATION_11, MIGRATION_11_NAME, MIGRATION_12, MIGRATION_12_NAME,
     MIGRATION_13, MIGRATION_13_NAME, MIGRATION_14, MIGRATION_14_NAME, MIGRATION_15,
-    MIGRATION_15_NAME, MIGRATION_16, MIGRATION_16_NAME, SCHEMA_VERSION, SqliteStoreError,
-    apply_migration, database_file_identity, migration_checksum, migrations, open_index_writer,
-    open_index_writer_with_identity_and_hook, open_index_writer_with_identity_and_migration_hook,
+    MIGRATION_15_NAME, MIGRATION_16, MIGRATION_16_NAME, MIGRATION_17, MIGRATION_17_NAME,
+    SCHEMA_VERSION, SqliteStoreError, apply_migration, database_file_identity, migration_checksum,
+    migrations, open_index_writer, open_index_writer_with_identity_and_hook,
+    open_index_writer_with_identity_and_migration_hook,
 };
 
 static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
